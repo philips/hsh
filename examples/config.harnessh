@@ -1,0 +1,14 @@
+{
+  "image": "localhost/harnessh-example:latest",
+  "shell": "/bin/bash",
+  "mounts": [".:/workspace"],
+  "secrets": {
+    "API_KEY": {
+      "from": "OPENAI_API_KEY",
+      "hosts": ["api.openai.com"]
+    }
+  },
+  "network": {
+    "allow": ["vllm.tailb55c1.ts.net", "api.openai.com"]
+  }
+}
