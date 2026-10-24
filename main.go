@@ -14,7 +14,8 @@ usage:
   harnessh proxy [flags]                       egress proxy (runs inside the sandbox pod)
   harnessh workspace [flags]                   workspace entrypoint (runs inside the pod)
   harnessh workspace-inner [flags]             internal: workspace child in its own netns
-  harnessh proxy-denied [--db PATH] [--all]    list hosts denied by the egress proxy
+  harnessh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
+                                               (--dns lists DNS query denials)
   harnessh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
 
 run flags:

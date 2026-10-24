@@ -45,9 +45,9 @@ The workspace container starts in the pod's network namespace with
 
 The child namespace has exactly one route: `10.77.0.0/24 dev hsh1`. There is
 no default route, so the workspace cannot reach the internet, the host, or
-any other network directly. Its `/etc/resolv.conf` points at `127.0.0.1`
-(inside its own namespace), so direct connections fail immediately at DNS
-instead of timing out.
+any other network directly. Its `/etc/resolv.conf` points at the proxy
+(`10.77.0.1`), where a DNS forwarder runs (see below), so names resolve only
+when allowlisted — but resolved names still cannot be reached directly.
 
 The child then:
 
@@ -94,6 +94,28 @@ injection applied when the host matches a secret.
 Host matching is case-insensitive, ignores a trailing dot, and supports
 `*.example.com` wildcards (matching one or more leading labels).
 
+### DNS
+
+The workspace's `/etc/resolv.conf` points at the proxy (`10.77.0.1`), where
+a DNS forwarder (UDP and TCP 53) runs alongside the HTTP proxy. Query names
+are matched against `network.allow` with the same rules as HTTP: allowed
+names are forwarded to the pod's upstream resolvers (from the proxy
+container's `/etc/resolv.conf`), everything else gets `REFUSED`.
+
+Because the workspace has no route beyond the veth, resolved names still
+cannot be reached directly — local DNS feeds tools that resolve before
+connecting through the proxy, and debugging (`getent`, `nslookup`). The
+policy matters: an unrestricted resolver would let the workspace exfiltrate
+data via DNS tunneling without ever opening a TCP connection the proxy
+could check.
+
+DNS denials are recorded in a separate `dns_denied` table in the same
+denial database. They do not appear in the default `harnessh proxy-denied`
+listing and are not auto-allowed, so noisy lookups (telemetry domains, PTR
+queries) cannot pollute the HTTP review flow; `harnessh proxy-denied --dns`
+lists them. When `proxy-auto-allow` allows a host, matching `dns_denied`
+rows are marked allowed as well.
+
 ### Denial database
 
 Every denial is recorded in a SQLite database (modernc.org/sqlite — pure Go,
@@ -116,11 +138,14 @@ CREATE TABLE IF NOT EXISTS denied (
 ```
 
 Recording is an upsert on `host` (count incremented, `last_seen` bumped);
-`allowed` marks hosts already handled. The state directory is bind-mounted
-read-write into the proxy container only — the workspace never sees it, so
-the agent cannot erase or forge its own denial record. Database errors are
-logged and never change the response: a denial is a denial with or without
-the log.
+`allowed` marks hosts already handled. There are two tables: `denied` for
+HTTP egress denials (the review list behind `proxy-denied` and
+`proxy-auto-allow`) and `dns_denied` for DNS query denials (audit only, see
+the DNS section above). The state directory is bind-mounted read-write into
+the proxy container only — the workspace never sees it, so the agent
+cannot erase or forge its own denial record. Database errors are logged
+and never change the response: a denial is a denial with or without the
+log.
 
 Two host-side subcommands work with the database:
 

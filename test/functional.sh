@@ -125,6 +125,12 @@ JSON
 echo "--- echo hi | pi:"
 echo hi | pi
 echo "pi-rc=$?"
+echo "--- DNS via the proxy forwarder:"
+getent hosts api.mistral.ai | head -1
+echo "getent-allowed-rc=$?"
+getent hosts dns-denied.example.net >/dev/null 2>&1
+echo "getent-denied-rc=$?"
+curl -sS --noproxy '*' --max-time 8 -o /dev/null https://api.mistral.ai 2>&1 | head -1
 CMDS
 cat "$TMP/session2.out"
 
@@ -145,6 +151,23 @@ pass "pi's request reached the dummy endpoint through the proxy"
 REMAINING="$("$HARNESSH" proxy-denied --db "$DB")"
 echo "$REMAINING" | grep -q "no denied hosts awaiting review" || fail "review list was not cleared after auto-allow"
 pass "denial review list cleared"
+
+grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+api\.mistral\.ai' "$TMP/session2.out" || fail "DNS resolution of the allowlisted host failed"
+pass "DNS resolves the allowlisted host through the proxy forwarder"
+
+grep -Eq '^getent-denied-rc=[1-9]' "$TMP/session2.out" || fail "DNS resolution of a non-allowlisted host unexpectedly succeeded"
+grep -q 'Failed to connect' "$TMP/session2.out" || fail "direct connection did not fail at the TCP layer"
+if grep -q 'Could not resolve host' "$TMP/session2.out"; then
+	fail "direct connection failed at DNS instead of TCP (resolution should succeed, egress stays blocked)"
+fi
+pass "non-allowlisted names are refused; allowed names resolve but stay unreachable directly"
+
+DNSDENIED="$("$HARNESSH" proxy-denied --db "$DB" --dns)"
+echo "$DNSDENIED" | grep -q "dns-denied.example.net" || fail "DNS denial was not recorded in the dns_denied table"
+if echo "$REMAINING" | grep -q "dns-denied.example.net"; then
+	fail "DNS denial leaked into the HTTP review list (tables must be separate)"
+fi
+pass "DNS denials recorded in a separate table, not in the HTTP review list"
 
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=harnessh-test" >/dev/null 2>&1

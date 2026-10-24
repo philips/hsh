@@ -219,7 +219,7 @@ func setEnv(env []string, key, value string) []string {
 }
 
 func writeResolvConf() error {
-	const content = "nameserver 127.0.0.1\noptions timeout:1 attempts:1\n"
+	content := "nameserver " + netsetup.HostIP + "\noptions timeout:1 attempts:2\n"
 	tmp := "/tmp/harnessh-resolv.conf"
 	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
 		return err

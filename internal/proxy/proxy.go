@@ -111,6 +111,11 @@ func (p *Proxy) Run() error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	log.Printf("egress proxy listening on %s", p.opts.ListenAddr)
+	dnsAddr := p.opts.ListenAddr
+	if host, _, err := net.SplitHostPort(dnsAddr); err == nil {
+		dnsAddr = net.JoinHostPort(host, "53")
+	}
+	go p.startDNS(dnsAddr)
 	server := &http.Server{Handler: p, ReadHeaderTimeout: 30 * time.Second}
 	return server.Serve(listener)
 }

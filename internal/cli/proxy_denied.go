@@ -14,6 +14,7 @@ func ProxyDenied(args []string) error {
 	fs := flag.NewFlagSet("proxy-denied", flag.ContinueOnError)
 	dbPath := fs.String("db", denieddb.DefaultPath(), "denial database path")
 	all := fs.Bool("all", false, "include hosts that were already allowed")
+	dnsFlag := fs.Bool("dns", false, "list DNS query denials instead of HTTP egress denials")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -27,9 +28,14 @@ func ProxyDenied(args []string) error {
 	}
 	defer db.Close()
 	var rows []denieddb.DeniedHost
-	if *all {
+	switch {
+	case *dnsFlag && *all:
+		rows, err = denieddb.AllDNS(db)
+	case *dnsFlag:
+		rows, err = denieddb.PendingDNS(db)
+	case *all:
 		rows, err = denieddb.All(db)
-	} else {
+	default:
 		rows, err = denieddb.Pending(db)
 	}
 	if err != nil {

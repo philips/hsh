@@ -20,6 +20,15 @@ CREATE TABLE IF NOT EXISTS denied (
 	allowed    INTEGER NOT NULL DEFAULT 0,
 	allowed_at TEXT
 );
+CREATE TABLE IF NOT EXISTS dns_denied (
+	host       TEXT PRIMARY KEY,
+	target     TEXT NOT NULL,
+	count      INTEGER NOT NULL,
+	first_seen TEXT NOT NULL,
+	last_seen  TEXT NOT NULL,
+	allowed    INTEGER NOT NULL DEFAULT 0,
+	allowed_at TEXT
+);
 `
 
 type DeniedHost struct {
@@ -77,12 +86,20 @@ func Exists(path string) bool {
 }
 
 func Record(db *sql.DB, host, target string) error {
+	return record(db, "denied", host, target)
+}
+
+func RecordDNS(db *sql.DB, host, target string) error {
+	return record(db, "dns_denied", host, target)
+}
+
+func record(db *sql.DB, table, host, target string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(
-		`INSERT INTO denied (host, target, count, first_seen, last_seen, allowed)
+		`INSERT INTO `+table+` (host, target, count, first_seen, last_seen, allowed)
 		 VALUES (?, ?, 1, ?, ?, 0)
 		 ON CONFLICT(host) DO UPDATE SET
-		 	count = denied.count + 1,
+		 	count = `+table+`.count + 1,
 		 	last_seen = excluded.last_seen`,
 		host, target, now, now,
 	)
@@ -99,11 +116,23 @@ func All(db *sql.DB) ([]DeniedHost, error) {
 		FROM denied ORDER BY allowed ASC, count DESC, host ASC`)
 }
 
+func PendingDNS(db *sql.DB) ([]DeniedHost, error) {
+	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at
+		FROM dns_denied WHERE allowed = 0 ORDER BY count DESC, host ASC`)
+}
+
+func AllDNS(db *sql.DB) ([]DeniedHost, error) {
+	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at
+		FROM dns_denied ORDER BY allowed ASC, count DESC, host ASC`)
+}
+
 func MarkAllowed(db *sql.DB, hosts []string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, host := range hosts {
-		if _, err := db.Exec(`UPDATE denied SET allowed = 1, allowed_at = ? WHERE host = ?`, now, host); err != nil {
-			return err
+		for _, table := range []string{"denied", "dns_denied"} {
+			if _, err := db.Exec(`UPDATE `+table+` SET allowed = 1, allowed_at = ? WHERE host = ?`, now, host); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

@@ -80,6 +80,11 @@ harnessh proxy-auto-allow [--config PATH]  # add them to network.allow
 `proxy-auto-allow` rewrites the config file as canonical JSON (keys
 sorted, 2-space indent); only `network.allow` changes.
 
+`network.allow` also gates DNS: the workspace resolves names through a
+forwarder in the proxy that refuses any name not on the allowlist. DNS
+denials are recorded separately (`harnessh proxy-denied --dns`) and are
+never auto-allowed.
+
 ## Tools that self-download
 
 Some tools download helper binaries on first run instead of using system
