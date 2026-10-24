@@ -74,8 +74,10 @@ the veth addresses.
 
 Every request is checked against `network.allow`:
 
-- **Denied**: the proxy answers `403 Forbidden`. For `CONNECT` this surfaces
-  in curl as `CONNECT tunnel failed, response 403`.
+- **Denied**: the proxy answers `407 Proxy Authentication Required` with a
+  `Proxy-Authenticate: Harnessh realm="egress-allowlist"` header (RFC 7235)
+  and records the host in the denial database. For `CONNECT` this surfaces
+  in curl as `CONNECT tunnel failed, response 407`.
 - **Allowed, no secret configured for the host**: the proxy tunnels the
   connection (`CONNECT` → `200 Connection Established`, then a raw TCP
   splice). TLS is end-to-end between the workspace and the upstream; any
@@ -91,6 +93,51 @@ injection applied when the host matches a secret.
 
 Host matching is case-insensitive, ignores a trailing dot, and supports
 `*.example.com` wildcards (matching one or more leading labels).
+
+### Denial database
+
+Every denial is recorded in a SQLite database (modernc.org/sqlite — pure Go,
+so the `CGO_ENABLED=0` static build is unaffected) at
+`$XDG_STATE_HOME/harnessh/denied.db` (default `~/.local/state/harnessh/denied.db`,
+override with `harnessh run --denied-db PATH`). The database is opened in WAL
+mode with a busy timeout, so the proxy (writer) and the CLI (reader) can use
+it concurrently, including across simultaneous sessions.
+
+```sql
+CREATE TABLE IF NOT EXISTS denied (
+    host       TEXT PRIMARY KEY,
+    target     TEXT NOT NULL,   -- host:port as requested
+    count      INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,   -- RFC 3339, UTC
+    last_seen  TEXT NOT NULL,
+    allowed    INTEGER NOT NULL DEFAULT 0,
+    allowed_at TEXT
+);
+```
+
+Recording is an upsert on `host` (count incremented, `last_seen` bumped);
+`allowed` marks hosts already handled. The state directory is bind-mounted
+read-write into the proxy container only — the workspace never sees it, so
+the agent cannot erase or forge its own denial record. Database errors are
+logged and never change the response: a denial is a denial with or without
+the log.
+
+Two host-side subcommands work with the database:
+
+```
+harnessh proxy-denied [--db PATH] [--all]          list hosts awaiting review
+harnessh proxy-auto-allow [--config PATH] [--db PATH]
+```
+
+`proxy-denied` prints pending rows (`allowed = 0`) as a table (host,
+target, count, first/last seen, sorted by count); `--all` includes
+already-allowed hosts. `proxy-auto-allow` adds every pending host to the
+config file's `network.allow`, prints `added <host>` for each, prints
+`already allowed <host>` for hosts already present, marks the rows allowed
+so they leave the review list, and prints a summary — trust on first use:
+the first attempt is denied and recorded, review allows it. The config
+file is rewritten as canonical JSON (2-space indent, keys sorted); only
+`network.allow` changes semantically.
 
 ## Secret injection
 
@@ -201,3 +248,9 @@ The workspace shell inherits the image's environment (including `PATH`), so
 `ENV` directives in the image apply. The workspace home directory is
 `/home/harnessh`; the example image sets `HOME` to the same value and
 installs Pi there.
+
+The example image also pre-installs `fd-find` and `ripgrep` and sets
+`PI_OFFLINE=1`. Pi resolves its `find`/`grep` tools from system PATH before
+downloading them, so this keeps Pi's tools working without allowlisting
+GitHub (see docs/config.md), and `PI_OFFLINE` keeps Pi from attempting any
+tool downloads or update checks inside the sandbox.

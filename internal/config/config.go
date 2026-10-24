@@ -126,6 +126,64 @@ func WriteSecretsFile(path string, rs ResolvedSecrets) error {
 	return os.Rename(tmp, path)
 }
 
+func AddAllowedHosts(path string, hosts []string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	netDoc := map[string]json.RawMessage{}
+	if raw, ok := doc["network"]; ok {
+		if err := json.Unmarshal(raw, &netDoc); err != nil {
+			return nil, fmt.Errorf("%s: network: %w", path, err)
+		}
+	}
+	var allow []string
+	if raw, ok := netDoc["allow"]; ok {
+		if err := json.Unmarshal(raw, &allow); err != nil {
+			return nil, fmt.Errorf("%s: network.allow: %w", path, err)
+		}
+	}
+	existing := map[string]bool{}
+	for _, h := range allow {
+		existing[h] = true
+	}
+	var added []string
+	for _, h := range hosts {
+		if !existing[h] {
+			allow = append(allow, h)
+			existing[h] = true
+			added = append(added, h)
+		}
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	allowJSON, err := json.Marshal(allow)
+	if err != nil {
+		return nil, err
+	}
+	netDoc["allow"] = allowJSON
+	netJSON, err := json.Marshal(netDoc)
+	if err != nil {
+		return nil, err
+	}
+	doc["network"] = netJSON
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return nil, err
+	}
+	return added, os.Rename(tmp, path)
+}
+
 func WatchFile(path string, interval time.Duration, onChange func(data []byte)) {
 	var last []byte
 	t := time.NewTicker(interval)

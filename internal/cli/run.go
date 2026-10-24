@@ -15,6 +15,7 @@ import (
 
 	"harnessh/internal/certs"
 	"harnessh/internal/config"
+	"harnessh/internal/denieddb"
 	"harnessh/internal/netsetup"
 )
 
@@ -22,6 +23,7 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := fs.String("config", "config.harnessh", "path to the config file")
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
+	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -117,6 +119,10 @@ func Run(args []string) error {
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
 	roots := findRootBundle()
+	stateDir := filepath.Dir(*deniedDB)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return err
+	}
 	proxyArgs := []string{
 		"create", "--pod", podName, "--name", proxyName,
 		"--security-opt", "label=disable",
@@ -124,6 +130,7 @@ func Run(args []string) error {
 		"-v", exe + ":/harnessh:ro",
 		"-v", configDir + ":/harnessh-config:ro",
 		"-v", runDir + ":/harnessh-run:ro",
+		"-v", stateDir + ":/harnessh-state",
 	}
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "-v", roots+":/harnessh-run/roots.pem:ro")
@@ -135,6 +142,7 @@ func Run(args []string) error {
 		"--secrets", "/harnessh-run/secrets.json",
 		"--ca-cert", "/harnessh-run/ca.crt",
 		"--ca-key", "/harnessh-run/ca.key",
+		"--denied-db", "/harnessh-state/"+filepath.Base(*deniedDB),
 	)
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "--roots", "/harnessh-run/roots.pem")

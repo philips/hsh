@@ -66,6 +66,37 @@ one are tunneled.
 when the config file changes (the proxy polls once per second). `image`,
 `shell`, and `mounts` require restarting the sandbox.
 
+## Managing the allowlist
+
+Denied egress attempts are answered with `407` and recorded in a SQLite
+database (`$XDG_STATE_HOME/harnessh/denied.db`, default
+`~/.local/state/harnessh/denied.db`). Two subcommands manage it:
+
+```
+harnessh proxy-denied [--all]              # list hosts awaiting review
+harnessh proxy-auto-allow [--config PATH]  # add them to network.allow
+```
+
+`proxy-auto-allow` rewrites the config file as canonical JSON (keys
+sorted, 2-space indent); only `network.allow` changes.
+
+## Tools that self-download
+
+Some tools download helper binaries on first run instead of using system
+packages. Pi (the coding agent), for example, downloads `fd` and `ripgrep`
+from GitHub when they are not already on `PATH`. Inside the sandbox those
+downloads are denied unless the hosts are allowlisted:
+
+- `github.com` — release version lookup and download URLs
+- `release-assets.githubusercontent.com` — where GitHub release assets redirect
+  to (the legacy target is `objects.githubusercontent.com`; allowlist both)
+
+The example image avoids this entirely by pre-installing `fd-find` and
+`ripgrep` and setting `PI_OFFLINE=1`, so Pi's tools work with a minimal
+allowlist and Pi never attempts downloads or update checks inside the
+sandbox. If you prefer Pi's pinned tool versions, allowlist the hosts above
+instead and omit `PI_OFFLINE`.
+
 ## Examples
 
 Minimal dev sandbox with an API key:

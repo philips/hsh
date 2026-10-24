@@ -14,10 +14,13 @@ usage:
   harnessh proxy [flags]                       egress proxy (runs inside the sandbox pod)
   harnessh workspace [flags]                   workspace entrypoint (runs inside the pod)
   harnessh workspace-inner [flags]             internal: workspace child in its own netns
+  harnessh proxy-denied [--db PATH] [--all]    list hosts denied by the egress proxy
+  harnessh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
 
 run flags:
   --config PATH     path to the config file (default: config.harnessh)
   --workspace PATH  workspace directory inside the container (default: first mount target)
+  --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/harnessh/denied.db)
 `
 
 func main() {
@@ -37,6 +40,10 @@ func main() {
 		err = cli.Workspace(rest)
 	case "workspace-inner":
 		err = cli.WorkspaceInner(rest)
+	case "proxy-denied":
+		err = cli.ProxyDenied(rest)
+	case "proxy-auto-allow":
+		err = cli.ProxyAutoAllow(rest)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return

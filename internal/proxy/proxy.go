@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"harnessh/internal/certs"
 	"harnessh/internal/config"
+	"harnessh/internal/denieddb"
 )
 
 type Options struct {
@@ -27,6 +29,7 @@ type Options struct {
 	CACertPath  string
 	CAKeyPath   string
 	RootsPath   string
+	DeniedDB    string
 }
 
 type state struct {
@@ -39,6 +42,7 @@ type Proxy struct {
 	ca        *certs.CA
 	roots     *x509.CertPool
 	transport *http.Transport
+	deniedDB  *sql.DB
 
 	mu sync.RWMutex
 	st state
@@ -70,7 +74,15 @@ func New(opts Options) (*Proxy, error) {
 		MaxIdleConns:      100,
 		IdleConnTimeout:   90 * time.Second,
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport}, nil
+	var db *sql.DB
+	if opts.DeniedDB != "" {
+		var err error
+		db, err = denieddb.Open(opts.DeniedDB)
+		if err != nil {
+			return nil, fmt.Errorf("open denial database: %w", err)
+		}
+	}
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, deniedDB: db}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -192,7 +204,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	host := r.URL.Hostname()
 	if !p.allowed(host) {
-		p.deny(w, host)
+		p.deny(w, host, r.URL.Host)
 		return
 	}
 	for _, s := range p.secretsFor(host) {
@@ -203,9 +215,18 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.forwardHTTP(w, r)
 }
 
-func (p *Proxy) deny(w http.ResponseWriter, host string) {
+func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
 	log.Printf("denied %s (not in network.allow)", host)
-	http.Error(w, fmt.Sprintf("harnessh: egress to %s is not allowed (not in network.allow)", host), http.StatusForbidden)
+	if p.deniedDB != nil {
+		if err := denieddb.Record(p.deniedDB, host, target); err != nil {
+			log.Printf("recording denial of %s: %v", host, err)
+		}
+	}
+	w.Header().Set("Proxy-Authenticate", `Harnessh realm="egress-allowlist"`)
+	http.Error(w,
+		fmt.Sprintf("harnessh: egress to %s is not allowed (not in network.allow)\nreview denied hosts with: harnessh proxy-denied\n", host),
+		http.StatusProxyAuthRequired,
+	)
 }
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +235,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		host = h
 	}
 	if !p.allowed(host) {
-		p.deny(w, host)
+		p.deny(w, host, r.Host)
 		return
 	}
 	hj, ok := w.(http.Hijacker)

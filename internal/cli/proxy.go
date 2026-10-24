@@ -15,6 +15,7 @@ func Proxy(args []string) error {
 	caCert := fs.String("ca-cert", "/harnessh-run/ca.crt", "CA certificate path")
 	caKey := fs.String("ca-key", "/harnessh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
+	deniedDB := fs.String("denied-db", "", "denial database path (empty disables recording)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -25,6 +26,7 @@ func Proxy(args []string) error {
 		CACertPath:  *caCert,
 		CAKeyPath:   *caKey,
 		RootsPath:   *roots,
+		DeniedDB:    *deniedDB,
 	})
 	if err != nil {
 		return err
