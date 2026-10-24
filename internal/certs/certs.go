@@ -79,7 +79,15 @@ func LoadCA(certPEM, keyPEM []byte) (*CA, error) {
 	}
 	key, err := x509.ParseECPrivateKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("parse CA key: %w", err)
+		parsed, pkcs8Err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if pkcs8Err != nil {
+			return nil, fmt.Errorf("parse CA key: %w", err)
+		}
+		ecKey, ok := parsed.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("parse CA key: not an ECDSA private key")
+		}
+		key = ecKey
 	}
 	return &CA{
 		cert:    cert,

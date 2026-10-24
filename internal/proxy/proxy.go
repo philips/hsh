@@ -12,6 +12,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"strings"
 	"sync"
@@ -68,11 +69,12 @@ func New(opts Options) (*Proxy, error) {
 		}
 	}
 	transport := &http.Transport{
-		DialContext:       (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2: true,
-		TLSClientConfig:   &tls.Config{RootCAs: roots},
-		MaxIdleConns:      100,
-		IdleConnTimeout:   90 * time.Second,
+		DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:     true,
+		TLSClientConfig:       &tls.Config{RootCAs: roots},
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 120 * time.Second,
 	}
 	var db *sql.DB
 	if opts.DeniedDB != "" {
@@ -347,12 +349,48 @@ func (p *Proxy) forwardRequest(w io.Writer, req *http.Request) {
 	}
 	defer resp.Body.Close()
 	removeHopHeaders(resp.Header)
-	resp.Proto = "HTTP/1.1"
-	resp.ProtoMajor = 1
-	resp.ProtoMinor = 1
-	if err := resp.Write(w); err != nil {
-		log.Printf("write response for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
+	if resp.ContentLength >= 0 {
+		resp.Proto = "HTTP/1.1"
+		resp.ProtoMajor = 1
+		resp.ProtoMinor = 1
+		if err := resp.Write(w); err != nil {
+			log.Printf("write response for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
+		}
+		return
 	}
+	resp.Header.Del("Content-Length")
+	fmt.Fprintf(w, "HTTP/1.1 %s\r\n", resp.Status)
+	if err := resp.Header.Write(w); err != nil {
+		log.Printf("write response headers for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
+		return
+	}
+	if req.Method == http.MethodHead || !bodyAllowedForStatus(resp.StatusCode) {
+		fmt.Fprint(w, "\r\n")
+		return
+	}
+	fmt.Fprint(w, "Transfer-Encoding: chunked\r\n\r\n")
+	cw := httputil.NewChunkedWriter(w)
+	if _, err := io.Copy(cw, resp.Body); err != nil {
+		log.Printf("stream response for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
+		return
+	}
+	if err := cw.Close(); err != nil {
+		log.Printf("finish chunked response for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
+		return
+	}
+	fmt.Fprint(w, "\r\n")
+}
+
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status < 200:
+		return false
+	case status == http.StatusNoContent:
+		return false
+	case status == http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
