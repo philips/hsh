@@ -4,11 +4,13 @@
   "mounts": [".:/workspace"],
   "secrets": {
     "API_KEY": {
-      "from": "OPENAI_API_KEY",
-      "hosts": ["api.openai.com"]
+      "from": "MISTRAL_API_KEY",
+      "hosts": ["api.mistral.ai"],
+      "header": "Authorization",
+      "prefix": "Bearer "
     }
   },
   "network": {
-    "allow": ["vllm.tailb55c1.ts.net", "api.openai.com"]
+    "allow": ["vllm.tailb55c1.ts.net", "api.mistral.ai"]
   }
 }
