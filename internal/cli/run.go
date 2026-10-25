@@ -2,6 +2,7 @@ package cli
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -33,6 +34,8 @@ func Run(args []string) error {
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
 	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
 	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
+	resumeFlag := fs.Bool("resume", false, "reuse the sandbox for this workspace directory instead of creating a new one")
+	freshFlag := fs.Bool("fresh", false, "with --resume: discard the existing sandbox and start a new one")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -70,26 +73,31 @@ func Run(args []string) error {
 	if _, err := exec.LookPath("podman"); err != nil {
 		return fmt.Errorf("podman is required but was not found in PATH")
 	}
-	ca, err := certs.NewCA()
-	if err != nil {
-		return err
+	resume := *resumeFlag
+	workspaceSource := mounts[0].Source
+	var podName, runDir string
+	var cleanupPod bool
+	if resume {
+		hash := hashPath(workspaceSource)
+		podName = "harnessh-" + hash
+		runDir = filepath.Join(denieddb.StateDir(), "sessions", hash)
+	} else {
+		podName = "harnessh-" + randHex(6)
+		tmpDir, err := os.MkdirTemp("", "harnessh-")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(tmpDir)
+		runDir = filepath.Join(tmpDir, "run")
+		cleanupPod = true
 	}
-	tmpDir, err := os.MkdirTemp("", "harnessh-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-	runDir := filepath.Join(tmpDir, "run")
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return err
 	}
 	caCertPath := filepath.Join(runDir, "ca.crt")
 	caKeyPath := filepath.Join(runDir, "ca.key")
 	secretsPath := filepath.Join(runDir, "secrets.json")
-	if err := os.WriteFile(caCertPath, ca.CertPEM(), 0o644); err != nil {
-		return err
-	}
-	if err := os.WriteFile(caKeyPath, ca.KeyPEM(), 0o600); err != nil {
+	if _, err := loadOrCreateCA(resume, caCertPath, caKeyPath); err != nil {
 		return err
 	}
 	rs, missing := config.ResolveSecrets(cfg)
@@ -112,15 +120,16 @@ func Run(args []string) error {
 		}
 		infof("harnessh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
 	})
-	podName := "harnessh-" + randHex(6)
-	infof("harnessh: creating pod %s (image %s)\n", podName, cfg.Image)
-	if out, err := podman("pod", "create", "--name", podName); err != nil {
-		return fmt.Errorf("create pod: %w\n%s", err, out)
-	}
+	proxyName := podName + "-proxy"
+	wsName := podName + "-ws"
 	cleanup := func() {
-		_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
+		if cleanupPod {
+			_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
+		}
 	}
-	defer cleanup()
+	if cleanupPod {
+		defer cleanup()
+	}
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -128,8 +137,6 @@ func Run(args []string) error {
 		cleanup()
 		os.Exit(130)
 	}()
-	proxyName := podName + "-proxy"
-	wsName := podName + "-ws"
 	roots := findRootBundle()
 	stateDir := filepath.Dir(*deniedDB)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -159,14 +166,46 @@ func Run(args []string) error {
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "--roots", "/harnessh-run/roots.pem")
 	}
-	if out, err := podman(proxyArgs...); err != nil {
-		return fmt.Errorf("create proxy container: %w\n%s", err, out)
+	reattach := false
+	if resume {
+		if podExists(podName) {
+			if *freshFlag {
+				infof("harnessh: discarding existing sandbox %s (--fresh)\n", podName)
+				_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
+			} else {
+				reattach = true
+			}
+		}
 	}
-	if out, err := podman("start", proxyName); err != nil {
-		return fmt.Errorf("start proxy container: %w\n%s", err, out)
+	if reattach {
+		infof("harnessh: resuming sandbox %s for workspace %s\n", podName, workspaceSource)
+		if !containerExists(proxyName) {
+			if out, err := podman(proxyArgs...); err != nil {
+				return fmt.Errorf("create proxy container: %w\n%s", err, out)
+			}
+		} else if !containerRunning(proxyName) {
+			if out, err := podman("start", proxyName); err != nil {
+				return fmt.Errorf("start proxy container: %w\n%s", err, out)
+			}
+		}
+	} else {
+		infof("harnessh: creating pod %s (image %s)\n", podName, cfg.Image)
+		podCreateArgs := []string{"pod", "create", "--name", podName}
+		if resume {
+			podCreateArgs = append(podCreateArgs, "--label", "harnessh.workspace="+workspaceSource)
+		}
+		if out, err := podman(podCreateArgs...); err != nil {
+			return fmt.Errorf("create pod: %w\n%s", err, out)
+		}
+		if out, err := podman(proxyArgs...); err != nil {
+			return fmt.Errorf("create proxy container: %w\n%s", err, out)
+		}
+		if out, err := podman("start", proxyName); err != nil {
+			return fmt.Errorf("start proxy container: %w\n%s", err, out)
+		}
 	}
 	wsArgs := []string{
-		"run", "--pod", podName, "--name", wsName,
+		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
 		"--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN",
 		"--entrypoint", "/harnessh",
@@ -194,6 +233,25 @@ func Run(args []string) error {
 		"--home", "/home/harnessh",
 	)
 	infof("harnessh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
+	if reattach || resume {
+		if reattach && containerRunning(wsName) {
+			return fmt.Errorf("sandbox for workspace %s is already running; exit it first or launch without --resume", workspaceSource)
+		}
+		if !reattach || !containerExists(wsName) {
+			if out, err := podman(wsArgs...); err != nil {
+				return fmt.Errorf("create workspace container: %w\n%s", err, out)
+			}
+		}
+		code, err := attachContainer(wsName)
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			os.Exit(code)
+		}
+		return nil
+	}
+	wsArgs[0] = "run"
 	cmd := exec.Command("podman", wsArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -213,6 +271,72 @@ func Run(args []string) error {
 		os.Exit(code)
 	}
 	return nil
+}
+
+func loadOrCreateCA(reuse bool, certPath, keyPath string) (*certs.CA, error) {
+	if reuse {
+		certPEM, err1 := os.ReadFile(certPath)
+		keyPEM, err2 := os.ReadFile(keyPath)
+		if err1 == nil && err2 == nil {
+			if ca, err := certs.LoadCA(certPEM, keyPEM); err == nil {
+				return ca, nil
+			}
+		}
+	}
+	ca, err := certs.NewCA()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(certPath, ca.CertPEM(), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, ca.KeyPEM(), 0o600); err != nil {
+		return nil, err
+	}
+	return ca, nil
+}
+
+func attachContainer(name string) (int, error) {
+	cmd := exec.Command("podman", "start", "-ai", name)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), nil
+		}
+		return 0, err
+	}
+	out, err := podman("inspect", "--format", "{{.State.ExitCode}}", name)
+	if err != nil {
+		return 0, nil
+	}
+	code := 0
+	_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &code)
+	return code, nil
+}
+
+func podExists(name string) bool {
+	_, err := podman("pod", "exists", name)
+	return err == nil
+}
+
+func containerExists(name string) bool {
+	_, err := podman("container", "exists", name)
+	return err == nil
+}
+
+func containerRunning(name string) bool {
+	out, err := podman("inspect", "--format", "{{.State.Running}}", name)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) == "true"
+}
+
+func hashPath(p string) string {
+	sum := sha256.Sum256([]byte(p))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func podman(args ...string) (string, error) {

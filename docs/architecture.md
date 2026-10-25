@@ -226,6 +226,36 @@ Mounts, image, and shell changes require a restart.
   the temporary directory deleted.
 - Proxy logs: `podman logs <pod>-proxy` while the session is running.
 
+## Sandbox reuse: `harnessh --resume`
+
+By default every launch creates a fresh pod (random name) and removes it on
+exit. With `--resume`, the sandbox is keyed by the workspace directory (the
+first mount's source) and persists across launches:
+
+- The pod is named `harnessh-<sha256(workspace)[:12]>` and labeled
+  `harnessh.workspace=<path>` (find it with
+  `podman pod ls --filter label=harnessh.workspace=<path>`).
+- On exit the pod is left in place (the workspace container stops, the
+  proxy keeps running). A later `--resume` re-enters the **same
+  container** — its filesystem persists, so state inside the workspace
+  container (pi's `~/.pi` sign-in and sessions, packages installed into
+  the container, files in its home) survives across launches.
+- Per-sandbox state (the MITM CA and resolved secrets) lives in
+  `$XDG_STATE_HOME/harnessh/sessions/<hash>/` and is reused, so the CA the
+  workspace trusts stays stable across launches.
+- On re-entry the workspace entrypoint deletes the stale veth pair left
+  in the pod network namespace and creates a fresh one; the proxy's
+  listeners keep working across this.
+- Secrets are re-resolved from the host environment on every launch and
+  pushed to the running proxy via its hot-reloaded `secrets.json`.
+- `--fresh` discards the existing pod and starts a new one for the same
+  workspace (the CA and session state are kept). Two concurrent
+  `--resume` sessions for the same workspace are refused — exit the
+  running one first.
+
+A reused sandbox accumulates container state; use `--fresh` (or
+`podman pod rm -f <pod>`) to reset it.
+
 ## Security properties and limitations
 
 Protected against:

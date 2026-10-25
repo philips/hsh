@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"harnessh/internal/cli"
 )
@@ -23,6 +24,10 @@ run flags:
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/harnessh/denied.db)
   --verbose         print progress information to stderr (or set HARNESSH_VERBOSE=1)
+  --resume          reuse the sandbox for this workspace directory: reattach to the
+                    existing container instead of creating a new one; the sandbox
+                    is left in place on exit so a later --resume re-enters it
+  --fresh           with --resume: discard the existing sandbox and start a new one
 
 Progress information is suppressed by default so the sandbox starts with a
 clean terminal prompt; warnings and errors are always printed.
@@ -30,8 +35,8 @@ clean terminal prompt; warnings and errors are always printed.
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 {
-		args = []string{"run"}
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		args = append([]string{"run"}, args...)
 	}
 	cmd := args[0]
 	rest := args[1:]

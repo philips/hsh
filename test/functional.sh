@@ -5,6 +5,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 DUMMY_PID=""
 PROXY_PID=""
+RESUME_POD=""
 PASSED=0
 cleanup() {
 	if [ -n "$DUMMY_PID" ]; then
@@ -12,6 +13,9 @@ cleanup() {
 	fi
 	if [ -n "$PROXY_PID" ]; then
 		kill "$PROXY_PID" 2>/dev/null || true
+	fi
+	if [ -n "$RESUME_POD" ]; then
+		podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
 	fi
 	if [ "$PASSED" = "1" ]; then
 		rm -rf "$TMP"
@@ -202,6 +206,41 @@ pass "standalone proxy denies non-allowlisted hosts with 407"
 
 kill "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
+
+echo "== step 5: --resume re-enters the same container"
+export XDG_STATE_HOME="$TMP/xdg"
+mkdir -p "$XDG_STATE_HOME"
+RESUME_POD="$(podman pod ls -q --filter "label=harnessh.workspace=$TMP/workspace" 2>/dev/null || true)"
+if [ -n "$RESUME_POD" ]; then
+	fail "unexpected existing sandbox for the test workspace"
+fi
+"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" --resume >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
+echo resume-marker > /home/harnessh/marker.txt
+echo "launch1-marker-written"
+exit
+CMDS
+RESUME_POD="$(podman pod ls -q --filter "label=harnessh.workspace=$TMP/workspace" 2>/dev/null || true)"
+if [ -z "$RESUME_POD" ]; then
+	fail "sandbox pod was not left behind after a --resume exit"
+fi
+pass "sandbox persists after a --resume exit"
+"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" --resume >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
+echo "--- marker from the previous launch (same container?):"
+cat /home/harnessh/marker.txt
+echo "--- proxied request after re-entry:"
+curl -sS -o /dev/null -w 'code=%{http_code}\n' --max-time 15 https://api.mistral.ai
+echo "--- DNS after re-entry:"
+getent hosts api.mistral.ai | head -1
+exit
+CMDS
+grep -qx 'resume-marker' "$TMP/resume2.out" || fail "container state did not persist across --resume launches"
+pass "same container re-entered; state persisted"
+grep -Eq '^code=[1-5][0-9][0-9]$' "$TMP/resume2.out" || fail "proxy not working after re-entry"
+pass "proxy works after re-entry"
+grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+api\.mistral\.ai' "$TMP/resume2.out" || fail "DNS not working after re-entry"
+pass "DNS works after re-entry"
+podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
+RESUME_POD=""
 
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"

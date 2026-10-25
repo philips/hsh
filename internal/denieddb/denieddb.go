@@ -41,15 +41,19 @@ type DeniedHost struct {
 	AllowedAt string
 }
 
-func DefaultPath() string {
+func StateDir() string {
 	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
-		return filepath.Join(v, "harnessh", "denied.db")
+		return filepath.Join(v, "harnessh")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "denied.db"
+		return "harnessh-state"
 	}
-	return filepath.Join(home, ".local", "state", "harnessh", "denied.db")
+	return filepath.Join(home, ".local", "state", "harnessh")
+}
+
+func DefaultPath() string {
+	return filepath.Join(StateDir(), "denied.db")
 }
 
 func Open(path string) (*sql.DB, error) {

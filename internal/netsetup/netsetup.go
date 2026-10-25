@@ -20,6 +20,13 @@ func InnerCIDR() string { return InnerIP + "/24" }
 func ProxyAddr() string { return "http://" + HostIP + ":" + ProxyPort }
 
 func CreateHostVeth() error {
+	for _, name := range []string{InnerVethName, HostVethName} {
+		if link, err := netlink.LinkByName(name); err == nil {
+			if err := netlink.LinkDel(link); err != nil {
+				return fmt.Errorf("delete stale %s: %w", name, err)
+			}
+		}
+	}
 	veth := &netlink.Veth{
 		LinkAttrs: netlink.LinkAttrs{Name: HostVethName},
 		PeerName:  InnerVethName,
