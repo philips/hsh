@@ -147,11 +147,12 @@ cannot erase or forge its own denial record. Database errors are logged
 and never change the response: a denial is a denial with or without the
 log.
 
-Two host-side subcommands work with the database:
+Three host-side subcommands work with the database:
 
 ```
 harnessh proxy-denied [--db PATH] [--all]          list hosts awaiting review
 harnessh proxy-auto-allow [--config PATH] [--db PATH]
+harnessh proxy-watch [--config PATH] [--db PATH] [--all]
 ```
 
 `proxy-denied` prints pending rows (`allowed = 0`) as a table (host,
@@ -163,6 +164,19 @@ so they leave the review list, and prints a summary — trust on first use:
 the first attempt is denied and recorded, review allows it. The config
 file is rewritten as canonical JSON (2-space indent, keys sorted); only
 `network.allow` changes semantically.
+
+`proxy-watch` is the interactive counterpart (bubbletea/bubbles TUI,
+requires a terminal): a multi-select list of pending denials, most
+recently requested first, refreshed live every 2s. Keys: `space` select,
+`a`/`n` select/clear all (ignoring any active filter), `/` filter,
+`enter` approve the selected hosts (added to `network.allow`, marked
+allowed — running proxies hot-reload the config within ~1s), `i` ignore
+them (marked handled without allowing: they leave the review list
+permanently), `t` toggle a view of ignored hosts (dimmed,
+non-selectable), `r` refresh, `?` help, `q`/`esc`/`ctrl+c` quit. To tell
+ignored rows apart from approved ones the schema has an `ignored` column
+(migrated in on open for older databases). DNS denials stay audit-only
+with `proxy-denied --dns`.
 
 ## Secret injection
 
@@ -255,6 +269,41 @@ first mount's source) and persists across launches:
 
 A reused sandbox accumulates container state; use `--fresh` (or
 `podman pod rm -f <pod>`) to reset it.
+
+## Why podman
+
+harnessh uses podman because it is the only container runtime that works
+rootless, without a central daemon, and with the same CLI as Docker. It is
+the only runtime that can run the harnessh sandbox without requiring root
+or a system-wide daemon.
+
+## Why shell out to podman
+
+harnessh uses the `podman` CLI (shelling out) instead of the Go bindings
+(`github.com/containers/podman/v5/bindings`) or the internal `libpod`
+library. The CLI is the stable contract: it is guaranteed to match the
+installed podman version, adds zero dependencies, and inherits podman's
+rootless handling, storage, and image management for free. The Go
+bindings require a running `podman system service` daemon (REST over a
+Unix socket) and drag a massive module graph into the build; `libpod` is
+podman's internal core and is not a supported public API.
+
+Shelling out is also the standard for podman tooling (podman-compose,
+buildah, skopeo) and is the right fit for harnessh's simple usage: exit
+codes, pod IDs, and a handful of operations (pod create, container
+create/start, pod rm, pod ls).
+
+## Why not Docker
+
+Docker requires a central daemon (`dockerd`) running as root, and the
+Docker CLI (`docker`) talks to it over a Unix socket. This means that
+any user who can talk to the Docker socket effectively has root access
+on the host. This is a security risk and is not acceptable for a tool
+that is meant to be run by unprivileged users.
+
+Docker also does not support rootless containers in the same way that
+podman does. While Docker has added some rootless support, it is not as
+mature or as well-integrated as podman's rootless support.
 
 ## Security properties and limitations
 

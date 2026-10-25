@@ -18,6 +18,9 @@ usage:
   harnessh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
                                                (--dns lists DNS query denials)
   harnessh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
+  harnessh proxy-watch [--config PATH] [--db PATH] [--all]
+                                               interactive review of denied hosts (TUI):
+                                               approve or ignore them one by one
 
 run flags:
   --config PATH     path to the config file (default: config.harnessh)
@@ -54,6 +57,8 @@ func main() {
 		err = cli.ProxyDenied(rest)
 	case "proxy-auto-allow":
 		err = cli.ProxyAutoAllow(rest)
+	case "proxy-watch":
+		err = cli.ProxyWatch(rest)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return

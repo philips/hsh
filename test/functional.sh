@@ -242,6 +242,11 @@ pass "DNS works after re-entry"
 podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
 RESUME_POD=""
 
+echo "== step 6: proxy-watch requires a terminal"
+"$HARNESSH" proxy-watch --config "$TMP/config.harnessh" --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
+grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
+pass "proxy-watch refuses to run without a terminal"
+
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"
 PASSED=1
