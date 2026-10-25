@@ -90,7 +90,7 @@ type Store interface {
 harnessh secret add NAME [--db PATH] [--force] [--value-stdin]
                          [--config PATH] [--host H]... [--header H] [--prefix P]
 harnessh secret rm NAME [--db PATH] [--config PATH]
-harnessh secret ls [--db PATH]        # optional, see below
+harnessh secret ls [--db PATH]
 ```
 
 - `secret add NAME` prompts for the value with echo disabled (hidden
@@ -104,13 +104,11 @@ harnessh secret ls [--db PATH]        # optional, see below
     updates the `secrets.<NAME>` entry in the config file, writing
     `from: "harnessh://NAME"` — the same RawMessage-preserving rewrite as
     `AddAllowedHosts`. Without those flags it only stores the value.
-- `secret rm NAME` deletes it from the store; fails if missing. With
-  `--config`, it also removes config entries whose `from` is
-  `harnessh://NAME` and prints what it removed; without it, it prints a
-  warning listing config entries that still reference the deleted secret
-  (the proxy will report them missing).
-- `secret ls` (optional, cheap): names + created/updated timestamps.
-  Never prints values.
+- `secret rm NAME` deletes it from the store; fails if missing. It then
+  scans the config (default `config.harnessh`, or `--config PATH`) and
+  warns if any `secrets` entry still references `harnessh://NAME` — the
+  proxy will report it missing. It never edits the config.
+- `secret ls`: names + created/updated timestamps. Never prints values.
 
 ## Resolution changes
 
@@ -154,9 +152,10 @@ the host and is never mounted into the workspace.
   0700 directory, 0600 file, schema).
 - `internal/config/config.go` — `ParseSecretRef(from string) (scheme,
   name string, err error)`; `ResolveSecrets` gains a store lookup by
-  scheme; `AddSecret(path, name, Secret)` and `RemoveSecretRefs(path,
-  scheme, name)` as RawMessage-preserving rewrites like
-  `AddAllowedHosts`.
+  scheme; `AddSecret(path, name, Secret)` as a RawMessage-preserving
+  rewrite like `AddAllowedHosts`; `FindSecretRefs(path, ref string)
+  ([]string, error)` returning the config secret names that reference a
+  given URL (used by `secret rm` to warn).
 - `internal/cli/secret.go` — the `secret` command with `add` / `rm` /
   `ls` subcommands; hidden prompt via `golang.org/x/term`
   (`term.ReadPassword`, small pure-Go addition).
@@ -187,7 +186,8 @@ the host and is never mounted into the workspace.
    unknown scheme fails at config load.
 4. `secret add NAME --host api.mistral.ai --header Authorization
    --prefix "Bearer "` writes the config entry with
-   `from: "harnessh://NAME"`; `secret rm NAME --config ...` removes it.
+   `from: "harnessh://NAME"`; `secret rm NAME` deletes it from the store
+   and warns that the config still references it.
 5. Functional: add a secret, run a sandbox, the dummy endpoint receives
    the injected header (same assertion as the existing secret test);
    after `secret rm`, the proxy logs the secret as missing and does not
@@ -195,14 +195,19 @@ the host and is never mounted into the workspace.
 6. `CGO_ENABLED=0 go build` unchanged; `go vet` clean; the full
    functional test passes.
 
-## Open questions
+## Decisions (resolved)
 
-- `secret ls`: include (proposed) or add/rm only?
-- Should `secret rm` auto-remove config references (with `--config`) or
-  only warn? Proposed: remove with `--config`, warn without.
-- Encryption at rest (OS keyring / passphrase)? Out of scope; plaintext
-  0600 like `~/.netrc`, with a first-use warning.
-- Should the store path respect `XDG_CONFIG_HOME` (proposed) or be
-  literally `$HOME/.config/harnessh`?
-- A `dotenv://` scheme would subsume plans/0006-env-file.md (marked not
-  implemented) — worth adding later as another pluggable store?
+- `secret ls`: included — names + created/updated timestamps, never
+  values.
+- `secret rm` and config references: warn-only. `secret rm` deletes the
+  store entry and warns if the config (default `config.harnessh`, or
+  `--config PATH`) still references `harnessh://NAME` — it never edits
+  the config.
+- Encryption at rest: out of scope. Plaintext with a 0700 directory /
+  0600 file and a first-use warning (the same trust level as `~/.netrc`
+  or `~/.aws/credentials`).
+- Store path: `$XDG_CONFIG_HOME/harnessh/secrets.db`, defaulting to
+  `$HOME/.config/harnessh/secrets.db`, with a `--db` flag override.
+- `dotenv://`: perhaps later, but not now. The scheme dispatch makes it
+  a small addition, and it would subsume plans/0006-env-file.md (kept
+  marked not implemented until then).
