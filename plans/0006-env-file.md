@@ -1,5 +1,10 @@
 # Env file for config secrets
 
+> **Status: not implemented.** Deferred in favor of the secret store and
+> the `secret add` / `secret rm` subcommands (plans/0009-secret-store.md).
+> The env-file idea maps onto that design as a future `dotenv://`
+> reference scheme — one more pluggable secret store.
+
 ## Goal
 
 `secrets.<NAME>.from` currently reads only the host process environment.
