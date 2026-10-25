@@ -175,7 +175,7 @@ cat >"$TMP/proxy-config.harnessh" <<'EOF'
 { "network": { "allow": ["localhost"] } }
 EOF
 cat >"$TMP/proxy-secrets.json" <<'EOF'
-{ "secrets": [ { "name": "API_KEY", "value": "test-secret-value-123", "header": "Api-Key", "prefix": "", "hosts": ["localhost"] } ] }
+{ "secrets": [ { "name": "API_KEY", "value": "test-secret-value-123", "header": "Authorization", "prefix": "Bearer ", "hosts": ["localhost"] } ] }
 EOF
 "$HARNESSH" proxy --listen 127.0.0.1:18080 --config "$TMP/proxy-config.harnessh" --secrets "$TMP/proxy-secrets.json" --ca-cert "$TMP/ca.crt" --ca-key "$TMP/ca.key" >"$TMP/proxy.out" 2>&1 &
 PROXY_PID=$!
@@ -186,12 +186,15 @@ for _ in $(seq 1 50); do
 	sleep 0.1
 done
 
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -x http://127.0.0.1:18080 http://localhost:8899/v1/models)"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer fake-key-from-client" -x http://127.0.0.1:18080 http://localhost:8899/v1/models)"
 [ "$CODE" = "200" ] || fail "standalone proxy did not forward to the allowed host (got $CODE)"
 pass "standalone proxy forwards to the allowlisted host"
 
-grep -q 'Api-Key: test-secret-value-123' "$TMP/requests.log" || fail "the secret was not injected into the forwarded request"
-pass "secret injected into the forwarded request"
+grep -q 'Authorization: Bearer test-secret-value-123' "$TMP/requests.log" || fail "the secret was not injected as Authorization: Bearer into the forwarded request"
+if grep -q 'fake-key-from-client' "$TMP/requests.log"; then
+	fail "the client's placeholder credential was not replaced by the injected secret"
+fi
+pass "secret injected as Authorization: Bearer, replacing the client's placeholder"
 
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -x http://127.0.0.1:18080 http://example.com/)"
 [ "$CODE" = "407" ] || fail "standalone proxy did not deny a non-allowlisted host with 407 (got $CODE)"

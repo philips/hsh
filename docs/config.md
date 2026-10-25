@@ -49,9 +49,31 @@ If the environment variable named by `from` is not set, harnessh prints a
 warning and the secret is not injected (fail-open for availability; the
 request is still forwarded, just without the header).
 
-Injection happens for every request to a matching host, replacing any value
-the workspace sent. Hosts with a secret are TLS-intercepted; hosts without
-one are tunneled.
+Injection happens for every request to a matching host, **replacing** any
+value the workspace sent for that header. Hosts with a secret are
+TLS-intercepted; hosts without one are tunneled.
+
+The common case is a bearer token for an LLM API — name the header and
+prefix explicitly, because the default header name (the secret name with
+`_` → `-`, e.g. `Api-Key`) is not what APIs read:
+
+```json
+"secrets": {
+  "API_KEY": {
+    "from": "MISTRAL_API_KEY",
+    "hosts": ["api.mistral.ai"],
+    "header": "Authorization",
+    "prefix": "Bearer "
+  }
+}
+```
+
+With this, the proxy rewrites the request's `Authorization` header to
+`Bearer <value>`, so tools inside the sandbox can be signed in with a
+placeholder key (e.g. in pi's `auth.json`) and never see the real one.
+`from` reads the **host** environment (`export MISTRAL_API_KEY=...` before
+launching); harnessh does not read `.env` files, and keys should not live
+inside mounted directories where the sandbox can read them.
 
 ## Allowlist matching
 
