@@ -1,26 +1,26 @@
-# harnessh architecture
+# hsh architecture
 
-harnessh runs an interactive shell inside a rootless podman sandbox with
+hsh runs an interactive shell inside a rootless podman sandbox with
 controlled egress. It is a single static Go binary that plays three roles:
 
 | Mode | Runs | Purpose |
 |---|---|---|
-| `harnessh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
-| `harnessh proxy` | proxy container, inside the pod | egress proxy: allowlist, TLS interception, secret injection |
-| `harnessh workspace` / `harnessh workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
+| `hsh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
+| `hsh proxy` | proxy container, inside the pod | egress proxy: allowlist, TLS interception, secret injection |
+| `hsh workspace` / `hsh workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
 
-The same binary is bind-mounted read-only at `/harnessh` in both containers.
+The same binary is bind-mounted read-only at `/hsh` in both containers.
 
 ## Pod layout
 
-`harnessh run` creates one podman pod with two containers:
+`hsh run` creates one podman pod with two containers:
 
 ```
 host
 └── pod (shared network namespace, pasta networking, internet access)
-    ├── proxy container    (harnessh proxy, listens on 10.77.0.1:8080)
-    └── workspace container (harnessh workspace → user shell)
-        └── inner network namespace (created by `harnessh workspace-inner`)
+    ├── proxy container    (hsh proxy, listens on 10.77.0.1:8080)
+    └── workspace container (hsh workspace → user shell)
+        └── inner network namespace (created by `hsh workspace-inner`)
             └── user shell + tools (no default route)
 ```
 
@@ -32,11 +32,11 @@ signal the proxy's processes.
 
 The workspace container starts in the pod's network namespace with
 `NET_ADMIN` and `SYS_ADMIN` capabilities. Its entrypoint
-(`harnessh workspace`):
+(`hsh workspace`):
 
 1. creates a veth pair (`hsh0`/`hsh1`) in the pod network namespace and
    configures `hsh0` with `10.77.0.1/24`
-2. re-executes itself as `harnessh workspace-inner`, which calls
+2. re-executes itself as `hsh workspace-inner`, which calls
    `unshare(CLONE_NEWNET)` to move into a fresh, empty network namespace
 3. moves `hsh1` into the child's namespace (by PID, via netlink)
 4. drops all of its own capabilities
@@ -75,7 +75,7 @@ the veth addresses.
 Every request is checked against `network.allow`:
 
 - **Denied**: the proxy answers `407 Proxy Authentication Required` with a
-  `Proxy-Authenticate: Harnessh realm="egress-allowlist"` header (RFC 7235)
+  `Proxy-Authenticate: Hsh realm="egress-allowlist"` header (RFC 7235)
   and records the host in the denial database. For `CONNECT` this surfaces
   in curl as `CONNECT tunnel failed, response 407`.
 - **Allowed, no secret configured for the host**: the proxy tunnels the
@@ -110,9 +110,9 @@ data via DNS tunneling without ever opening a TCP connection the proxy
 could check.
 
 DNS denials are recorded in a separate `dns_denied` table in the same
-denial database. They do not appear in the default `harnessh proxy-denied`
+denial database. They do not appear in the default `hsh proxy-denied`
 listing and are not auto-allowed, so noisy lookups (telemetry domains, PTR
-queries) cannot pollute the HTTP review flow; `harnessh proxy-denied --dns`
+queries) cannot pollute the HTTP review flow; `hsh proxy-denied --dns`
 lists them. When `proxy-auto-allow` allows a host, matching `dns_denied`
 rows are marked allowed as well.
 
@@ -120,8 +120,8 @@ rows are marked allowed as well.
 
 Every denial is recorded in a SQLite database (modernc.org/sqlite — pure Go,
 so the `CGO_ENABLED=0` static build is unaffected) at
-`$XDG_STATE_HOME/harnessh/denied.db` (default `~/.local/state/harnessh/denied.db`,
-override with `harnessh run --denied-db PATH`). The database is opened in WAL
+`$XDG_STATE_HOME/hsh/denied.db` (default `~/.local/state/hsh/denied.db`,
+override with `hsh run --denied-db PATH`). The database is opened in WAL
 mode with a busy timeout, so the proxy (writer) and the CLI (reader) can use
 it concurrently, including across simultaneous sessions.
 
@@ -150,9 +150,9 @@ log.
 Three host-side subcommands work with the database:
 
 ```
-harnessh proxy-denied [--db PATH] [--all]          list hosts awaiting review
-harnessh proxy-auto-allow [--config PATH] [--db PATH]
-harnessh proxy-watch [--config PATH] [--db PATH] [--all]
+hsh proxy-denied [--db PATH] [--all]          list hosts awaiting review
+hsh proxy-auto-allow [--config PATH] [--db PATH]
+hsh proxy-watch [--config PATH] [--db PATH] [--all]
 ```
 
 `proxy-denied` prints pending rows (`allowed = 0`) as a table (host,
@@ -190,7 +190,7 @@ Secrets are declared in the config as `secrets.<NAME>` with:
 
 The flow keeps the secret out of the workspace entirely:
 
-1. `harnessh run` reads the values from the host environment and writes them
+1. `hsh run` reads the values from the host environment and writes them
    to `secrets.json` in a temporary directory (mode 0600)
 2. the temporary directory is bind-mounted read-only into the **proxy
    container only** — the workspace container never sees it
@@ -204,7 +204,7 @@ the proxy logs header names but never values.
 
 ## TLS interception
 
-`harnessh run` generates a fresh ECDSA P-256 CA per run (never persisted).
+`hsh run` generates a fresh ECDSA P-256 CA per run (never persisted).
 The CA certificate is bind-mounted into the workspace (which appends it to
 the system trust bundle and exports `SSL_CERT_FILE`, `GIT_SSL_CAINFO`,
 `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`); the CA
@@ -217,7 +217,7 @@ proxy container, falling back to the image's bundle).
 ## Configuration hot reload
 
 The proxy polls the config file and the resolved-secrets file once per
-second and swaps its in-memory state when either changes. `harnessh run`
+second and swaps its in-memory state when either changes. `hsh run`
 likewise watches the config file and rewrites `secrets.json` when it
 changes, so `network.allow` and secret values/hosts update without
 restarting the sandbox. Both files are reached through **directory**
@@ -230,32 +230,32 @@ Mounts, image, and shell changes require a restart.
 
 - Progress information (pod creation, workspace start, config reloads) is
   suppressed by default so the sandbox starts with a clean terminal prompt;
-  pass `--verbose` (or set `HARNESSH_VERBOSE=1`) to see it on stderr.
+  pass `--verbose` (or set `HSH_VERBOSE=1`) to see it on stderr.
   Warnings and errors are always printed.
-- The pod is named `harnessh-<random>`; containers are `<pod>-proxy` and
+- The pod is named `hsh-<random>`; containers are `<pod>-proxy` and
   `<pod>-ws`.
-- `harnessh run` attaches to the workspace container (`podman run -it`, or
+- `hsh run` attaches to the workspace container (`podman run -it`, or
   `-i` when stdin is not a terminal) and propagates its exit code.
 - On exit, SIGINT, or SIGTERM, the pod is removed (`podman pod rm -f`) and
   the temporary directory deleted.
 - Proxy logs: `podman logs <pod>-proxy` while the session is running.
 
-## Sandbox reuse: `harnessh --resume`
+## Sandbox reuse: `hsh --resume`
 
 By default every launch creates a fresh pod (random name) and removes it on
 exit. With `--resume`, the sandbox is keyed by the workspace directory (the
 first mount's source) and persists across launches:
 
-- The pod is named `harnessh-<sha256(workspace)[:12]>` and labeled
-  `harnessh.workspace=<path>` (find it with
-  `podman pod ls --filter label=harnessh.workspace=<path>`).
+- The pod is named `hsh-<sha256(workspace)[:12]>` and labeled
+  `hsh.workspace=<path>` (find it with
+  `podman pod ls --filter label=hsh.workspace=<path>`).
 - On exit the pod is left in place (the workspace container stops, the
   proxy keeps running). A later `--resume` re-enters the **same
   container** — its filesystem persists, so state inside the workspace
   container (pi's `~/.pi` sign-in and sessions, packages installed into
   the container, files in its home) survives across launches.
 - Per-sandbox state (the MITM CA and resolved secrets) lives in
-  `$XDG_STATE_HOME/harnessh/sessions/<hash>/` and is reused, so the CA the
+  `$XDG_STATE_HOME/hsh/sessions/<hash>/` and is reused, so the CA the
   workspace trusts stays stable across launches.
 - On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one; the proxy's
@@ -272,14 +272,14 @@ A reused sandbox accumulates container state; use `--fresh` (or
 
 ## Why podman
 
-harnessh uses podman because it is the only container runtime that works
+hsh uses podman because it is the only container runtime that works
 rootless, without a central daemon, and with the same CLI as Docker. It is
-the only runtime that can run the harnessh sandbox without requiring root
+the only runtime that can run the hsh sandbox without requiring root
 or a system-wide daemon.
 
 ## Why shell out to podman
 
-harnessh uses the `podman` CLI (shelling out) instead of the Go bindings
+hsh uses the `podman` CLI (shelling out) instead of the Go bindings
 (`github.com/containers/podman/v5/bindings`) or the internal `libpod`
 library. The CLI is the stable contract: it is guaranteed to match the
 installed podman version, adds zero dependencies, and inherits podman's
@@ -289,7 +289,7 @@ Unix socket) and drag a massive module graph into the build; `libpod` is
 podman's internal core and is not a supported public API.
 
 Shelling out is also the standard for podman tooling (podman-compose,
-buildah, skopeo) and is the right fit for harnessh's simple usage: exit
+buildah, skopeo) and is the right fit for hsh's simple usage: exit
 codes, pod IDs, and a handful of operations (pod create, container
 create/start, pod rm, pod ls).
 
@@ -333,7 +333,7 @@ hostile inference providers):
 ## Building
 
 ```
-CGO_ENABLED=0 go build -o harnessh .
+CGO_ENABLED=0 go build -o hsh .
 ```
 
 Requires Go 1.24+ and a working rootless podman installation.
@@ -344,17 +344,17 @@ Requires Go 1.24+ and a working rootless podman installation.
 agent pre-installed:
 
 ```
-podman build -t harnessh-example examples/
+podman build -t hsh-example examples/
 ```
 
-`examples/config.harnessh` uses it (`image: localhost/harnessh-example:latest`,
+`examples/config.hsh` uses it (`image: localhost/hsh-example:latest`,
 `shell: /bin/bash`). Pre-installing tools in the image means they work without
 allowlisting their install sources, so the egress allowlist can stay minimal
 (the example config's allowlist is exactly the MVP plan's).
 
 The workspace shell inherits the image's environment (including `PATH`), so
 `ENV` directives in the image apply. The workspace home directory is
-`/home/harnessh`; the example image sets `HOME` to the same value and
+`/home/hsh`; the example image sets `HOME` to the same value and
 installs Pi there.
 
 The example image also pre-installs `fd-find` and `ripgrep` and sets

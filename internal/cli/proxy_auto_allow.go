@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"harnessh/internal/config"
-	"harnessh/internal/denieddb"
+	"hsh/internal/config"
+	"hsh/internal/denieddb"
 )
 
 func ProxyAutoAllow(args []string) error {
 	fs := flag.NewFlagSet("proxy-auto-allow", flag.ContinueOnError)
-	configPath := fs.String("config", "config.harnessh", "config file to add allowed hosts to")
+	configPath := fs.String("config", "config.hsh", "config file to add allowed hosts to")
 	dbPath := fs.String("db", denieddb.DefaultPath(), "denial database path")
 	if err := fs.Parse(args); err != nil {
 		return err

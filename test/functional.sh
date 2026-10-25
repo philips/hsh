@@ -34,13 +34,13 @@ pass() {
 	echo "PASS: $*"
 }
 
-echo "== building harnessh and the dummy endpoint"
-(cd "$REPO" && CGO_ENABLED=0 go build -o "$TMP/harnessh" .)
+echo "== building hsh and the dummy endpoint"
+(cd "$REPO" && CGO_ENABLED=0 go build -o "$TMP/hsh" .)
 (cd "$REPO" && go build -o "$TMP/dummyopenai" ./test/dummyopenai)
 
 echo "== ensuring the example image exists"
-if ! podman image exists localhost/harnessh-example:latest; then
-	(cd "$REPO" && podman build -q -t harnessh-example examples/)
+if ! podman image exists localhost/hsh-example:latest; then
+	(cd "$REPO" && podman build -q -t hsh-example examples/)
 fi
 
 echo "== starting the dummy OpenAI-compatible endpoint on 0.0.0.0:8899"
@@ -57,43 +57,43 @@ done
 
 mkdir -p "$TMP/workspace"
 echo meow >"$TMP/workspace/test.md"
-cat >"$TMP/config.harnessh" <<EOF
+cat >"$TMP/config.hsh" <<EOF
 {
-  "image": "localhost/harnessh-example:latest",
+  "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "mounts": ["$TMP/workspace:/workspace"],
   "secrets": {
-    "API_KEY": { "from": "HARNESSH_TEST_SECRET", "hosts": ["api.mistral.ai"] }
+    "API_KEY": { "from": "HSH_TEST_SECRET", "hosts": ["api.mistral.ai"] }
   },
   "network": { "allow": ["host.containers.internal"] }
 }
 EOF
 
-export HARNESSH_TEST_SECRET=test-secret-value-123
-HARNESSH="$TMP/harnessh"
+export HSH_TEST_SECRET=test-secret-value-123
+HSH="$TMP/hsh"
 DB="$TMP/denied.db"
 
 echo "== step 1: curl to a not-yet-allowed endpoint is denied (407) and recorded"
-"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
+"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
 CMDS
 grep -q "response 407" "$TMP/session1.out" || fail "expected the proxy to deny api.mistral.ai with 407; got: $(tail -3 "$TMP/session1.out")"
 pass "api.mistral.ai denied with 407 before being allowlisted"
 
-DENIED="$("$HARNESSH" proxy-denied --db "$DB")"
+DENIED="$("$HSH" proxy-denied --db "$DB")"
 echo "$DENIED" | grep -q "api.mistral.ai" || fail "denial was not recorded in the database"
 pass "denial recorded in the sqlite database"
 
 echo "== step 2: proxy-auto-allow adds the denied host (TOFU)"
-OUT="$("$HARNESSH" proxy-auto-allow --config "$TMP/config.harnessh" --db "$DB")"
+OUT="$("$HSH" proxy-auto-allow --config "$TMP/config.hsh" --db "$DB")"
 echo "$OUT"
 echo "$OUT" | grep -q "added api.mistral.ai" || fail "proxy-auto-allow did not report adding api.mistral.ai"
-grep -q '"api.mistral.ai"' "$TMP/config.harnessh" || fail "config file was not updated"
+grep -q '"api.mistral.ai"' "$TMP/config.hsh" || fail "config file was not updated"
 pass "api.mistral.ai added to network.allow"
 
 echo "== step 3: sandbox session — allowed endpoint, workspace mount, pi through the proxy"
-"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
+"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
 echo "--- curl to the now-allowed endpoint (intercepted, secret injected):"
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
@@ -152,7 +152,7 @@ pass "echo hi | pi returns hello world through the proxy"
 grep -q 'POST /v1/chat/completions' "$TMP/requests.log" || fail "the dummy endpoint never received pi's request"
 pass "pi's request reached the dummy endpoint through the proxy"
 
-REMAINING="$("$HARNESSH" proxy-denied --db "$DB")"
+REMAINING="$("$HSH" proxy-denied --db "$DB")"
 echo "$REMAINING" | grep -q "no denied hosts awaiting review" || fail "review list was not cleared after auto-allow"
 pass "denial review list cleared"
 
@@ -166,7 +166,7 @@ if grep -q 'Could not resolve host' "$TMP/session2.out"; then
 fi
 pass "non-allowlisted names are refused; allowed names resolve but stay unreachable directly"
 
-DNSDENIED="$("$HARNESSH" proxy-denied --db "$DB" --dns)"
+DNSDENIED="$("$HSH" proxy-denied --db "$DB" --dns)"
 echo "$DNSDENIED" | grep -q "dns-denied.example.net" || fail "DNS denial was not recorded in the dns_denied table"
 if echo "$REMAINING" | grep -q "dns-denied.example.net"; then
 	fail "DNS denial leaked into the HTTP review list (tables must be separate)"
@@ -174,14 +174,14 @@ fi
 pass "DNS denials recorded in a separate table, not in the HTTP review list"
 
 echo "== step 4: standalone proxy — allowlist and secret injection"
-openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=harnessh-test" >/dev/null 2>&1
-cat >"$TMP/proxy-config.harnessh" <<'EOF'
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
+cat >"$TMP/proxy-config.hsh" <<'EOF'
 { "network": { "allow": ["localhost"] } }
 EOF
 cat >"$TMP/proxy-secrets.json" <<'EOF'
 { "secrets": [ { "name": "API_KEY", "value": "test-secret-value-123", "header": "Authorization", "prefix": "Bearer ", "hosts": ["localhost"] } ] }
 EOF
-"$HARNESSH" proxy --listen 127.0.0.1:18080 --config "$TMP/proxy-config.harnessh" --secrets "$TMP/proxy-secrets.json" --ca-cert "$TMP/ca.crt" --ca-key "$TMP/ca.key" >"$TMP/proxy.out" 2>&1 &
+"$HSH" proxy --listen 127.0.0.1:18080 --config "$TMP/proxy-config.hsh" --secrets "$TMP/proxy-secrets.json" --ca-cert "$TMP/ca.crt" --ca-key "$TMP/ca.key" >"$TMP/proxy.out" 2>&1 &
 PROXY_PID=$!
 for _ in $(seq 1 50); do
 	if curl -s -o /dev/null -x http://127.0.0.1:18080 http://localhost:8899/v1/models; then
@@ -210,23 +210,23 @@ PROXY_PID=""
 echo "== step 5: --resume re-enters the same container"
 export XDG_STATE_HOME="$TMP/xdg"
 mkdir -p "$XDG_STATE_HOME"
-RESUME_POD="$(podman pod ls -q --filter "label=harnessh.workspace=$TMP/workspace" 2>/dev/null || true)"
+RESUME_POD="$(podman pod ls -q --filter "label=hsh.workspace=$TMP/workspace" 2>/dev/null || true)"
 if [ -n "$RESUME_POD" ]; then
 	fail "unexpected existing sandbox for the test workspace"
 fi
-"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" --resume >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
-echo resume-marker > /home/harnessh/marker.txt
+"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" --resume >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
+echo resume-marker > /home/hsh/marker.txt
 echo "launch1-marker-written"
 exit
 CMDS
-RESUME_POD="$(podman pod ls -q --filter "label=harnessh.workspace=$TMP/workspace" 2>/dev/null || true)"
+RESUME_POD="$(podman pod ls -q --filter "label=hsh.workspace=$TMP/workspace" 2>/dev/null || true)"
 if [ -z "$RESUME_POD" ]; then
 	fail "sandbox pod was not left behind after a --resume exit"
 fi
 pass "sandbox persists after a --resume exit"
-"$HARNESSH" run --config "$TMP/config.harnessh" --denied-db "$DB" --resume >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
+"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" --resume >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
 echo "--- marker from the previous launch (same container?):"
-cat /home/harnessh/marker.txt
+cat /home/hsh/marker.txt
 echo "--- proxied request after re-entry:"
 curl -sS -o /dev/null -w 'code=%{http_code}\n' --max-time 15 https://api.mistral.ai
 echo "--- DNS after re-entry:"
@@ -243,7 +243,7 @@ podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
 RESUME_POD=""
 
 echo "== step 6: proxy-watch requires a terminal"
-"$HARNESSH" proxy-watch --config "$TMP/config.harnessh" --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
+"$HSH" proxy-watch --config "$TMP/config.hsh" --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
 grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
 pass "proxy-watch refuses to run without a terminal"
 

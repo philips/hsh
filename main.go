@@ -5,28 +5,28 @@ import (
 	"os"
 	"strings"
 
-	"harnessh/internal/cli"
+	"hsh/internal/cli"
 )
 
-const usage = `harnessh - container sandbox for agent harness isolation
+const usage = `hsh - container sandbox for agent harness isolation
 
 usage:
-  harnessh [run] [--config config.harnessh]   start a sandboxed shell (default command)
-  harnessh proxy [flags]                       egress proxy (runs inside the sandbox pod)
-  harnessh workspace [flags]                   workspace entrypoint (runs inside the pod)
-  harnessh workspace-inner [flags]             internal: workspace child in its own netns
-  harnessh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
+  hsh [run] [--config config.hsh]   start a sandboxed shell (default command)
+  hsh proxy [flags]                       egress proxy (runs inside the sandbox pod)
+  hsh workspace [flags]                   workspace entrypoint (runs inside the pod)
+  hsh workspace-inner [flags]             internal: workspace child in its own netns
+  hsh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
                                                (--dns lists DNS query denials)
-  harnessh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
-  harnessh proxy-watch [--config PATH] [--db PATH] [--all]
+  hsh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
+  hsh proxy-watch [--config PATH] [--db PATH] [--all]
                                                interactive review of denied hosts (TUI):
                                                approve or ignore them one by one
 
 run flags:
-  --config PATH     path to the config file (default: config.harnessh)
+  --config PATH     path to the config file (default: config.hsh)
   --workspace PATH  workspace directory inside the container (default: first mount target)
-  --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/harnessh/denied.db)
-  --verbose         print progress information to stderr (or set HARNESSH_VERBOSE=1)
+  --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
+  --verbose         print progress information to stderr (or set HSH_VERBOSE=1)
   --resume          reuse the sandbox for this workspace directory: reattach to the
                     existing container instead of creating a new one; the sandbox
                     is left in place on exit so a later --resume re-enters it
@@ -63,11 +63,11 @@ func main() {
 		fmt.Print(usage)
 		return
 	default:
-		fmt.Fprintf(os.Stderr, "harnessh: unknown command %q\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, "hsh: unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "harnessh: %v\n", err)
+		fmt.Fprintf(os.Stderr, "hsh: %v\n", err)
 		os.Exit(1)
 	}
 }

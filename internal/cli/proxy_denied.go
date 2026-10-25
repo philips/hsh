@@ -7,7 +7,7 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"harnessh/internal/denieddb"
+	"hsh/internal/denieddb"
 )
 
 func ProxyDenied(args []string) error {

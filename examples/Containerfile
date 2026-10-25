@@ -1,8 +1,8 @@
 FROM registry.fedoraproject.org/fedora:latest
-LABEL org.opencontainers.image.title="harnessh example workspace" \
-      org.opencontainers.image.description="Fedora workspace image with the Pi coding agent pre-installed, for use as the harnessh workspace image"
-ENV HOME=/home/harnessh
+LABEL org.opencontainers.image.title="hsh example workspace" \
+      org.opencontainers.image.description="Fedora workspace image with the Pi coding agent pre-installed, for use as the hsh workspace image"
+ENV HOME=/home/hsh
 ENV PI_OFFLINE=1
 RUN dnf install -y nodejs npm curl fd-find ripgrep && dnf clean all
-RUN mkdir -p /home/harnessh && curl -fsSL https://pi.dev/install.sh | sh
-ENV PATH="/home/harnessh/.pi/agent/bin:${PATH}"
+RUN mkdir -p /home/hsh && curl -fsSL https://pi.dev/install.sh | sh
+ENV PATH="/home/hsh/.pi/agent/bin:${PATH}"

@@ -3,7 +3,7 @@ package proxywatch
 import (
 	"time"
 
-	"harnessh/internal/denieddb"
+	"hsh/internal/denieddb"
 )
 
 const refreshInterval = 2 * time.Second

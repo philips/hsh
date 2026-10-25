@@ -11,11 +11,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"harnessh/internal/config"
-	"harnessh/internal/denieddb"
+	"hsh/internal/config"
+	"hsh/internal/denieddb"
 )
 
-// Model is the bubbletea model for `harnessh proxy-watch`: a multi-select
+// Model is the bubbletea model for `hsh proxy-watch`: a multi-select
 // list of proxy denials with approve/ignore actions.
 type Model struct {
 	list        list.Model

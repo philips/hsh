@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"harnessh/internal/denieddb"
+	"hsh/internal/denieddb"
 )
 
 const (

@@ -11,7 +11,7 @@
 Users naturally keep API keys in env files (dotenv-style `.env`), and the
 repo already has one (`examples/.env` — which also demonstrates the
 problem, see Security below). Add support for reading secret values from
-an env file so `harnessh` can be pointed at one.
+an env file so `hsh` can be pointed at one.
 
 ## Design decisions
 
@@ -30,7 +30,7 @@ directory:
 Default: `.env` in the config directory, loaded **if present** and
 silently skipped if absent (no config change needed for the common case).
 An explicit path (e.g. `"envFile": "../secrets.env"` or an absolute path)
-points elsewhere. A `--env-file PATH` flag on `harnessh run` overrides the
+points elsewhere. A `--env-file PATH` flag on `hsh run` overrides the
 config (optional; can be added later if wanted).
 
 ### Format
@@ -51,7 +51,7 @@ provide). An explicitly exported variable always wins.
 
 ### Flow (unchanged guarantees)
 
-env file → harnessh (host) → resolved into `secrets.json` → bind-mounted
+env file → hsh (host) → resolved into `secrets.json` → bind-mounted
 (read-only, run directory) into the **proxy container only**. The workspace
 never sees the values — same guarantee as environment-provided secrets.
 File permissions of the env file are the user's responsibility (docs
@@ -70,10 +70,10 @@ An env file that lives **inside a mounted directory is readable by the
 sandboxed agent** — loading it does not change that; it only makes the
 host side convenient. So:
 
-- harnessh prints a warning when the resolved env file path is inside any
+- hsh prints a warning when the resolved env file path is inside any
   mount source (the key is exposed to the sandbox regardless of injection).
 - Docs recommend keeping the env file **outside** the mounts, e.g.
-  `~/.config/harnessh/<project>.env`, referenced from the config with a
+  `~/.config/hsh/<project>.env`, referenced from the config with a
   relative or absolute path.
 - The repo's own `examples/.env` (which sits inside the mounted
   `examples/` workspace) should move out of the mount, or the example
@@ -116,5 +116,5 @@ mode later.)
 
 - Strict mode that refuses mounted env files (vs warning)? Later.
 - Variable interpolation in values (`${OTHER}`)? Not in v1.
-- A `harnessh proxy-auto-allow`-style helper for rotating keys? Out of
+- A `hsh proxy-auto-allow`-style helper for rotating keys? Out of
   scope.

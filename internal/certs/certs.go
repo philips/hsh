@@ -36,7 +36,7 @@ func NewCA() (*CA, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "harnessh egress proxy CA"},
+		Subject:               pkix.Name{CommonName: "hsh egress proxy CA"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(24 * time.Hour),
 		IsCA:                  true,

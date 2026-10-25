@@ -1,20 +1,20 @@
-# Secret store: `harnessh secret add` / `harnessh secret rm` and URL secret references
+# Secret store: `hsh secret add` / `hsh secret rm` and URL secret references
 
 ## Goal
 
-Give harnessh a first-party secret store so users stop hand-editing
+Give hsh a first-party secret store so users stop hand-editing
 config files and stop exporting API keys into their shell environment:
 
-- `harnessh secret add NAME` stores a secret value in a SQLite database
-  under `$XDG_CONFIG_HOME/harnessh` (default `$HOME/.config/harnessh`).
-- `harnessh secret rm NAME` removes it.
+- `hsh secret add NAME` stores a secret value in a SQLite database
+  under `$XDG_CONFIG_HOME/hsh` (default `$HOME/.config/hsh`).
+- `hsh secret rm NAME` removes it.
 - The config file references secrets by URL: `env://VAR` for environment
-  variables and `harnessh://NAME` for the harnessh secret store:
+  variables and `hsh://NAME` for the hsh secret store:
 
 ```json
 "secrets": {
   "API_KEY": {
-    "from": "harnessh://mistral-api-key",
+    "from": "hsh://mistral-api-key",
     "hosts": ["api.mistral.ai"],
     "header": "Authorization",
     "prefix": "Bearer "
@@ -38,7 +38,7 @@ https://nono.sh/docs/cli/features/credential-injection
 | Reference | Meaning | Example |
 |---|---|---|
 | `env://VAR` | host process environment variable | `env://MISTRAL_API_KEY` |
-| `harnessh://NAME` | the harnessh secret store (sqlite) | `harnessh://mistral-api-key` |
+| `hsh://NAME` | the hsh secret store (sqlite) | `hsh://mistral-api-key` |
 | bare `VAR` | treated as `env://VAR` (backwards compatibility) | `MISTRAL_API_KEY` |
 
 A reference parser (`config.ParseSecretRef`) splits scheme and name,
@@ -49,8 +49,8 @@ implementation; the config format and the proxy do not change. The
 
 ## The secret store
 
-- Location: `$XDG_CONFIG_HOME/harnessh/secrets.db` (default
-  `$HOME/.config/harnessh/secrets.db`); a `--db` flag overrides it
+- Location: `$XDG_CONFIG_HOME/hsh/secrets.db` (default
+  `$HOME/.config/hsh/secrets.db`); a `--db` flag overrides it
   (tests, alternate stores).
 - SQLite via modernc.org/sqlite (already a dependency, pure Go —
   `CGO_ENABLED=0` unaffected), WAL + busy timeout like the denial DB.
@@ -87,10 +87,10 @@ type Store interface {
 ## Subcommands
 
 ```
-harnessh secret add NAME [--db PATH] [--force] [--value-stdin]
+hsh secret add NAME [--db PATH] [--force] [--value-stdin]
                          [--config PATH] [--host H]... [--header H] [--prefix P]
-harnessh secret rm NAME [--db PATH] [--config PATH]
-harnessh secret ls [--db PATH]
+hsh secret rm NAME [--db PATH] [--config PATH]
+hsh secret ls [--db PATH]
 ```
 
 - `secret add NAME` prompts for the value with echo disabled (hidden
@@ -102,11 +102,11 @@ harnessh secret ls [--db PATH]
     (bumps `updated_at`).
   - With `--host`/`--header`/`--prefix` (and `--config`), it also adds or
     updates the `secrets.<NAME>` entry in the config file, writing
-    `from: "harnessh://NAME"` — the same RawMessage-preserving rewrite as
+    `from: "hsh://NAME"` — the same RawMessage-preserving rewrite as
     `AddAllowedHosts`. Without those flags it only stores the value.
 - `secret rm NAME` deletes it from the store; fails if missing. It then
-  scans the config (default `config.harnessh`, or `--config PATH`) and
-  warns if any `secrets` entry still references `harnessh://NAME` — the
+  scans the config (default `config.hsh`, or `--config PATH`) and
+  warns if any `secrets` entry still references `hsh://NAME` — the
   proxy will report it missing. It never edits the config.
 - `secret ls`: names + created/updated timestamps. Never prints values.
 
@@ -116,16 +116,16 @@ harnessh secret ls [--db PATH]
 through the scheme's store:
 
 - `env://VAR` (and bare `VAR`): `os.Getenv`, as today.
-- `harnessh://NAME`: `store.Get(NAME)`; a missing entry lands in the
+- `hsh://NAME`: `store.Get(NAME)`; a missing entry lands in the
   existing `missing` list (same UX as an unset env var today: the proxy
   logs it and skips the secret).
 - Unknown scheme: a hard error at config load (fail fast, not a silent
   skip).
 
-The resolved values still flow exactly as today: `harnessh run` writes
+The resolved values still flow exactly as today: `hsh run` writes
 them to a 0600 secrets file bind-mounted into the proxy container only,
 and the config watcher re-resolves on change (a running proxy picks up a
-new or updated secret within ~1s). Only the host-side `harnessh run`
+new or updated secret within ~1s). Only the host-side `hsh run`
 process and the `secret` subcommands touch the store; the proxy keeps
 reading the resolved secrets file and does not change. The store lives on
 the host and is never mounted into the workspace.
@@ -134,7 +134,7 @@ the host and is never mounted into the workspace.
 
 - The database holds plaintext values: 0700 directory, 0600 file, and a
   first-use warning ("secrets are stored unencrypted in
-  ~/.config/harnessh/secrets.db, readable only by your user — the same
+  ~/.config/hsh/secrets.db, readable only by your user — the same
   trust level as ~/.netrc or ~/.aws/credentials"). Encryption at rest (OS
   keyring, passphrase) is a possible follow-up, not in scope.
 - Values never enter the workspace's environment, filesystem, or
@@ -162,15 +162,15 @@ the host and is never mounted into the workspace.
 - `internal/cli/run.go` — open the store at the default path (or
   `--secret-db`) and pass it into resolution.
 - `main.go` — register `secret`, add the usage lines.
-- `examples/config.harnessh` — `from` becomes `env://MISTRAL_API_KEY`
-  (or a `harnessh://` example).
+- `examples/config.hsh` — `from` becomes `env://MISTRAL_API_KEY`
+  (or a `hsh://` example).
 - `docs/config.md` + `docs/architecture.md` — the reference schemes, the
   store location and permissions, and the nono.sh credential-injection
   docs link (https://nono.sh/docs/cli/features/credential-injection) in
   the secret-injection section.
 - Tests: `internal/secretstore` unit tests (CRUD, `ErrNotFound`,
   overwrite semantics, 0600/0700 permissions); `internal/config` tests
-  for `ParseSecretRef` (env / harnessh / bare / unknown / malformed) and
+  for `ParseSecretRef` (env / hsh / bare / unknown / malformed) and
   `ResolveSecrets` with a fake store; a cli-level test for add/rm via
   `--value-stdin`; functional test coverage as below.
 
@@ -180,13 +180,13 @@ the host and is never mounted into the workspace.
    name (never the value); `secret rm foo` deletes it; a second
    `secret rm foo` fails.
 2. File permissions: directory 0700, database 0600.
-3. A config with `from: "harnessh://foo"` resolves through the store; a
+3. A config with `from: "hsh://foo"` resolves through the store; a
    missing store entry lands in the `missing` list (same UX as an unset
    env var); `from: "env://FOO"` and bare `FOO` behave identically; an
    unknown scheme fails at config load.
 4. `secret add NAME --host api.mistral.ai --header Authorization
    --prefix "Bearer "` writes the config entry with
-   `from: "harnessh://NAME"`; `secret rm NAME` deletes it from the store
+   `from: "hsh://NAME"`; `secret rm NAME` deletes it from the store
    and warns that the config still references it.
 5. Functional: add a secret, run a sandbox, the dummy endpoint receives
    the injected header (same assertion as the existing secret test);
@@ -200,14 +200,14 @@ the host and is never mounted into the workspace.
 - `secret ls`: included — names + created/updated timestamps, never
   values.
 - `secret rm` and config references: warn-only. `secret rm` deletes the
-  store entry and warns if the config (default `config.harnessh`, or
-  `--config PATH`) still references `harnessh://NAME` — it never edits
+  store entry and warns if the config (default `config.hsh`, or
+  `--config PATH`) still references `hsh://NAME` — it never edits
   the config.
 - Encryption at rest: out of scope. Plaintext with a 0700 directory /
   0600 file and a first-use warning (the same trust level as `~/.netrc`
   or `~/.aws/credentials`).
-- Store path: `$XDG_CONFIG_HOME/harnessh/secrets.db`, defaulting to
-  `$HOME/.config/harnessh/secrets.db`, with a `--db` flag override.
+- Store path: `$XDG_CONFIG_HOME/hsh/secrets.db`, defaulting to
+  `$HOME/.config/hsh/secrets.db`, with a `--db` flag override.
 - `dotenv://`: perhaps later, but not now. The scheme dispatch makes it
   a small addition, and it would subsume plans/0006-env-file.md (kept
   marked not implemented until then).

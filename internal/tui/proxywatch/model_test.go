@@ -11,7 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"harnessh/internal/denieddb"
+	"hsh/internal/denieddb"
 )
 
 type testEnv struct {
@@ -39,7 +39,7 @@ func newTestEnv(t *testing.T, hosts ...string) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	configPath := filepath.Join(dir, "config.harnessh")
+	configPath := filepath.Join(dir, "config.hsh")
 	if err := os.WriteFile(configPath, []byte(`{"network": {"allow": ["already.example.com"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestApproveEmptySelection(t *testing.T) {
 
 func TestApproveConfigFailure(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
-	env.model.configPath = filepath.Join(env.dir, "missing.harnessh")
+	env.model.configPath = filepath.Join(env.dir, "missing.hsh")
 	m, _ := send(env.model, keyMsg(" "))
 	m, cmd := send(m, keyMsg("enter"))
 	msg := runCmd(cmd)

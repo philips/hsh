@@ -1,7 +1,7 @@
 # Configuration reference
 
-harnessh reads a JSON config file (default: `./config.harnessh`, override
-with `harnessh run --config PATH`). Relative mount sources are resolved
+hsh reads a JSON config file (default: `./config.hsh`, override
+with `hsh run --config PATH`). Relative mount sources are resolved
 against the config file's directory.
 
 ```json
@@ -34,7 +34,7 @@ against the config file's directory.
 | `network.allow` | `[]` | egress allowlist; empty means no egress at all |
 
 The workspace starts in the first mount's target directory
-(override with `harnessh run --workspace PATH`).
+(override with `hsh run --workspace PATH`).
 
 ## Secrets
 
@@ -45,7 +45,7 @@ The workspace starts in the first mount's target directory
 | `header` | no | header to set; defaults to the secret name with `_` → `-` |
 | `prefix` | no | string prepended to the value, e.g. `"Bearer "` |
 
-If the environment variable named by `from` is not set, harnessh prints a
+If the environment variable named by `from` is not set, hsh prints a
 warning and the secret is not injected (fail-open for availability; the
 request is still forwarded, just without the header).
 
@@ -72,7 +72,7 @@ With this, the proxy rewrites the request's `Authorization` header to
 `Bearer <value>`, so tools inside the sandbox can be signed in with a
 placeholder key (e.g. in pi's `auth.json`) and never see the real one.
 `from` reads the **host** environment (`export MISTRAL_API_KEY=...` before
-launching); harnessh does not read `.env` files, and keys should not live
+launching); hsh does not read `.env` files, and keys should not live
 inside mounted directories where the sandbox can read them.
 
 ## Allowlist matching
@@ -91,12 +91,12 @@ when the config file changes (the proxy polls once per second). `image`,
 ## Managing the allowlist
 
 Denied egress attempts are answered with `407` and recorded in a SQLite
-database (`$XDG_STATE_HOME/harnessh/denied.db`, default
-`~/.local/state/harnessh/denied.db`). Two subcommands manage it:
+database (`$XDG_STATE_HOME/hsh/denied.db`, default
+`~/.local/state/hsh/denied.db`). Two subcommands manage it:
 
 ```
-harnessh proxy-denied [--all]              # list hosts awaiting review
-harnessh proxy-auto-allow [--config PATH]  # add them to network.allow
+hsh proxy-denied [--all]              # list hosts awaiting review
+hsh proxy-auto-allow [--config PATH]  # add them to network.allow
 ```
 
 `proxy-auto-allow` rewrites the config file as canonical JSON (keys
@@ -104,7 +104,7 @@ sorted, 2-space indent); only `network.allow` changes.
 
 `network.allow` also gates DNS: the workspace resolves names through a
 forwarder in the proxy that refuses any name not on the allowlist. DNS
-denials are recorded separately (`harnessh proxy-denied --dns`) and are
+denials are recorded separately (`hsh proxy-denied --dns`) and are
 never auto-allowed.
 
 ## Tools that self-download

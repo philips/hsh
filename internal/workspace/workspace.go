@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"harnessh/internal/netsetup"
+	"hsh/internal/netsetup"
 
 	"golang.org/x/sys/unix"
 )
@@ -220,7 +220,7 @@ func setEnv(env []string, key, value string) []string {
 
 func writeResolvConf() error {
 	content := "nameserver " + netsetup.HostIP + "\noptions timeout:1 attempts:2\n"
-	tmp := "/tmp/harnessh-resolv.conf"
+	tmp := "/tmp/hsh-resolv.conf"
 	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
 		return err
 	}

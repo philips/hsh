@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"harnessh/internal/denieddb"
+	"hsh/internal/denieddb"
 
 	"github.com/miekg/dns"
 )

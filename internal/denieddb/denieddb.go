@@ -46,13 +46,13 @@ type DeniedHost struct {
 
 func StateDir() string {
 	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
-		return filepath.Join(v, "harnessh")
+		return filepath.Join(v, "hsh")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "harnessh-state"
+		return "hsh-state"
 	}
-	return filepath.Join(home, ".local", "state", "harnessh")
+	return filepath.Join(home, ".local", "state", "hsh")
 }
 
 func DefaultPath() string {

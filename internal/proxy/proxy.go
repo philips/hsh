@@ -18,9 +18,9 @@ import (
 	"sync"
 	"time"
 
-	"harnessh/internal/certs"
-	"harnessh/internal/config"
-	"harnessh/internal/denieddb"
+	"hsh/internal/certs"
+	"hsh/internal/config"
+	"hsh/internal/denieddb"
 )
 
 type Options struct {
@@ -207,7 +207,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !r.URL.IsAbs() {
-		http.Error(w, "harnessh proxy: expected an absolute-URI proxy request", http.StatusBadRequest)
+		http.Error(w, "hsh proxy: expected an absolute-URI proxy request", http.StatusBadRequest)
 		return
 	}
 	host := r.URL.Hostname()
@@ -230,9 +230,9 @@ func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
 			log.Printf("recording denial of %s: %v", host, err)
 		}
 	}
-	w.Header().Set("Proxy-Authenticate", `Harnessh realm="egress-allowlist"`)
+	w.Header().Set("Proxy-Authenticate", `Hsh realm="egress-allowlist"`)
 	http.Error(w,
-		fmt.Sprintf("harnessh: egress to %s is not allowed (not in network.allow)\nreview denied hosts with: harnessh proxy-denied\n", host),
+		fmt.Sprintf("hsh: egress to %s is not allowed (not in network.allow)\nreview denied hosts with: hsh proxy-denied\n", host),
 		http.StatusProxyAuthRequired,
 	)
 }
@@ -248,7 +248,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	hj, ok := w.(http.Hijacker)
 	if !ok {
-		http.Error(w, "harnessh proxy: connection hijacking unsupported", http.StatusInternalServerError)
+		http.Error(w, "hsh proxy: connection hijacking unsupported", http.StatusInternalServerError)
 		return
 	}
 	clientConn, clientBuf, err := hj.Hijack()
@@ -406,7 +406,7 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 	resp, err := p.transport.RoundTrip(r)
 	if err != nil {
 		log.Printf("upstream %s: %v", r.URL.Host, err)
-		http.Error(w, "harnessh proxy: upstream request failed", http.StatusBadGateway)
+		http.Error(w, "hsh proxy: upstream request failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

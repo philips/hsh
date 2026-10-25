@@ -3,17 +3,17 @@ package cli
 import (
 	"flag"
 
-	"harnessh/internal/netsetup"
-	"harnessh/internal/workspace"
+	"hsh/internal/netsetup"
+	"hsh/internal/workspace"
 )
 
 func Workspace(args []string) error {
 	fs := flag.NewFlagSet("workspace", flag.ContinueOnError)
 	shell := fs.String("shell", "/bin/sh", "shell to execute")
-	caCert := fs.String("ca-cert", "/harnessh-run/ca.crt", "CA certificate path")
+	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
-	home := fs.String("home", "/home/harnessh", "home directory")
+	home := fs.String("home", "/home/hsh", "home directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -29,10 +29,10 @@ func Workspace(args []string) error {
 func WorkspaceInner(args []string) error {
 	fs := flag.NewFlagSet("workspace-inner", flag.ContinueOnError)
 	shell := fs.String("shell", "/bin/sh", "shell to execute")
-	caCert := fs.String("ca-cert", "/harnessh-run/ca.crt", "CA certificate path")
+	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
-	home := fs.String("home", "/home/harnessh", "home directory")
+	home := fs.String("home", "/home/hsh", "home directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

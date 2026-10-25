@@ -5,20 +5,20 @@
 `test/functional.sh` runs an end-to-end test of the sandbox, the egress
 proxy, the denial database, and the example image:
 
-- builds `harnessh` and the dummy OpenAI-compatible endpoint
+- builds `hsh` and the dummy OpenAI-compatible endpoint
   (`test/dummyopenai`)
 - ensures the example image exists (builds it with
-  `podman build -t harnessh-example examples/` if missing)
+  `podman build -t hsh-example examples/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
   denied with 407 and recorded in a throwaway denial database
-- **step 2**: `harnessh proxy-auto-allow` adds the denied host to the config
+- **step 2**: `hsh proxy-auto-allow` adds the denied host to the config
   (trust on first use)
 - **step 3**: in a fresh sandbox session, the endpoint is allowed (real
   upstream response through the intercepting proxy), the workspace mount
   works, and `echo hi | pi` returns `hello world` from the dummy endpoint
   that pi is configured against (`~/.pi/agent/models.json` +
   `~/.pi/agent/settings.json` inside the sandbox)
-- **step 4**: a standalone `harnessh proxy` forwards to an allowlisted host,
+- **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 407
 

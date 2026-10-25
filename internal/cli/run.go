@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"harnessh/internal/certs"
-	"harnessh/internal/config"
-	"harnessh/internal/denieddb"
-	"harnessh/internal/netsetup"
+	"hsh/internal/certs"
+	"hsh/internal/config"
+	"hsh/internal/denieddb"
+	"hsh/internal/netsetup"
 )
 
-var verbose = os.Getenv("HARNESSH_VERBOSE") != ""
+var verbose = os.Getenv("HSH_VERBOSE") != ""
 
 func infof(format string, args ...any) {
 	if verbose {
@@ -30,7 +30,7 @@ func infof(format string, args ...any) {
 
 func Run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPath := fs.String("config", "config.harnessh", "path to the config file")
+	configPath := fs.String("config", "config.hsh", "path to the config file")
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
 	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
 	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
@@ -79,11 +79,11 @@ func Run(args []string) error {
 	var cleanupPod bool
 	if resume {
 		hash := hashPath(workspaceSource)
-		podName = "harnessh-" + hash
+		podName = "hsh-" + hash
 		runDir = filepath.Join(denieddb.StateDir(), "sessions", hash)
 	} else {
-		podName = "harnessh-" + randHex(6)
-		tmpDir, err := os.MkdirTemp("", "harnessh-")
+		podName = "hsh-" + randHex(6)
+		tmpDir, err := os.MkdirTemp("", "hsh-")
 		if err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func Run(args []string) error {
 	}
 	rs, missing := config.ResolveSecrets(cfg)
 	for _, m := range missing {
-		fmt.Fprintf(os.Stderr, "harnessh: warning: environment variable %s is not set; its secret will not be injected\n", m)
+		fmt.Fprintf(os.Stderr, "hsh: warning: environment variable %s is not set; its secret will not be injected\n", m)
 	}
 	if err := config.WriteSecretsFile(secretsPath, rs); err != nil {
 		return err
@@ -110,15 +110,15 @@ func Run(args []string) error {
 	go config.WatchFile(absConfig, time.Second, func([]byte) {
 		cfg2, err := config.Load(absConfig)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "harnessh: config reload: %v\n", err)
+			fmt.Fprintf(os.Stderr, "hsh: config reload: %v\n", err)
 			return
 		}
 		rs2, missing2 := config.ResolveSecrets(cfg2)
 		if err := config.WriteSecretsFile(secretsPath, rs2); err != nil {
-			fmt.Fprintf(os.Stderr, "harnessh: secrets reload: %v\n", err)
+			fmt.Fprintf(os.Stderr, "hsh: secrets reload: %v\n", err)
 			return
 		}
-		infof("harnessh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
+		infof("hsh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
 	})
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
@@ -145,32 +145,32 @@ func Run(args []string) error {
 	proxyArgs := []string{
 		"create", "--pod", podName, "--name", proxyName,
 		"--security-opt", "label=disable",
-		"--entrypoint", "/harnessh",
-		"-v", exe + ":/harnessh:ro",
-		"-v", configDir + ":/harnessh-config:ro",
-		"-v", runDir + ":/harnessh-run:ro",
-		"-v", stateDir + ":/harnessh-state",
+		"--entrypoint", "/hsh",
+		"-v", exe + ":/hsh:ro",
+		"-v", configDir + ":/hsh-config:ro",
+		"-v", runDir + ":/hsh-run:ro",
+		"-v", stateDir + ":/hsh-state",
 	}
 	if roots != "" {
-		proxyArgs = append(proxyArgs, "-v", roots+":/harnessh-run/roots.pem:ro")
+		proxyArgs = append(proxyArgs, "-v", roots+":/hsh-run/roots.pem:ro")
 	}
 	proxyArgs = append(proxyArgs,
 		cfg.Image, "proxy",
 		"--listen", netsetup.HostIP+":"+netsetup.ProxyPort,
-		"--config", "/harnessh-config/"+filepath.Base(absConfig),
-		"--secrets", "/harnessh-run/secrets.json",
-		"--ca-cert", "/harnessh-run/ca.crt",
-		"--ca-key", "/harnessh-run/ca.key",
-		"--denied-db", "/harnessh-state/"+filepath.Base(*deniedDB),
+		"--config", "/hsh-config/"+filepath.Base(absConfig),
+		"--secrets", "/hsh-run/secrets.json",
+		"--ca-cert", "/hsh-run/ca.crt",
+		"--ca-key", "/hsh-run/ca.key",
+		"--denied-db", "/hsh-state/"+filepath.Base(*deniedDB),
 	)
 	if roots != "" {
-		proxyArgs = append(proxyArgs, "--roots", "/harnessh-run/roots.pem")
+		proxyArgs = append(proxyArgs, "--roots", "/hsh-run/roots.pem")
 	}
 	reattach := false
 	if resume {
 		if podExists(podName) {
 			if *freshFlag {
-				infof("harnessh: discarding existing sandbox %s (--fresh)\n", podName)
+				infof("hsh: discarding existing sandbox %s (--fresh)\n", podName)
 				_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
 			} else {
 				reattach = true
@@ -178,7 +178,7 @@ func Run(args []string) error {
 		}
 	}
 	if reattach {
-		infof("harnessh: resuming sandbox %s for workspace %s\n", podName, workspaceSource)
+		infof("hsh: resuming sandbox %s for workspace %s\n", podName, workspaceSource)
 		if !containerExists(proxyName) {
 			if out, err := podman(proxyArgs...); err != nil {
 				return fmt.Errorf("create proxy container: %w\n%s", err, out)
@@ -189,10 +189,10 @@ func Run(args []string) error {
 			}
 		}
 	} else {
-		infof("harnessh: creating pod %s (image %s)\n", podName, cfg.Image)
+		infof("hsh: creating pod %s (image %s)\n", podName, cfg.Image)
 		podCreateArgs := []string{"pod", "create", "--name", podName}
 		if resume {
-			podCreateArgs = append(podCreateArgs, "--label", "harnessh.workspace="+workspaceSource)
+			podCreateArgs = append(podCreateArgs, "--label", "hsh.workspace="+workspaceSource)
 		}
 		if out, err := podman(podCreateArgs...); err != nil {
 			return fmt.Errorf("create pod: %w\n%s", err, out)
@@ -208,9 +208,9 @@ func Run(args []string) error {
 		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
 		"--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN",
-		"--entrypoint", "/harnessh",
-		"-v", exe + ":/harnessh:ro",
-		"-v", caCertPath + ":/harnessh-run/ca.crt:ro",
+		"--entrypoint", "/hsh",
+		"-v", exe + ":/hsh:ro",
+		"-v", caCertPath + ":/hsh-run/ca.crt:ro",
 	}
 	if isTerminal(os.Stdin) {
 		wsArgs = append(wsArgs, "-i", "-t")
@@ -227,12 +227,12 @@ func Run(args []string) error {
 	wsArgs = append(wsArgs,
 		cfg.Image, "workspace",
 		"--shell", cfg.Shell,
-		"--ca-cert", "/harnessh-run/ca.crt",
+		"--ca-cert", "/hsh-run/ca.crt",
 		"--proxy-addr", netsetup.ProxyAddr(),
 		"--workspace", wsDir,
-		"--home", "/home/harnessh",
+		"--home", "/home/hsh",
 	)
-	infof("harnessh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
+	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	if reattach || resume {
 		if reattach && containerRunning(wsName) {
 			return fmt.Errorf("sandbox for workspace %s is already running; exit it first or launch without --resume", workspaceSource)
