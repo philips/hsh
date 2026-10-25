@@ -22,6 +22,10 @@ run flags:
   --config PATH     path to the config file (default: config.harnessh)
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/harnessh/denied.db)
+  --verbose         print progress information to stderr (or set HARNESSH_VERBOSE=1)
+
+Progress information is suppressed by default so the sandbox starts with a
+clean terminal prompt; warnings and errors are always printed.
 `
 
 func main() {

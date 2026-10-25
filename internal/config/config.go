@@ -186,6 +186,9 @@ func AddAllowedHosts(path string, hosts []string) ([]string, error) {
 
 func WatchFile(path string, interval time.Duration, onChange func(data []byte)) {
 	var last []byte
+	if data, err := os.ReadFile(path); err == nil {
+		last = data
+	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for range t.C {

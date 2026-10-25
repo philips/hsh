@@ -19,13 +19,25 @@ import (
 	"harnessh/internal/netsetup"
 )
 
+var verbose = os.Getenv("HARNESSH_VERBOSE") != ""
+
+func infof(format string, args ...any) {
+	if verbose {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
+
 func Run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := fs.String("config", "config.harnessh", "path to the config file")
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
 	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
+	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *verboseFlag {
+		verbose = true
 	}
 	absConfig, err := filepath.Abs(*configPath)
 	if err != nil {
@@ -98,10 +110,10 @@ func Run(args []string) error {
 			fmt.Fprintf(os.Stderr, "harnessh: secrets reload: %v\n", err)
 			return
 		}
-		fmt.Fprintf(os.Stderr, "harnessh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
+		infof("harnessh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
 	})
 	podName := "harnessh-" + randHex(6)
-	fmt.Fprintf(os.Stderr, "harnessh: creating pod %s (image %s)\n", podName, cfg.Image)
+	infof("harnessh: creating pod %s (image %s)\n", podName, cfg.Image)
 	if out, err := podman("pod", "create", "--name", podName); err != nil {
 		return fmt.Errorf("create pod: %w\n%s", err, out)
 	}
@@ -181,7 +193,7 @@ func Run(args []string) error {
 		"--workspace", wsDir,
 		"--home", "/home/harnessh",
 	)
-	fmt.Fprintf(os.Stderr, "harnessh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
+	infof("harnessh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	cmd := exec.Command("podman", wsArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

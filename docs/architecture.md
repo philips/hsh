@@ -214,6 +214,10 @@ Mounts, image, and shell changes require a restart.
 
 ## Lifecycle and cleanup
 
+- Progress information (pod creation, workspace start, config reloads) is
+  suppressed by default so the sandbox starts with a clean terminal prompt;
+  pass `--verbose` (or set `HARNESSH_VERBOSE=1`) to see it on stderr.
+  Warnings and errors are always printed.
 - The pod is named `harnessh-<random>`; containers are `<pod>-proxy` and
   `<pod>-ws`.
 - `harnessh run` attaches to the workspace container (`podman run -it`, or

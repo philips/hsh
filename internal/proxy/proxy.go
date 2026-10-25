@@ -141,7 +141,8 @@ func (p *Proxy) reload() error {
 }
 
 func (p *Proxy) watch(interval time.Duration) {
-	var lastCfg, lastSec []byte
+	lastCfg, _ := os.ReadFile(p.opts.ConfigPath)
+	lastSec, _ := os.ReadFile(p.opts.SecretsPath)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for range t.C {
