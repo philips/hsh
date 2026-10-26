@@ -1,10 +1,8 @@
+# Definitions 
+
 Sessions are an instance of a hsh pod running on the host. 
 
-Workspaces are a shared filesystem on the host machine. Generally this is going to be a folder with one or more git checkouts for the agent to use.
-
-There may be multiple sessions per workspace.
-
-## Mutliple Sessions for workspace
+Workspaces are a shared filesystem on the host machine. Generally this is going to be a folder in the users home directory with one or more git checkouts for the agent to use.
 
 ```
 mkdir example-workspace
@@ -12,6 +10,11 @@ git clone https://github.com/philips/ghar
 hsh run ghcr.io/philips/hsh-pi
 bash-5.3#
 ```
+
+There may be multiple sessions per workspace.
+
+## Mutliple Sessions for workspace
+
 With `hsh run --resume` if there is only one session for the current workspace launch enter that session. Otherwise, list the sessions that exist.
 
 ```
