@@ -1,0 +1,60 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    name: unit (build, vet, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: unit tests
+        run: go test ./...
+
+      - name: static build check
+        run: CGO_ENABLED=0 go build -o hsh .
+
+  # The functional test runs real sandboxes with rootless podman and
+  # exercises the example image (built from examples/) plus live
+  # api.mistral.ai egress, so it needs internet and a few minutes.
+  functional:
+    name: functional (podman sandbox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: install rootless podman networking
+        run: sudo apt-get update && sudo apt-get install -y passt uidmap
+
+      - name: ensure subuid/subgid entries for the runner user
+        run: |
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subuid
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subgid
+          fi
+
+      - name: verify rootless podman
+        run: podman info --format 'podman {{.Version.Version}} on {{.Host.Arch}}'
+
+      - name: functional test
+        run: ./test/functional.sh

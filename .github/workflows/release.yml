@@ -1,0 +1,44 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release binaries (linux amd64 + arm64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: vet + unit tests
+        run: |
+          go vet ./...
+          go test ./...
+
+      # hsh is pure Go (modernc.org/sqlite, CGO_ENABLED=0), so both
+      # targets cross-compile from the runner without a cross toolchain.
+      - name: build linux/amd64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o dist/hsh-linux-amd64 .
+
+      - name: build linux/arm64 (aarch64)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w' -o dist/hsh-linux-arm64 .
+
+      - name: checksums
+        run: cd dist && sha256sum hsh-linux-amd64 hsh-linux-arm64 > SHA256SUMS
+
+      - name: upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/hsh-linux-amd64
+            dist/hsh-linux-arm64
+            dist/SHA256SUMS
