@@ -16,7 +16,7 @@ With `hsh run --resume` if there is only one session for the current workspace l
 
 ```
 cd example
-hsh --resume
+hsh run --resume
 error: multiple sessions for workspace example/
 ffdc21513916
 d0e828113916
@@ -26,14 +26,14 @@ User selects a session and can re-enter the container
 
 ```
 cd example
-hsh --resume ffdc21513916
+hsh run --resume ffdc21513916
 ```
 
 If no session exists in the current workspace just exit with an error
 
 ```
 cd example
-hsh --resume
+hsh run --resume
 error: no session to resume, try removing --resume flag and providing an image name
 ```
 # Proxy Watch Coordination
