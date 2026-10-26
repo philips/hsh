@@ -21,6 +21,10 @@ usage:
   hsh proxy-watch [--config PATH] [--db PATH] [--all]
                                                interactive review of denied hosts (TUI):
                                                approve or ignore them one by one
+  hsh ls [flags]                               list hsh sandboxes (pods), like podman pod ls
+  hsh rm [flags] SANDBOX...                    remove hsh sandboxes, like podman pod rm
+                                               (-a/--all, -f/--force, -i/--ignore, -t/--time, -l/--latest;
+                                               an existing directory argument resolves to its workspace's sandbox)
 
 run flags:
   --config PATH     path to the config file (default: config.hsh)
@@ -59,6 +63,10 @@ func main() {
 		err = cli.ProxyAutoAllow(rest)
 	case "proxy-watch":
 		err = cli.ProxyWatch(rest)
+	case "ls":
+		err = cli.Ls(rest)
+	case "rm":
+		err = cli.Rm(rest)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return

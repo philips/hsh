@@ -190,10 +190,8 @@ func Run(args []string) error {
 		}
 	} else {
 		infof("hsh: creating pod %s (image %s)\n", podName, cfg.Image)
-		podCreateArgs := []string{"pod", "create", "--name", podName}
-		if resume {
-			podCreateArgs = append(podCreateArgs, "--label", "hsh.workspace="+workspaceSource)
-		}
+		podCreateArgs := []string{"pod", "create", "--name", podName,
+			"--label", "hsh.workspace=" + workspaceSource}
 		if out, err := podman(podCreateArgs...); err != nil {
 			return fmt.Errorf("create pod: %w\n%s", err, out)
 		}
