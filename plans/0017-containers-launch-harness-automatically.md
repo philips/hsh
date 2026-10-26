@@ -1,0 +1,1 @@
+currently container images in images/ drop into bash. I would like to have the agent harness (e.g. pi) launched automatically from bash. I want the bash session there so a user can Ctrl+Z pi and muck around without leaving the container session.
