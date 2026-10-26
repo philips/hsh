@@ -51,9 +51,9 @@ pi
 /login mistral
 ```
 
-And type in `foo` or something. The correct Authorization header will be injected with the request to `api.mistral.ai`.
+And type in `foo` or something. The correct Authorization header will be injected with the request to `api.mistral.ai`. See [config.hsh](https://github.com/philips/hsh/blob/main/examples/config.hsh) for how the proxy was configured.
 
-The container will have access to the examples/ directory on your host via the /workspace folder in the container.
+The container will have access to the examples/ directory on your host via the /workspace folder in the container. 
 
 ## Technical Design
 
