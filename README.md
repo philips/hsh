@@ -1,6 +1,6 @@
 # hsh
 
-`hsh` (pronounced hush) is a developer focused Linux container based sandbox to keep you agents quiet: no open internet, no filesystem access. 
+`hsh` (pronounced hush) is a developer focused Linux container sandbox to keep the agents under your care from chatting with systems you don't want them to using a MitM proxy HTTPS proxy with secret injection and containerized filesystem access. 
 
 ![](docs/hsh-logo.jpg)
 
@@ -19,6 +19,41 @@ credential exfiltration to the open internet OR local filesystem damage.
 If you are dealing with a potentially persistent attacker or hostile inference
 provider consider additional protection like a virtual machine (which may be
 supported via libkrun later).
+
+## Getting Started
+
+Build the project:
+
+```
+git clone https://github.com/philips/hsh
+cd hsh
+CGO_ENABLED=0 go build -o hsh .
+```
+
+Build the example pi container
+
+```
+podman build -t hsh-example examples/
+cd examples/ 
+../hsh run
+```
+
+This example is designed for use with the [Mistral API](https://console.mistral.ai/api-keys). Grab an API key and export it:
+
+```
+export MISTRAL_API_KEY=mstrl_12345
+```
+
+Now run and configure thee `pi` agent harness. 
+
+```
+pi
+/login mistral
+```
+
+And type in `foo` or something. The correct Authorization header will be injected with the request to `api.mistral.ai`.
+
+The container will have access to the examples/ directory on your host via the /workspace folder in the container.
 
 ## Technical Design
 
