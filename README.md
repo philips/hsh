@@ -2,7 +2,7 @@
 
 `hsh` (pronounced hush) keeps your agents quiet: no open internet, no filesystem access
 
-![](docs/hsh-logo.png)
+![](docs/hsh-logo.jpg)
 
 ## Overview
 
