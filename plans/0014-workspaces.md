@@ -65,9 +65,14 @@ hsh proxy-watch --workspace $CWD # all containers in this workspace
 hsh proxy-watch # watch all workspaces and all sessions
 ```
 
+This will require adding workspace + session columns on both denied and dns_denied.
+
+`hsh proxy-auto-allow` will stop taking a config and take a session instead `hsh proxy-auto-allow --session <session_id>`
+`hsh proxy-watch` will remove the `--config` flag and take `--session` or `--workspace` filters
+
 # Lifecycle
 
-Sessions are tied to the lifecycle of the pod 
+Sessions are either remove manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped.
 
 # Configuration
 
