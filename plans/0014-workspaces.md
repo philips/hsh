@@ -68,6 +68,7 @@ hsh proxy-watch # watch all workspaces and all sessions
 This will require adding workspace + session columns on both denied and dns_denied.
 
 `hsh proxy-auto-allow` will stop taking a config and take a session instead `hsh proxy-auto-allow --session <session_id>`
+`hsh proxy-denied` will take `--session` or `--workspace` filters or list all with the new session/workspace columns
 `hsh proxy-watch` will remove the `--config` flag and take `--session` or `--workspace` filters
 
 # Lifecycle
@@ -76,7 +77,9 @@ This will require adding workspace + session columns on both denied and dns_deni
 
 `hsh` sessions can be made temporary with `hsh run --rm` flag.
 
-Sessions can be removed manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped. Sessions that need cleanup due to pods missing can be removed with a new `hsh gc` command to garbage collect.
+`hsh` sessions that are "idle" due to the primary process exiting will also stop the proxy process and the infra process to save resources.
+
+Sessions can be removed manually by the user via `hsh rm` if the pods are stopped. Sessions that need cleanup due to pods missing can be removed with a new `hsh gc` command to garbage collect.
 
 # Identity
 
@@ -93,5 +96,5 @@ These are all OK changes. Do not implement backwards compatiblity.
 - Multi-session per workspace breaks the existing state layout. The state layout will need to change to implement this. 
 - proxy-auto-allow writes to the state files instead of a configuration file in the cwd
 - a local or flag provided config.hsh is copied to the state directory and never modified in place
-- use the podname suffix as the session idname
+- use the podname suffix as the session id
 - hsh run --resume will error instead of creating as it does today
