@@ -27,6 +27,7 @@ type ParentOptions struct {
 	Home      string
 	CACert    string
 	ProxyAddr string
+	InnerExe  string
 }
 
 type InnerOptions struct {
@@ -59,7 +60,11 @@ func RunParent(opts ParentOptions) error {
 	if err != nil {
 		return err
 	}
-	innerArgs := []string{"workspace-inner",
+	innerExe := self
+	if opts.InnerExe != "" {
+		innerExe = opts.InnerExe
+	}
+	innerArgs := []string{
 		"--shell", opts.Shell,
 		"--ca-cert", opts.CACert,
 		"--proxy-addr", opts.ProxyAddr,
@@ -73,7 +78,10 @@ func RunParent(opts ParentOptions) error {
 		}
 		innerArgs = append(innerArgs, "--exec-json", string(execJSON))
 	}
-	cmd := exec.Command(self, innerArgs...)
+	if opts.InnerExe == "" {
+		innerArgs = append([]string{"workspace-inner"}, innerArgs...)
+	}
+	cmd := exec.Command(innerExe, innerArgs...)
 	cmd.ExtraFiles = []*os.File{readyW, goR}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

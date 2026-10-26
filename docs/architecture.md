@@ -6,14 +6,20 @@ controlled egress. It is a single static Go binary that plays three roles:
 | Mode | Runs | Purpose |
 |---|---|---|
 | `hsh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
-| `hsh proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
-| `hsh workspace` / `hsh workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
+| `/hsh-proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
+| `/hsh-workspace` / `/hsh-workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
 
 Host-side subcommands manage state around the sandbox: `hsh secret`
 (the secret store below), `hsh proxy-denied`/`proxy-auto-allow`/`proxy-watch`
 (denial review), and `hsh ls`/`hsh rm` (sandbox lifecycle).
 
-The same binary is bind-mounted read-only at `/hsh` in both containers.
+The same binary is bind-mounted read-only under role-named paths in the
+containers (`/hsh-proxy` in the proxy, `/hsh-workspace` and
+`/hsh-workspace-inner` in the workspace) and used as the container
+entrypoints; the role is dispatched on argv[0], so the container plumbing
+is not part of the user-facing command set. The `proxy`, `workspace`, and
+`workspace-inner` subcommand names remain as aliases (and keep
+`--resume` sessions created before the rename re-attachable).
 
 ## Pod layout
 
@@ -22,9 +28,9 @@ The same binary is bind-mounted read-only at `/hsh` in both containers.
 ```
 host
 └── pod (shared network namespace, pasta networking, internet access)
-    ├── proxy container    (hsh proxy, listens on 10.77.0.1:8080)
-    └── workspace container (hsh workspace → user shell)
-        └── inner network namespace (created by `hsh workspace-inner`)
+    ├── proxy container    (/hsh-proxy, listens on 10.77.0.1:8080)
+    └── workspace container (/hsh-workspace → user shell)
+        └── inner network namespace (created by /hsh-workspace-inner)
             └── user shell + tools (no default route)
 ```
 
@@ -36,11 +42,11 @@ signal the proxy's processes.
 
 The workspace container starts in the pod's network namespace with
 `NET_ADMIN` and `SYS_ADMIN` capabilities. Its entrypoint
-(`hsh workspace`):
+(`/hsh-workspace`):
 
 1. creates a veth pair (`hsh0`/`hsh1`) in the pod network namespace and
    configures `hsh0` with `10.77.0.1/24`
-2. re-executes itself as `hsh workspace-inner`, which calls
+2. re-executes `/hsh-workspace-inner`, which calls
    `unshare(CLONE_NEWNET)` to move into a fresh, empty network namespace
 3. moves `hsh1` into the child's namespace (by PID, via netlink)
 4. drops all of its own capabilities

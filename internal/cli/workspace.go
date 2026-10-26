@@ -16,6 +16,7 @@ func Workspace(args []string) error {
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
 	home := fs.String("home", "/home/hsh", "home directory")
+	innerExe := fs.String("inner-exe", "", "path to the hsh-workspace-inner binary (empty: re-exec self with the workspace-inner subcommand)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -32,6 +33,7 @@ func Workspace(args []string) error {
 		Home:      *home,
 		CACert:    *caCert,
 		ProxyAddr: *proxyAddr,
+		InnerExe:  *innerExe,
 	})
 }
 

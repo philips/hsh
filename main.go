@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"hsh/internal/cli"
@@ -11,10 +12,8 @@ import (
 const usage = `hsh - container sandbox for agent harness isolation
 
 usage:
-  hsh [run] [--config config.hsh]   start a sandboxed shell (default command)
-  hsh proxy [flags]                       egress proxy (runs inside the sandbox pod)
-  hsh workspace [flags]                   workspace entrypoint (runs inside the pod)
-  hsh workspace-inner [flags]             internal: workspace child in its own netns
+  hsh run [IMAGE] [flags]                 start a sandboxed shell
+                                               (with no command hsh prints this help)
   hsh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
                                                (--dns lists DNS query denials)
   hsh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
@@ -50,17 +49,40 @@ run flags:
                     is left in place on exit so a later --resume re-enters it
   --fresh           with --resume: discard the existing sandbox and start a new one
 
+The container roles (hsh-proxy, hsh-workspace, hsh-workspace-inner) are
+dispatched by argv[0]: hsh run bind-mounts the same binary under those
+names and uses them as the container entrypoints. The proxy, workspace,
+and workspace-inner subcommand names remain as aliases for them.
+
 Progress information is suppressed by default so the sandbox starts with a
 clean terminal prompt; warnings and errors are always printed.
 `
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		args = append([]string{"run"}, args...)
+	var err error
+	switch strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") {
+	case "hsh-proxy":
+		err = cli.Proxy(args)
+	case "hsh-workspace":
+		err = cli.Workspace(args)
+	case "hsh-workspace-inner":
+		err = cli.WorkspaceInner(args)
+	default:
+		err = hostCommand(args)
 	}
-	cmd := args[0]
-	rest := args[1:]
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hsh: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func hostCommand(args []string) error {
+	if len(args) == 0 {
+		fmt.Print(usage)
+		return nil
+	}
+	cmd, rest := args[0], args[1:]
 	var err error
 	switch cmd {
 	case "run":
@@ -85,13 +107,10 @@ func main() {
 		err = cli.Rm(rest)
 	case "help", "-h", "--help":
 		fmt.Print(usage)
-		return
+		return nil
 	default:
 		fmt.Fprintf(os.Stderr, "hsh: unknown command %q\n\n%s", cmd, usage)
 		os.Exit(2)
 	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "hsh: %v\n", err)
-		os.Exit(1)
-	}
+	return err
 }

@@ -281,8 +281,8 @@ func Run(args []string) error {
 	proxyArgs := []string{
 		"create", "--pod", podName, "--name", proxyName,
 		"--security-opt", "label=disable",
-		"--entrypoint", "/hsh",
-		"-v", exe + ":/hsh:ro",
+		"--entrypoint", "/hsh-proxy",
+		"-v", exe + ":/hsh-proxy:ro",
 		"-v", configDir + ":/hsh-config:ro",
 		"-v", runDir + ":/hsh-run:ro",
 		"-v", stateDir + ":/hsh-state",
@@ -291,7 +291,7 @@ func Run(args []string) error {
 		proxyArgs = append(proxyArgs, "-v", roots+":/hsh-run/roots.pem:ro")
 	}
 	proxyArgs = append(proxyArgs,
-		cfg.Image, "proxy",
+		cfg.Image,
 		"--listen", netsetup.HostIP+":"+netsetup.ProxyPort,
 		"--config", "/hsh-config/"+filepath.Base(absConfig),
 		"--secrets", "/hsh-run/secrets.json",
@@ -345,8 +345,9 @@ func Run(args []string) error {
 		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
 		"--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN",
-		"--entrypoint", "/hsh",
-		"-v", exe + ":/hsh:ro",
+		"--entrypoint", "/hsh-workspace",
+		"-v", exe + ":/hsh-workspace:ro",
+		"-v", exe + ":/hsh-workspace-inner:ro",
 		"-v", caCertPath + ":/hsh-run/ca.crt:ro",
 	}
 	if isTerminal(os.Stdin) {
@@ -362,8 +363,9 @@ func Run(args []string) error {
 		wsArgs = append(wsArgs, "-v", v)
 	}
 	wsArgs = append(wsArgs,
-		cfg.Image, "workspace",
+		cfg.Image,
 		"--shell", cfg.Shell,
+		"--inner-exe", "/hsh-workspace-inner",
 		"--ca-cert", "/hsh-run/ca.crt",
 		"--proxy-addr", netsetup.ProxyAddr(),
 		"--workspace", wsDir,
