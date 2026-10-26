@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -38,11 +39,45 @@ func Run(args []string) error {
 	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
 	resumeFlag := fs.Bool("resume", false, "reuse the sandbox for this workspace directory instead of creating a new one")
 	freshFlag := fs.Bool("fresh", false, "with --resume: discard the existing sandbox and start a new one")
+	tasksPath := fs.String("tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless with the tasks as its prompt")
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		*imageFlag = args[0]
+		args = args[1:]
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *verboseFlag {
 		verbose = true
+	}
+	positional := fs.Args()
+	if len(positional) > 0 {
+		if len(positional) > 1 {
+			return fmt.Errorf("unexpected arguments: %v", positional)
+		}
+		if *imageFlag != "" && positional[0] != *imageFlag {
+			return fmt.Errorf("both --image %s and a positional image %s given", *imageFlag, positional[0])
+		}
+		*imageFlag = positional[0]
+	}
+	var tasksPrompt string
+	if *tasksPath != "" {
+		var data []byte
+		var err error
+		if *tasksPath == "-" {
+			data, err = io.ReadAll(os.Stdin)
+		} else {
+			data, err = os.ReadFile(*tasksPath)
+		}
+		if err != nil {
+			return fmt.Errorf("read tasks: %w", err)
+		}
+		tasks := config.ParseTasks(data)
+		if len(tasks) == 0 {
+			return fmt.Errorf("no tasks found in %s", *tasksPath)
+		}
+		tasksPrompt = config.ComposePrompt(tasks)
+		infof("hsh: %d task(s) from %s\n", len(tasks), *tasksPath)
 	}
 	absConfig, err := filepath.Abs(*configPath)
 	if err != nil {
@@ -70,6 +105,26 @@ func Run(args []string) error {
 	}
 	if *imageFlag != "" {
 		cfg.Image = *imageFlag
+	}
+	var agentExec []string
+	if tasksPrompt != "" {
+		if len(cfg.Agent.Command) == 0 {
+			return fmt.Errorf("--tasks needs an agent command; the image must declare one (\"agent\":{\"command\":[...]}) in its org.ifup.hsh label or config")
+		}
+		agentExec = make([]string, len(cfg.Agent.Command))
+		substituted := false
+		for i, el := range cfg.Agent.Command {
+			if strings.Contains(el, "{prompt}") {
+				agentExec[i] = strings.ReplaceAll(el, "{prompt}", tasksPrompt)
+				substituted = true
+			} else {
+				agentExec[i] = el
+			}
+		}
+		if !substituted {
+			agentExec = append(agentExec, tasksPrompt)
+		}
+		infof("hsh: running agent headless: %s\n", strings.Join(agentExec[:min(len(agentExec), 3)], " "))
 	}
 	configDir := filepath.Dir(absConfig)
 	mountBase := configDir
@@ -268,6 +323,13 @@ func Run(args []string) error {
 		"--workspace", wsDir,
 		"--home", "/home/hsh",
 	)
+	if len(agentExec) > 0 {
+		execJSON, err := json.Marshal(agentExec)
+		if err != nil {
+			return err
+		}
+		wsArgs = append(wsArgs, "--exec-json", string(execJSON))
+	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	if reattach || resume {
 		if reattach && containerRunning(wsName) {

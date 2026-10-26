@@ -412,7 +412,41 @@ kill "$OAUTH_PID" 2>/dev/null || true
 OAUTH_PID=""
 OAUTH_PID=""
 
-PASSED=1
+
+echo "== step 11: headless agent runs (--tasks)"
+cat >"$TMP/tasks.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"agent":{"command":["/bin/sh","-c","cat <<'TASKEOF'\n{prompt}\nTASKEOF"]}}'
+EOF
+podman build -q -t hsh-tasks-test:latest -f "$TMP/tasks.Containerfile" "$TMP" >/dev/null || fail "could not build the tasks test image"
+cat >"$TMP/setup-tasks.txt" <<'EOF'
+# setup tasks
+Install gh for github access and clone https://github.com/philips/hsh
+
+Setup a Golang environment using the latest stable release
+EOF
+(cd "$TMP/labelws" && "$HSH" run hsh-tasks-test:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks.out" 2>&1)
+grep -q "1. Install gh for github access and clone https://github.com/philips/hsh" "$TMP/tasks.out" || fail "task 1 was not in the prompt: $(cat "$TMP/tasks.out")"
+grep -q "2. Setup a Golang environment using the latest stable release" "$TMP/tasks.out" || fail "task 2 was not in the prompt"
+grep -q "a comment" "$TMP/tasks.out" && fail "comment lines leaked into the prompt"
+pass "hsh run --tasks runs the image's agent headless with a numbered prompt"
+
+cat >"$TMP/tasks-fail.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"agent":{"command":["/bin/sh","-c","exit 3"]}}'
+EOF
+podman build -q -t hsh-tasks-fail:latest -f "$TMP/tasks-fail.Containerfile" "$TMP" >/dev/null
+rc=0
+(cd "$TMP/labelws" && "$HSH" run hsh-tasks-fail:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks-fail.out" 2>&1) || rc=$?
+[ "$rc" = "3" ] || fail "agent exit code was not propagated (got $rc)"
+pass "headless agent exit codes propagate"
+
+if (cd "$TMP/labelws" && "$HSH" run hsh-label-test:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks-noagent.out" 2>&1); then
+	fail "hsh run --tasks succeeded without an agent command in the image"
+fi
+grep -q "agent command" "$TMP/tasks-noagent.out" || fail "missing-agent error did not explain the problem: $(cat "$TMP/tasks-noagent.out")"
+pass "hsh run --tasks fails clearly without an agent command"
 
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"
+PASSED=1

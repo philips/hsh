@@ -27,9 +27,12 @@ usage:
                                                an existing directory argument resolves to its workspace's sandbox)
 
 run flags:
+  hsh run [IMAGE] [flags]                      IMAGE is a positional alias for --image
   --config PATH     path to the config file (default: config.hsh)
   --image IMAGE     workspace image; without a config file the image's
                     org.ifup.hsh label provides the default config
+  --tasks PATH      newline-delimited tasks (or - for stdin); runs the
+                    image's agent headless with the tasks as its prompt
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
   --verbose         print progress information to stderr (or set HSH_VERBOSE=1)

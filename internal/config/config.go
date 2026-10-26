@@ -40,6 +40,32 @@ type Config struct {
 	Secrets map[string]Secret        `json:"secrets"`
 	Network Network                  `json:"network"`
 	OAuth   map[string]OAuthProvider `json:"oauth"`
+	Agent   Agent                    `json:"agent"`
+}
+
+type Agent struct {
+	Command []string `json:"command"`
+}
+
+func ParseTasks(data []byte) []string {
+	var tasks []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		tasks = append(tasks, line)
+	}
+	return tasks
+}
+
+func ComposePrompt(tasks []string) string {
+	var b strings.Builder
+	b.WriteString("Complete the following tasks:\n\n")
+	for i, t := range tasks {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, t)
+	}
+	return b.String()
 }
 
 type Mount struct {

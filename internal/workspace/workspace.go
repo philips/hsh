@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
@@ -21,6 +22,7 @@ import (
 
 type ParentOptions struct {
 	Shell     string
+	Exec      []string
 	Workspace string
 	Home      string
 	CACert    string
@@ -29,6 +31,7 @@ type ParentOptions struct {
 
 type InnerOptions struct {
 	Shell     string
+	Exec      []string
 	Workspace string
 	Home      string
 	CACert    string
@@ -56,13 +59,21 @@ func RunParent(opts ParentOptions) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(self, "workspace-inner",
+	innerArgs := []string{"workspace-inner",
 		"--shell", opts.Shell,
 		"--ca-cert", opts.CACert,
 		"--proxy-addr", opts.ProxyAddr,
 		"--workspace", opts.Workspace,
 		"--home", opts.Home,
-	)
+	}
+	if len(opts.Exec) > 0 {
+		execJSON, err := json.Marshal(opts.Exec)
+		if err != nil {
+			return err
+		}
+		innerArgs = append(innerArgs, "--exec-json", string(execJSON))
+	}
+	cmd := exec.Command(self, innerArgs...)
 	cmd.ExtraFiles = []*os.File{readyW, goR}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -146,6 +157,17 @@ func RunInner(opts InnerOptions) error {
 	}
 	if err := os.Chdir(opts.Workspace); err != nil {
 		return err
+	}
+	if len(opts.Exec) > 0 {
+		argv := opts.Exec
+		if !strings.Contains(argv[0], "/") {
+			resolved, err := exec.LookPath(argv[0])
+			if err != nil {
+				return fmt.Errorf("resolve %s: %w", argv[0], err)
+			}
+			argv[0] = resolved
+		}
+		return syscall.Exec(argv[0], argv, buildEnv(opts))
 	}
 	return syscall.Exec(opts.Shell, []string{opts.Shell}, buildEnv(opts))
 }

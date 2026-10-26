@@ -22,6 +22,17 @@ from `--image`). It provides the defaults the harness needs: the
 provider API hosts in `network.allow`, and the `secrets` that map host
 environment variables to the provider's API-key header.
 
+It also declares how the image's agent runs headless, which is what
+`hsh run --tasks` uses:
+
+```json
+"agent": {"command": ["pi", "-p", "{prompt}"]}
+```
+
+`command` is an argv template; `{prompt}` is replaced by the composed
+task prompt. `pi -p`, `vibe -p`, `claude -p`, and `codex exec` are the
+headless invocations of the four harness images.
+
 `hsh run --image IMAGE` in a directory without a `config.hsh` uses the
 image's label as its config:
 
@@ -45,6 +56,21 @@ parser preserves its double quotes:
 ```dockerfile
 LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"allow":["api.mistral.ai"]}}'
 ```
+
+## Headless task runs
+
+Give the agent a list of tasks and run it to completion:
+
+```
+$ hsh run ghcr.io/<owner>/hsh-pi --tasks setup-tasks.txt
+```
+
+`setup-tasks.txt` is newline-delimited (blank lines and `#` comments
+skipped); the tasks are composed into one numbered prompt and given to
+the image's agent (`agent.command` from the label) as a headless run.
+hsh streams the output and exits with the agent's exit code. The task
+file is read on the host — only the composed prompt enters the
+sandbox. `--tasks -` reads the task list from stdin.
 
 ## Per-image defaults
 

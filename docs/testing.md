@@ -32,6 +32,9 @@ proxy, the denial database, and the example image:
   the proxy, and the real tokens stay in the host-side store
 - **step 10**: the same OAuth flow inside the `hsh-vibe` image (skipped
   if that image is not built locally)
+- **step 11**: `hsh run IMAGE --tasks` — the image's agent command
+  receives the numbered task prompt, agent exit codes propagate, and a
+  missing agent command fails clearly
 
 Run it with:
 

@@ -37,6 +37,7 @@ image's `org.ifup.hsh` label as the config — see
 | `secrets` | `{}` | map of secret name → secret definition (below) |
 | `network.allow` | `[]` | egress allowlist; empty means no egress at all |
 | `oauth` | `{}` | map of provider name → OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
+| `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)) |
 
 The workspace starts in the first mount's target directory
 (override with `hsh run --workspace PATH`).
