@@ -5,6 +5,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 DUMMY_PID=""
 PROXY_PID=""
+OAUTH_PID=""
 RESUME_POD=""
 TEST_PODS=""
 PASSED=0
@@ -14,6 +15,9 @@ cleanup() {
 	fi
 	if [ -n "$PROXY_PID" ]; then
 		kill "$PROXY_PID" 2>/dev/null || true
+	fi
+	if [ -n "$OAUTH_PID" ]; then
+		kill "$OAUTH_PID" 2>/dev/null || true
 	fi
 	if [ -n "$RESUME_POD" ]; then
 		podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
@@ -349,6 +353,66 @@ if grep -Eq '^denied=200$' "$TMP/label.out"; then
 fi
 pass "hsh run --image uses the org.ifup.hsh label config (mount, allowlist, secrets)"
 
+echo "== step 9: sandboxed OAuth logins (phantom tokens via the proxy)"
+(cd "$REPO" && go build -o "$TMP/oauthsrv" ./test/oauthsrv)
+"$TMP/oauthsrv" -addr 0.0.0.0:8897 -log "$TMP/oauth.log" &
+OAUTH_PID=$!
+cat >"$TMP/oauth-config.hsh" <<EOF
+{
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "network": { "allow": ["host.containers.internal"] },
+  "oauth": {
+    "testprov": {
+      "token_endpoint": { "host": "host.containers.internal", "path": "/token" },
+      "response_fields": ["access_token", "refresh_token"],
+      "request_nonce_fields": ["refresh_token"],
+      "api_hosts": ["host.containers.internal"]
+    }
+  }
+}
+EOF
+oauth_flow() {
+	"$HSH" run --config "$TMP/oauth-config.hsh" --denied-db "$DB" "$@" >"$TMP/oauth.out" 2>&1 <<'CMDS' || true
+RESP="$(curl -sS -X POST -d 'grant_type=password&username=u&password=p' http://host.containers.internal:8897/token)"
+echo "login=$RESP"
+ACCESS="$(echo "$RESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "api=%{http_code}\n" -H "Authorization: Bearer $ACCESS" http://host.containers.internal:8897/api
+REFRESH="$(echo "$RESP" | grep -o '"refresh_token":"[^"]*"' | cut -d'"' -f4)"
+RESP2="$(curl -sS -X POST -d "grant_type=refresh_token&refresh_token=$REFRESH" http://host.containers.internal:8897/token)"
+echo "refresh=$RESP2"
+ACCESS2="$(echo "$RESP2" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "api2=%{http_code}\n" -H "Authorization: Bearer $ACCESS2" http://host.containers.internal:8897/api
+CMDS
+}
+oauth_flow
+grep -q '"access_token":"hsh_' "$TMP/oauth.out" || fail "the sandbox did not receive phantom tokens: $(cat "$TMP/oauth.out")"
+if grep -q 'real-access\|real-refresh' "$TMP/oauth.out"; then
+	fail "real OAuth tokens leaked into the sandbox"
+fi
+grep -Eq '^api=200$' "$TMP/oauth.out" || fail "api call with a phantom token failed: $(cat "$TMP/oauth.out")"
+grep -Eq '^api2=200$' "$TMP/oauth.out" || fail "api call after refresh failed: $(cat "$TMP/oauth.out")"
+grep -q "refresh=real-refresh-1" "$TMP/oauth.log" || fail "the upstream did not receive the real refresh token during the refresh flow"
+grep -q "auth=Bearer real-access-1" "$TMP/oauth.log" || fail "the upstream did not receive the real access token"
+if ! curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(grep -o '"access_token":"hsh_[0-9a-f]*"' "$TMP/oauth.out" | head -1 | cut -d'"' -f4)" http://127.0.0.1:8897/api | grep -q 401; then
+	fail "a phantom token redeemed directly against the provider (bypassing the proxy)"
+fi
+grep -q "real-access-1" "$TMP/oauth-tokens.json" || fail "the host-side oauth token store does not hold the real tokens"
+pass "oauth login inside the sandbox yields phantoms; real tokens stay on the host"
+
+echo "== step 10: the oauth flow inside the hsh-vibe image"
+if podman image exists localhost/hsh-vibe:latest; then
+	oauth_flow --image localhost/hsh-vibe:latest
+	grep -Eq '^api2=200$' "$TMP/oauth.out" || fail "the oauth flow failed inside the hsh-vibe image: $(cat "$TMP/oauth.out")"
+	pass "oauth flow works inside the hsh-vibe sandbox image"
+else
+	echo "SKIP: hsh-vibe image not built (podman build -t hsh-vibe images/vibe/)"
+fi
+kill "$OAUTH_PID" 2>/dev/null || true
+OAUTH_PID=""
+OAUTH_PID=""
+
+PASSED=1
+
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"
-PASSED=1

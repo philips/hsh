@@ -36,6 +36,7 @@ image's `org.ifup.hsh` label as the config — see
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
 | `secrets` | `{}` | map of secret name → secret definition (below) |
 | `network.allow` | `[]` | egress allowlist; empty means no egress at all |
+| `oauth` | `{}` | map of provider name → OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 
 The workspace starts in the first mount's target directory
 (override with `hsh run --workspace PATH`).

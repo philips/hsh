@@ -21,12 +21,25 @@ type Network struct {
 	Allow []string `json:"allow"`
 }
 
+type OAuthTokenEndpoint struct {
+	Host string `json:"host"`
+	Path string `json:"path"`
+}
+
+type OAuthProvider struct {
+	TokenEndpoint      OAuthTokenEndpoint `json:"token_endpoint"`
+	ResponseFields     []string           `json:"response_fields"`
+	RequestNonceFields []string           `json:"request_nonce_fields"`
+	APIHosts           []string           `json:"api_hosts"`
+}
+
 type Config struct {
-	Image   string            `json:"image"`
-	Shell   string            `json:"shell"`
-	Mounts  []string          `json:"mounts"`
-	Secrets map[string]Secret `json:"secrets"`
-	Network Network           `json:"network"`
+	Image   string                   `json:"image"`
+	Shell   string                   `json:"shell"`
+	Mounts  []string                 `json:"mounts"`
+	Secrets map[string]Secret        `json:"secrets"`
+	Network Network                  `json:"network"`
+	OAuth   map[string]OAuthProvider `json:"oauth"`
 }
 
 type Mount struct {

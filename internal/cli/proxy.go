@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"path/filepath"
 
 	"hsh/internal/netsetup"
 	"hsh/internal/proxy"
@@ -16,8 +17,13 @@ func Proxy(args []string) error {
 	caKey := fs.String("ca-key", "/hsh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
 	deniedDB := fs.String("denied-db", "", "denial database path (empty disables recording)")
+	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the denial database)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	storePath := *oauthStore
+	if storePath == "" && *deniedDB != "" {
+		storePath = filepath.Join(filepath.Dir(*deniedDB), "oauth-tokens.json")
 	}
 	p, err := proxy.New(proxy.Options{
 		ListenAddr:  *listen,
@@ -27,6 +33,7 @@ func Proxy(args []string) error {
 		CAKeyPath:   *caKey,
 		RootsPath:   *roots,
 		DeniedDB:    *deniedDB,
+		OAuthStore:  storePath,
 	})
 	if err != nil {
 		return err

@@ -31,11 +31,13 @@ type Options struct {
 	CAKeyPath   string
 	RootsPath   string
 	DeniedDB    string
+	OAuthStore  string
 }
 
 type state struct {
 	allow   []string
 	secrets []config.ResolvedSecret
+	oauth   []oauthProvider
 }
 
 type Proxy struct {
@@ -44,6 +46,7 @@ type Proxy struct {
 	roots     *x509.CertPool
 	transport *http.Transport
 	deniedDB  *sql.DB
+	store     *tokenStore
 
 	mu sync.RWMutex
 	st state
@@ -84,7 +87,7 @@ func New(opts Options) (*Proxy, error) {
 			return nil, fmt.Errorf("open denial database: %w", err)
 		}
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, deniedDB: db}, nil
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, deniedDB: db, store: loadTokenStore(opts.OAuthStore)}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -136,6 +139,7 @@ func (p *Proxy) reload() error {
 	p.mu.Lock()
 	p.st.allow = cfg.Network.Allow
 	p.st.secrets = rs.Secrets
+	p.st.oauth = oauthProviders(cfg.OAuth)
 	p.mu.Unlock()
 	return nil
 }
@@ -215,6 +219,12 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.deny(w, host, r.URL.Host)
 		return
 	}
+	if prov := p.oauthTokenEndpoint(host, r.URL.Path); prov != nil && r.Method == http.MethodPost {
+		log.Printf("%s %s%s -> oauth token exchange (%s)", r.Method, r.URL.Host, r.URL.RequestURI(), prov.name)
+		p.oauthServeHTTP(w, r, prov)
+		return
+	}
+	p.redeemBearerHeader(r.Header, host)
 	for _, s := range p.secretsFor(host) {
 		r.Header.Set(s.Header, s.Prefix+s.Value)
 		log.Printf("%s %s%s: injecting header %s", r.Method, r.URL.Host, r.URL.RequestURI(), s.Header)
@@ -265,7 +275,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secrets := p.secretsFor(host)
-	if len(secrets) == 0 {
+	if len(secrets) == 0 && !p.oauthInvolved(host) {
 		log.Printf("CONNECT %s -> allowed (tunnel)", r.Host)
 		p.tunnel(clientConn, clientBuf, upstream)
 		return
@@ -274,7 +284,11 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	for _, s := range secrets {
 		log.Printf("CONNECT %s: will inject header %s", r.Host, s.Header)
 	}
-	log.Printf("CONNECT %s -> allowed (intercept)", r.Host)
+	if len(secrets) == 0 {
+		log.Printf("CONNECT %s: will intercept for oauth", r.Host)
+	} else {
+		log.Printf("CONNECT %s -> allowed (intercept)", r.Host)
+	}
 	p.intercept(clientConn, clientBuf, host, r.Host, secrets)
 }
 
@@ -331,6 +345,16 @@ func (p *Proxy) serveConn(conn *tls.Conn, target string, secrets []config.Resolv
 		}
 		req.URL.Scheme = "https"
 		req.URL.Host = target
+		host := req.URL.Hostname()
+		if prov := p.oauthTokenEndpoint(host, req.URL.Path); prov != nil && req.Method == http.MethodPost {
+			log.Printf("%s %s%s -> oauth token exchange (%s)", req.Method, target, req.URL.RequestURI(), prov.name)
+			p.oauthServeConn(conn, req, prov)
+			if req.Close {
+				return
+			}
+			continue
+		}
+		p.redeemBearerHeader(req.Header, host)
 		for _, s := range secrets {
 			req.Header.Set(s.Header, s.Prefix+s.Value)
 			log.Printf("%s %s%s: injecting header %s", req.Method, target, req.URL.RequestURI(), s.Header)

@@ -21,12 +21,26 @@ proxy, the denial database, and the example image:
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 407
+- **step 5**: `--resume` re-enters the same container, with state
+  persisted and the proxy/DNS working after re-entry
+- **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
+- **step 7**: `proxy-watch` refuses to run without a terminal
+- **step 8**: `hsh run --image` uses the image's `org.ifup.hsh` label
+  config (mount, allowlist, secret injection)
+- **step 9**: a sandboxed OAuth login (`test/oauthsrv`): the sandbox
+  sees only phantom tokens, API calls and refresh flows redeem them at
+  the proxy, and the real tokens stay in the host-side store
+- **step 10**: the same OAuth flow inside the `hsh-vibe` image (skipped
+  if that image is not built locally)
 
 Run it with:
 
 ```
 ./test/functional.sh
 ```
+
+`internal/proxy/oauth_test.go` covers the OAuth capture over both the
+plain-HTTP and the TLS MITM path as Go unit tests.
 
 Requirements: Go, rootless podman, network access (for `api.mistral.ai` and
 the image build), and port 8899 free on the host. The test is hermetic: it
