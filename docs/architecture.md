@@ -204,15 +204,26 @@ the proxy logs header names but never values.
 
 ## TLS interception
 
-`hsh run` generates a fresh ECDSA P-256 CA per run (never persisted).
-The CA certificate is bind-mounted into the workspace (which appends it to
-the system trust bundle and exports `SSL_CERT_FILE`, `GIT_SSL_CAINFO`,
-`NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`); the CA
-private key is mounted into the proxy container only. The proxy signs
-per-host leaf certificates on demand (cached per host).
+`hsh run` generates a fresh ECDSA P-256 CA per run; with `--resume` it is
+persisted in the session state (`$XDG_STATE_HOME/hsh/sessions/<hash>/`) so
+the CA the workspace trusts stays stable across launches, and it is never
+written anywhere else. The CA certificate is bind-mounted into the
+workspace (which appends it to the system trust bundle and exports
+`SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`,
+`CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`); the CA private key is mounted
+into the proxy container only. The proxy signs per-host leaf certificates
+on demand (cached per host).
 
 Upstream TLS is verified against the host's CA bundle (bind-mounted into the
 proxy container, falling back to the image's bundle).
+
+Interception is required for secret hosts and is a deliberate design
+decision, not a gap: injecting a header into an HTTPS request means
+terminating TLS, and the secret must never enter the workspace. Hosts
+without secrets are tunneled end-to-end instead. The known costs are that
+the proxy can read and modify all traffic to intercepted hosts, non-HTTP
+protocols to those hosts break, and clients that use their own CA bundle
+need a per-client CA variable (see docs/sandboxed-oauth.md).
 
 ## Configuration hot reload
 
