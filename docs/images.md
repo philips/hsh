@@ -25,8 +25,9 @@ Build one locally with `podman build -t hsh-vibe images/vibe/`.
 Each image carries an `org.ifup.hsh` label whose value is a JSON config
 in the [config file](config.md) format (without `image`, which comes
 from `--image`). It provides the defaults the harness needs: the
-provider API hosts in `network.allow`, and the `secrets` that map host
-environment variables to the provider's API-key header.
+provider API hosts in `network.allow`, and the `secrets` that reference
+the [hsh secret store](config.md#the-hsh-secret-store) (`hsh://NAME`)
+for the provider's API key.
 
 It also declares how the image's agent runs headless, which is what
 `hsh run --tasks` uses:
@@ -83,16 +84,26 @@ sandbox. `--tasks -` reads the task list from stdin.
 
 ## Per-image defaults
 
-- **pi** — multi-provider: `MISTRAL_API_KEY` (Bearer) to
-  `api.mistral.ai`, `ANTHROPIC_API_KEY` (`x-api-key`) to
-  `api.anthropic.com`, `OPENAI_API_KEY` (Bearer) to `api.openai.com`.
-- **vibe** — `MISTRAL_API_KEY` (Bearer) to `api.mistral.ai`.
-- **claude-code** — `ANTHROPIC_API_KEY` (`x-api-key`) to
+- **pi** — multi-provider: `hsh://mistral-api-key` (Bearer) to
+  `api.mistral.ai`, `hsh://anthropic-api-key` (`x-api-key`) to
+  `api.anthropic.com`, `hsh://openai-api-key` (Bearer) to
+  `api.openai.com`.
+- **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
+- **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai` and
   `statsig.anthropic.com`.
-- **codex** — `OPENAI_API_KEY` (Bearer) to `api.openai.com`; also
+- **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
   allows `auth.openai.com` and `chatgpt.com` (account login flows).
 
-Secrets are resolved from the host environment at launch time; the
-container never sees the raw environment variable, only the injected
+Secrets are resolved from the host-side hsh secret store at launch
+time, so before the first run store the provider key under the image's
+expected name:
+
+```
+hsh secret add anthropic-api-key
+```
+
+A missing store entry is a warning and the request is forwarded without
+the header (the same fail-open behavior as an unset environment
+variable). The container never sees the raw secret, only the injected
 header on matching hosts.

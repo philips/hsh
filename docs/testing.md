@@ -26,7 +26,8 @@ proxy, the denial database, and the example image:
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
 - **step 7**: `proxy-watch` refuses to run without a terminal
 - **step 8**: `hsh run --image` uses the image's `org.ifup.hsh` label
-  config (mount, allowlist, secret injection)
+  config (mount, allowlist, and an `hsh://` secret resolved from the
+  store, matching the harness images' labels)
 - **step 9**: a sandboxed OAuth login (`test/oauthsrv`): the sandbox
   sees only phantom tokens, API calls and refresh flows redeem them at
   the proxy, and the real tokens stay in the host-side store

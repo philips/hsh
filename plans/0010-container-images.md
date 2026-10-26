@@ -1,36 +1,33 @@
-Create pre-built container images for the most popular agent harnesses with configurations setup for their providers.
+# Pre-built harness container images
 
+> **Status: implemented.** One image per agent harness under `images/`,
+> each with an `org.ifup.hsh` label providing the default config
+> (hsh secret store references, network allowlist, headless agent
+> command). Published to ghcr.io by `.github/workflows/release.yml`
+> (version tags + latest) and `.github/workflows/images.yml` (latest on
+> pushes to main, weekly refresh, PR build checks). See docs/images.md.
 
-# Installer Locations
+## Goal
 
-## Pi install
+Create pre-built container images for the most popular agent harnesses
+with configurations set up for their providers.
 
-```
-curl -fsSL https://pi.dev/install.sh
-```
+## Images and installers
 
-Providers: TODO
+| Image | Harness | Installer |
+|---|---|---|
+| `images/pi/` | Pi (multi-provider) | `curl -fsSL https://pi.dev/install.sh \| sh` |
+| `images/vibe/` | Mistral Vibe | `curl -LsSf https://mistral.ai/vibe/install.sh \| bash` |
+| `images/claude-code/` | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` |
+| `images/codex/` | OpenAI Codex | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` |
 
-## Mistral Vibe
+## Endpoint configuration for the proxy
 
-```
-curl -LsSf https://mistral.ai/vibe/install.sh | bash
-```
+Provider endpoints and auth headers are taken from pi's provider
+database: https://github.com/earendil-works/pi/tree/main/packages/ai/src/providers
 
-## Claude Code
-
-```
-curl -fsSL https://claude.ai/install.sh | bash
-```
-
-## OpenAI Codex
-
-```
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
-```
-
-# Endpoint Configuration for Proxy
-
-To find the endpoints and other facts about the provider use the database from `pi`: https://github.com/earendil-works/pi/tree/d5b3de22d0e24a3e9c38a9410d3329b099717283/packages/ai/src/providers
-
-A Containerfile Label in the format org.ifup.hsh should be used to provide a default config with configuration for the hsh secrets and network to access the provider.
+A Containerfile label in the format `org.ifup.hsh` provides the default
+config for each image: the provider API hosts in `network.allow`
+(allowlist mode), the `secrets` mapping the hsh secret store to the
+provider's API-key header, and the `agent` command template for
+headless runs.

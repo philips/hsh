@@ -330,15 +330,15 @@ mkdir -p "$TMP/labelws"
 echo label-mount >"$TMP/labelws/marker.txt"
 cat >"$TMP/label.Containerfile" <<EOF
 FROM localhost/hsh-example:latest
-LABEL org.ifup.hsh='{"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"HSH_LABEL_SECRET","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
+LABEL org.ifup.hsh='{"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"hsh://fn-label-key","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
 EOF
 podman build -q -t hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
-export HSH_LABEL_SECRET=label-secret-value-42
+echo label-secret-value-42 | "$HSH" secret add fn-label-key --value-stdin --db "$TMP/secretstore/secrets.db" >/dev/null || fail "secret add for the label test failed"
 if (cd "$TMP/labelws" && "$HSH" run >"$TMP/label-noimg.out" 2>&1); then
 	fail "hsh run without a config file or --image succeeded"
 fi
 grep -q "no config file" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
-(cd "$TMP/labelws" && "$HSH" run --image hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" --image hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
 cat /workspace/marker.txt
 curl -sS -o /dev/null -w 'allowed=%{http_code}\n' http://host.containers.internal:8899/v1/models
 curl -sS -o /dev/null -w 'denied=%{http_code}\n' --max-time 8 http://example.com/ 2>&1 | tail -1
@@ -351,7 +351,7 @@ grep -q "Authorization: Bearer label-secret-value-42" "$TMP/requests.log" || fai
 if grep -Eq '^denied=200$' "$TMP/label.out"; then
 	fail "a non-allowlisted host was reachable with the label config"
 fi
-pass "hsh run --image uses the org.ifup.hsh label config (mount, allowlist, secrets)"
+pass "hsh run --image uses the org.ifup.hsh label config (mount, allowlist, hsh:// store secrets)"
 
 echo "== step 9: sandboxed OAuth logins (phantom tokens via the proxy)"
 (cd "$REPO" && go build -o "$TMP/oauthsrv" ./test/oauthsrv)
