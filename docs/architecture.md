@@ -343,11 +343,21 @@ hostile inference providers):
 
 ## Building
 
+Install from the latest GitHub release (downloads, verifies the SHA-256
+checksum, installs to `~/.local/bin`, and makes sure that directory is on
+your PATH):
+
+```
+curl -fsSL https://raw.githubusercontent.com/philips/hx/main/install.sh | sh
+```
+
+Or build from source:
+
 ```
 CGO_ENABLED=0 go build -o hsh .
 ```
 
-Requires Go 1.24+ and a working rootless podman installation.
+Requires Go 1.26+ and a working rootless podman installation.
 
 ## Example workspace image
 
