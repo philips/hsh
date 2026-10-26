@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,12 +8,10 @@ import (
 	"strings"
 )
 
-// notFoundError marks a sandbox that does not exist (ignored with --ignore).
 type notFoundError struct{ msg string }
 
 func (e *notFoundError) Error() string { return e.msg }
 
-// Rm implements `hsh rm`: remove hsh sandboxes, following `podman pod rm`.
 func Rm(args []string) error {
 	fs := flag.NewFlagSet("rm", flag.ContinueOnError)
 	var all bool
@@ -44,13 +41,8 @@ func Rm(args []string) error {
 		return err
 	}
 	pods = sandboxPods(pods)
-	targets, err := resolveTargets(fs.Args(), pods, all, latest)
+	targets, err := resolveTargets(fs.Args(), pods, all, latest, ignore)
 	if err != nil {
-		var nf *notFoundError
-		if ignore && errors.As(err, &nf) {
-			fmt.Fprintf(os.Stderr, "hsh: %v (ignored)\n", err)
-			return nil
-		}
 		return err
 	}
 
@@ -58,9 +50,9 @@ func Rm(args []string) error {
 	for _, p := range targets {
 		rmArgs := []string{"pod", "rm"}
 		if force {
-			rmArgs = append(rmArgs, "--force")
+			rmArgs = append(rmArgs, "--force", "--time", fmt.Sprint(timeout))
 		}
-		rmArgs = append(rmArgs, "--time", fmt.Sprint(timeout), p.Name)
+		rmArgs = append(rmArgs, p.Name)
 		out, err := podman(rmArgs...)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hsh: removing %s: %v\n%s", p.Name, err, out)
@@ -85,7 +77,7 @@ func Rm(args []string) error {
 			fmt.Fprintf(os.Stderr, "hsh: sweeping session state: %v\n", err)
 			failed = true
 		} else if n > 0 {
-			fmt.Printf("removed %d session state director(y/ies)\n", n)
+			fmt.Printf("removed %d session state director%s\n", n, pluralY(n))
 		}
 	}
 	if failed {
@@ -94,58 +86,75 @@ func Rm(args []string) error {
 	return nil
 }
 
-// resolveTargets maps rm arguments to sandbox pods. An argument that is an
-// existing directory resolves to the sandbox labeled with that workspace;
-// otherwise it matches a sandbox by name or ID prefix.
-func resolveTargets(args []string, pods []podInfo, all, latest bool) ([]podInfo, error) {
+func pluralY(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}
+
+func resolveTargets(args []string, pods []podInfo, all, latest, ignore bool) ([]podInfo, error) {
 	if all {
 		return pods, nil
 	}
 	if latest {
-		if len(pods) == 0 {
-			return nil, &notFoundError{"no hsh sandboxes found"}
+		if p, ok := latestPod(pods); ok {
+			return []podInfo{p}, nil
 		}
-		best := pods[0]
-		for _, p := range pods[1:] {
-			if p.CreatedTime().After(best.CreatedTime()) {
-				best = p
-			}
-		}
-		return []podInfo{best}, nil
-	}
-	if len(args) == 0 {
-		return nil, fmt.Errorf("specify a sandbox, or --all/--latest")
+		return nil, notFound("no hsh sandboxes found", ignore)
 	}
 	var targets []podInfo
 	for _, arg := range args {
-		if abs, err := filepath.Abs(arg); err == nil {
-			if st, err := os.Stat(abs); err == nil && st.IsDir() {
-				var matched []podInfo
-				for _, p := range pods {
-					if p.Workspace() == abs || p.Workspace() == arg {
-						matched = append(matched, p)
-					}
-				}
-				if len(matched) == 0 {
-					return nil, &notFoundError{fmt.Sprintf("no hsh sandbox found for workspace %s", abs)}
-				}
-				targets = append(targets, matched...)
-				continue
-			}
-		}
-		var matched []podInfo
-		for _, p := range pods {
-			if p.Name == arg || strings.HasPrefix(p.ID, arg) {
-				matched = append(matched, p)
-			}
+		matched, err := matchPods(arg, pods)
+		if err != nil {
+			return nil, err
 		}
 		if len(matched) == 0 {
-			return nil, &notFoundError{fmt.Sprintf("no hsh sandbox found matching %q", arg)}
+			return nil, notFound(matchError(arg), ignore)
 		}
-		if len(matched) > 1 {
-			return nil, fmt.Errorf("ambiguous sandbox %q matches %d pods", arg, len(matched))
-		}
-		targets = append(targets, matched[0])
+		targets = append(targets, matched...)
 	}
 	return targets, nil
+}
+
+func matchError(arg string) string {
+	if abs, err := filepath.Abs(arg); err == nil {
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+			return fmt.Sprintf("no hsh sandbox found for workspace %s", abs)
+		}
+	}
+	return fmt.Sprintf("no hsh sandbox found matching %q", arg)
+}
+
+func matchPods(arg string, pods []podInfo) ([]podInfo, error) {
+	if abs, err := filepath.Abs(arg); err == nil {
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+			var matched []podInfo
+			for _, p := range pods {
+				if p.Workspace() == abs || p.Workspace() == arg {
+					matched = append(matched, p)
+				}
+			}
+			return matched, nil
+		}
+	}
+	var matched []podInfo
+	for _, p := range pods {
+		if p.Name == arg || strings.HasPrefix(p.ID, arg) {
+			matched = append(matched, p)
+		}
+	}
+	if len(matched) > 1 {
+		return nil, fmt.Errorf("ambiguous sandbox %q matches %d pods", arg, len(matched))
+	}
+	return matched, nil
+}
+
+func notFound(msg string, ignore bool) error {
+	err := &notFoundError{msg}
+	if ignore {
+		fmt.Fprintf(os.Stderr, "hsh: %v (ignored)\n", err)
+		return nil
+	}
+	return err
 }

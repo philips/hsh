@@ -11,8 +11,6 @@ import (
 	"hsh/internal/denieddb"
 )
 
-// podInfo is one hsh sandbox pod, as reported by
-// `podman pod ls --format '{{json .}}'`.
 type podInfo struct {
 	ID         string `json:"Id"`
 	Name       string `json:"Name"`
@@ -39,11 +37,17 @@ func (p podInfo) CreatedTime() time.Time {
 	return t
 }
 
-// isSandbox reports whether the pod was created by hsh (pods are named hsh-*).
 func (p podInfo) isSandbox() bool { return strings.HasPrefix(p.Name, "hsh-") }
 
-// listSandboxes lists hsh sandbox pods. extraFilters are passed to podman as
-// additional --filter arguments.
+type stringArray []string
+
+func (a *stringArray) String() string { return strings.Join(*a, ",") }
+
+func (a *stringArray) Set(v string) error {
+	*a = append(*a, v)
+	return nil
+}
+
 func listSandboxes(extraFilters ...string) ([]podInfo, error) {
 	args := []string{"pod", "ls", "--filter", "name=hsh-", "--format", "{{json .}}"}
 	for _, f := range extraFilters {
@@ -68,7 +72,6 @@ func listSandboxes(extraFilters ...string) ([]podInfo, error) {
 	return pods, nil
 }
 
-// sandboxPods filters a pod list down to hsh sandboxes (name prefix hsh-).
 func sandboxPods(pods []podInfo) []podInfo {
 	var out []podInfo
 	for _, p := range pods {
@@ -79,14 +82,23 @@ func sandboxPods(pods []podInfo) []podInfo {
 	return out
 }
 
-// sessionDirFor returns the --resume session state directory for a sandbox
-// pod (the pod name suffix is the workspace hash).
+func latestPod(pods []podInfo) (podInfo, bool) {
+	if len(pods) == 0 {
+		return podInfo{}, false
+	}
+	best := pods[0]
+	for _, p := range pods[1:] {
+		if p.CreatedTime().After(best.CreatedTime()) {
+			best = p
+		}
+	}
+	return best, true
+}
+
 func sessionDirFor(podName string) string {
 	return filepath.Join(denieddb.StateDir(), "sessions", strings.TrimPrefix(podName, "hsh-"))
 }
 
-// removeSessionDir removes the sandbox's session state directory if present.
-// It returns true when a directory was removed.
 func removeSessionDir(podName string) (bool, error) {
 	dir := sessionDirFor(podName)
 	if _, err := os.Stat(dir); err != nil {
@@ -98,8 +110,6 @@ func removeSessionDir(podName string) (bool, error) {
 	return true, nil
 }
 
-// sweepSessionDirs removes every session state directory (used by rm --all,
-// including orphaned ones whose pod is already gone).
 func sweepSessionDirs() (int, error) {
 	base := filepath.Join(denieddb.StateDir(), "sessions")
 	entries, err := os.ReadDir(base)

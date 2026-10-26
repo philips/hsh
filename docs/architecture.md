@@ -244,12 +244,37 @@ Mounts, image, and shell changes require a restart.
   pass `--verbose` (or set `HSH_VERBOSE=1`) to see it on stderr.
   Warnings and errors are always printed.
 - The pod is named `hsh-<random>`; containers are `<pod>-proxy` and
-  `<pod>-ws`.
+  `<pod>-ws`. Every hsh pod carries the label
+  `hsh.workspace=<first mount source>`, so the workspace a sandbox
+  belongs to is always discoverable.
 - `hsh run` attaches to the workspace container (`podman run -it`, or
   `-i` when stdin is not a terminal) and propagates its exit code.
 - On exit, SIGINT, or SIGTERM, the pod is removed (`podman pod rm -f`) and
   the temporary directory deleted.
 - Proxy logs: `podman logs <pod>-proxy` while the session is running.
+
+A killed or crashed `hsh` does not get to remove its pod, so sandboxes
+can be left behind. `hsh ls` and `hsh rm` find and clean those up; both
+operate on pods whose name contains `hsh-` and follow the flags and
+semantics of `podman pod ls` / `podman pod rm`:
+
+```
+hsh ls                                    # table with an extra WORKSPACE column
+hsh ls -q --sort name                     # quiet, sorted
+hsh ls --workspace ~/repo                 # the sandbox for one workspace
+hsh rm hsh-53bd3fc7e5ba                   # remove a leftover (refuses if running)
+hsh rm -f hsh-53bd3fc7e5ba                # stop running containers, then remove
+hsh rm ~/repo                             # remove via the workspace path
+hsh rm --all -f                           # full cleanup
+```
+
+`hsh rm` passes the usual podman flags through (`-f/--force`,
+`-t/--time`, `-i/--ignore`, `-l/--latest`, `-a/--all`). A sandbox with
+running containers is refused without `--force`, exactly like
+`podman pod rm`. Removing a sandbox also removes its session state
+directory (`$XDG_STATE_HOME/hsh/sessions/<hash>/`), and `rm --all`
+sweeps orphaned session state directories whose pod is already gone.
+Pods that are not hsh sandboxes are never touched.
 
 ## Sandbox reuse: `hsh --resume`
 
@@ -257,9 +282,9 @@ By default every launch creates a fresh pod (random name) and removes it on
 exit. With `--resume`, the sandbox is keyed by the workspace directory (the
 first mount's source) and persists across launches:
 
-- The pod is named `hsh-<sha256(workspace)[:12]>` and labeled
-  `hsh.workspace=<path>` (find it with
-  `podman pod ls --filter label=hsh.workspace=<path>`).
+- The pod is named `hsh-<sha256(workspace)[:12]>`; find it with
+  `hsh ls --workspace <path>` or
+  `podman pod ls --filter label=hsh.workspace=<path>`.
 - On exit the pod is left in place (the workspace container stops, the
   proxy keeps running). A later `--resume` re-enters the **same
   container** — its filesystem persists, so state inside the workspace
@@ -279,7 +304,7 @@ first mount's source) and persists across launches:
   running one first.
 
 A reused sandbox accumulates container state; use `--fresh` (or
-`podman pod rm -f <pod>`) to reset it.
+`hsh rm -f <sandbox>` followed by a fresh `--resume`) to reset it.
 
 ## Why podman
 

@@ -10,7 +10,6 @@ import (
 	"github.com/dustin/go-humanize"
 )
 
-// Ls implements `hsh ls`: list hsh sandboxes, following `podman pod ls`.
 func Ls(args []string) error {
 	fs := flag.NewFlagSet("ls", flag.ContinueOnError)
 	var quiet bool
@@ -21,8 +20,9 @@ func Ls(args []string) error {
 	fs.BoolVar(&noHeading, "n", false, "do not print headers")
 	noTrunc := fs.Bool("no-trunc", false, "do not truncate pod and container IDs")
 	sortBy := fs.String("sort", "created", "sort output by created, id, name, or number")
-	filtersLong := fs.StringArray("filter", nil, "filter output (podman filter, repeatable)")
-	filtersShort := fs.StringArray("f", nil, "filter output (podman filter, repeatable)")
+	var filters stringArray
+	fs.Var(&filters, "filter", "filter output (podman filter, repeatable)")
+	fs.Var(&filters, "f", "filter output (podman filter, repeatable)")
 	format := fs.String("format", "", "Go template to format the output (passed through to podman)")
 	ctrIDs := fs.Bool("ctr-ids", false, "display container IDs (passed through to podman)")
 	ctrNames := fs.Bool("ctr-names", false, "display container names (passed through to podman)")
@@ -42,15 +42,11 @@ func Ls(args []string) error {
 	}
 
 	var extraFilters []string
-	extraFilters = append(extraFilters, *filtersLong...)
-	extraFilters = append(extraFilters, *filtersShort...)
+	extraFilters = append(extraFilters, filters...)
 	if *workspace != "" {
 		extraFilters = append(extraFilters, "label=hsh.workspace="+*workspace)
 	}
 
-	// Pass-through mode: the user asked for podman's own rendering
-	// (--format, --ctr-*, --ns), so hand the flags to podman with the hsh
-	// selection added.
 	if *format != "" || *ctrIDs || *ctrNames || *ctrStatus || *ns {
 		podmanArgs := []string{"pod", "ls", "--filter", "name=hsh-"}
 		for _, f := range extraFilters {
@@ -97,14 +93,12 @@ func Ls(args []string) error {
 		return err
 	}
 	pods = sandboxPods(pods)
-	if latest && len(pods) > 0 {
-		best := pods[0]
-		for _, p := range pods[1:] {
-			if p.CreatedTime().After(best.CreatedTime()) {
-				best = p
-			}
+	if latest {
+		if p, ok := latestPod(pods); ok {
+			pods = []podInfo{p}
+		} else {
+			pods = nil
 		}
-		pods = []podInfo{best}
 	}
 	switch *sortBy {
 	case "created":

@@ -6,6 +6,7 @@ TMP="$(mktemp -d)"
 DUMMY_PID=""
 PROXY_PID=""
 RESUME_POD=""
+TEST_PODS=""
 PASSED=0
 cleanup() {
 	if [ -n "$DUMMY_PID" ]; then
@@ -17,6 +18,9 @@ cleanup() {
 	if [ -n "$RESUME_POD" ]; then
 		podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
 	fi
+	for pod in $TEST_PODS; do
+		podman pod rm -f "$pod" >/dev/null 2>&1 || true
+	done
 	if [ "$PASSED" = "1" ]; then
 		rm -rf "$TMP"
 	else
@@ -242,7 +246,77 @@ pass "DNS works after re-entry"
 podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
 RESUME_POD=""
 
-echo "== step 6: proxy-watch requires a terminal"
+echo "== step 6: hsh ls / hsh rm"
+OTHER_HSH_PODS="$(podman pod ls --format '{{.Name}}' | grep '^hsh-' || true)"
+POD_A="hsh-fn-a-$$"
+POD_B="hsh-fn-b-$$"
+TEST_PODS="$POD_A $POD_B"
+podman pod create --name "$POD_A" --label "hsh.workspace=$TMP/workspace" >/dev/null
+podman pod create --name "$POD_B" >/dev/null
+podman run --pod "$POD_B" -d localhost/hsh-example:latest sleep 300 >/dev/null
+
+OUT="$("$HSH" ls)"
+echo "$OUT" | grep -q '^POD ID' || fail "hsh ls did not print a header"
+echo "$OUT" | grep -q WORKSPACE || fail "hsh ls header has no WORKSPACE column"
+echo "$OUT" | grep -q "$POD_A" || fail "hsh ls did not list the stopped sandbox"
+echo "$OUT" | grep -q "$POD_B" || fail "hsh ls did not list the running sandbox"
+echo "$OUT" | grep -q "$TMP/workspace" || fail "hsh ls did not show the workspace label"
+pass "hsh ls lists sandboxes with name, status, and workspace"
+
+POD_A_ID="$(podman pod inspect "$POD_A" --format '{{.Id}}')"
+"$HSH" ls -q | grep -q "^$POD_A_ID$" || fail "hsh ls -q did not print pod IDs"
+"$HSH" ls --no-trunc -q | grep -q "^$POD_A_ID$" || fail "hsh ls --no-trunc -q did not print the full ID"
+pass "hsh ls -q and --no-trunc -q print pod IDs"
+
+OUT="$("$HSH" ls --workspace "$TMP/workspace")"
+echo "$OUT" | grep -q "$POD_A" || fail "hsh ls --workspace did not list the workspace's sandbox"
+echo "$OUT" | grep -q "$POD_B" && fail "hsh ls --workspace listed a sandbox of another workspace"
+pass "hsh ls --workspace filters by the hsh.workspace label"
+
+if "$HSH" rm "$POD_B" >"$TMP/rm-running.out" 2>&1; then
+	fail "hsh rm removed a sandbox with a running container without --force"
+fi
+grep -q "without force" "$TMP/rm-running.out" || fail "hsh rm did not explain the refusal: $(cat "$TMP/rm-running.out")"
+pass "hsh rm refuses a running sandbox without --force"
+
+if "$HSH" rm "hsh-fn-missing-$$" >/dev/null 2>&1; then
+	fail "hsh rm succeeded on a missing sandbox without --ignore"
+fi
+"$HSH" rm --ignore "hsh-fn-missing-$$" >/dev/null 2>&1 || fail "hsh rm --ignore failed on a missing sandbox"
+pass "hsh rm fails on a missing sandbox, succeeds with --ignore"
+
+SESSION_DIR="$XDG_STATE_HOME/hsh/sessions/fn-a-$$"
+mkdir -p "$SESSION_DIR"
+echo ca >"$SESSION_DIR/ca.crt"
+"$HSH" rm "$POD_A" >/dev/null || fail "hsh rm could not remove the stopped sandbox"
+podman pod ls --format '{{.Name}}' | grep -qx "$POD_A" && fail "hsh rm reported success but the pod is still there"
+[ ! -d "$SESSION_DIR" ] || fail "hsh rm did not remove the sandbox's session state directory"
+pass "hsh rm removes a stopped sandbox and its session state"
+
+"$HSH" rm -f -t 1 "$POD_B" >/dev/null || fail "hsh rm -f could not remove the running sandbox"
+podman pod ls --format '{{.Name}}' | grep -qx "$POD_B" && fail "hsh rm -f reported success but the pod is still there"
+pass "hsh rm -f stops and removes a running sandbox"
+
+if [ -n "$OTHER_HSH_PODS" ]; then
+	echo "SKIP: hsh rm --all check (other hsh sandboxes exist on this host)"
+else
+	POD_C="hsh-fn-c-$$"
+	KEEP_POD="fn-keep-$$"
+	TEST_PODS="$TEST_PODS $POD_C $KEEP_POD"
+	podman pod create --name "$POD_C" --label "hsh.workspace=$TMP/workspace" >/dev/null
+	podman run --pod "$POD_C" -d localhost/hsh-example:latest sleep 300 >/dev/null
+	podman pod create --name "$KEEP_POD" >/dev/null
+	mkdir -p "$XDG_STATE_HOME/hsh/sessions/fn-orphan-$$"
+	"$HSH" rm --all -f >/dev/null || fail "hsh rm --all -f failed"
+	if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then
+		fail "hsh rm --all -f left hsh sandboxes behind"
+	fi
+	podman pod ls --format '{{.Name}}' | grep -qx "$KEEP_POD" || fail "hsh rm --all removed a non-hsh pod"
+	[ ! -d "$XDG_STATE_HOME/hsh/sessions" ] || [ -z "$(ls -A "$XDG_STATE_HOME/hsh/sessions")" ] || fail "hsh rm --all did not sweep session state directories"
+	pass "hsh rm --all removes every sandbox and sweeps session state"
+fi
+
+echo "== step 7: proxy-watch requires a terminal"
 "$HSH" proxy-watch --config "$TMP/config.hsh" --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
 grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
 pass "proxy-watch refuses to run without a terminal"
