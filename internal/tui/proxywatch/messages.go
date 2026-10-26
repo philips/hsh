@@ -24,7 +24,7 @@ const (
 )
 
 type actionMsg struct {
-	kind  action
-	hosts []string
-	err   error
+	kind action
+	rows []denieddb.DeniedHost
+	err  error
 }

@@ -1,12 +1,13 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/peterbourgon/ff/v4"
 	"golang.org/x/term"
 
 	"hsh/internal/config"
@@ -28,20 +29,17 @@ reference them as "hsh://NAME".
 const firstUseWarning = `hsh: note: secrets are stored unencrypted in %s
 (readable only by your user — the same trust level as ~/.netrc or ~/.aws/credentials)`
 
-func Secret(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("secret requires a subcommand (add, rm, or ls)\n\n%s", secretUsage)
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "add":
-		return secretAdd(rest)
-	case "rm":
-		return secretRm(rest)
-	case "ls":
-		return secretLs(rest)
-	default:
-		return fmt.Errorf("unknown secret subcommand %q (want add, rm, or ls)\n\n%s", sub, secretUsage)
+func secretCommand() *ff.Command {
+	return &ff.Command{
+		Name:      "secret",
+		Usage:     "hsh secret SUBCOMMAND",
+		ShortHelp: "manage the hsh secret store (add/rm/ls)",
+		Flags:     ff.NewFlagSet("secret"),
+		Subcommands: []*ff.Command{
+			secretAddCommand(),
+			secretRmCommand(),
+			secretLsCommand(),
+		},
 	}
 }
 
@@ -56,169 +54,137 @@ func openStore(dbPath string) (*secretstore.DB, error) {
 	return db, nil
 }
 
-func secretAdd(args []string) error {
-	fpos := extractPositional(args)
-	fs := flag.NewFlagSet("secret add", flag.ContinueOnError)
-	dbPath := fs.String("db", secretstore.DefaultPath(), "path to the secret store")
-	force := fs.Bool("force", false, "overwrite an existing secret")
-	valueStdin := fs.Bool("value-stdin", false, "read the value from stdin (for scripting)")
-	configPath := fs.String("config", "config.hsh", "config file to add the secrets.<NAME> entry to (with --host/--header/--prefix)")
-	hosts := multiFlag{}
-	fs.Var(&hosts, "host", "host the secret is injected for (repeatable; enables writing the config entry)")
-	header := fs.String("header", "", "header to inject the secret into (with --host)")
-	prefix := fs.String("prefix", "", "string prepended to the value, e.g. \"Bearer \" (with --host)")
-	if err := fs.Parse(fpos.rest); err != nil {
-		return err
-	}
-	name := fpos.positional
-	if name == "" && fs.NArg() == 1 {
-		name = fs.Arg(0)
-	}
-	if name == "" {
-		return fmt.Errorf("secret add requires exactly one NAME\n\n%s", secretUsage)
-	}
-
-	var value string
-	if *valueStdin {
-		data, err := io.ReadAll(os.Stdin)
+func secretAddCommand() *ff.Command {
+	var dbPath, configPath, header, prefix string
+	var force, valueStdin bool
+	var hosts []string
+	return newCommand("add", "hsh secret add [FLAGS] NAME", "store a secret (hidden prompt, or --value-stdin)", func(fs *ff.FlagSet) {
+		fs.StringVar(&dbPath, 0, "db", secretstore.DefaultPath(), "path to the secret store")
+		fs.BoolVar(&force, 0, "force", "overwrite an existing secret")
+		fs.BoolVar(&valueStdin, 0, "value-stdin", "read the value from stdin (for scripting)")
+		fs.StringVar(&configPath, 0, "config", "config.hsh", "config file to add the secrets.<NAME> entry to (with --host/--header/--prefix)")
+		fs.StringListVar(&hosts, 0, "host", "host the secret is injected for (repeatable; enables writing the config entry)")
+		fs.StringVar(&header, 0, "header", "", "header to inject the secret into (with --host)")
+		fs.StringVar(&prefix, 0, "prefix", "", "string prepended to the value, e.g. \"Bearer \" (with --host)")
+	}, func(ctx context.Context, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("secret add requires exactly one NAME\n\n%s", secretUsage)
+		}
+		name := args[0]
+		if name == "" {
+			return fmt.Errorf("secret name must not be empty")
+		}
+		var value string
+		if valueStdin {
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return fmt.Errorf("read value from stdin: %w", err)
+			}
+			value = strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
+		} else {
+			if !isTerminal(os.Stdin) {
+				return fmt.Errorf("stdin is not a terminal; use --value-stdin to pipe the value")
+			}
+			fmt.Fprintf(os.Stderr, "Enter value for %s: ", name)
+			hidden, err := term.ReadPassword(int(os.Stdin.Fd()))
+			fmt.Fprintln(os.Stderr)
+			if err != nil {
+				return fmt.Errorf("read value: %w", err)
+			}
+			value = string(hidden)
+		}
+		if value == "" {
+			return fmt.Errorf("secret value must not be empty")
+		}
+		db, err := openStore(dbPath)
 		if err != nil {
-			return fmt.Errorf("read value from stdin: %w", err)
+			return err
 		}
-		value = strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
-	} else {
-		if !isTerminal(os.Stdin) {
-			return fmt.Errorf("stdin is not a terminal; use --value-stdin to pipe the value")
+		defer db.Close()
+		if err := db.Set(name, value, force); err != nil {
+			return err
 		}
-		fmt.Fprintf(os.Stderr, "Enter value for %s: ", name)
-		hidden, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Fprintln(os.Stderr)
+		configEntry := len(hosts) > 0 || header != "" || prefix != ""
+		if configEntry {
+			secret := config.Secret{
+				From:   "hsh://" + name,
+				Hosts:  hosts,
+				Header: header,
+				Prefix: prefix,
+			}
+			if err := config.AddSecret(configPath, name, secret); err != nil {
+				return fmt.Errorf("stored the secret, but could not update the config: %w", err)
+			}
+			fmt.Printf("stored secret %s and added a secrets.%s entry (from: hsh://%s) to %s\n", name, name, name, configPath)
+		} else {
+			fmt.Printf("stored secret %s\n", name)
+		}
+		return nil
+	})
+}
+
+func secretRmCommand() *ff.Command {
+	var dbPath, configPath string
+	return newCommand("rm", "hsh secret rm [FLAGS] NAME", "remove a secret from the store", func(fs *ff.FlagSet) {
+		fs.StringVar(&dbPath, 0, "db", secretstore.DefaultPath(), "path to the secret store")
+		fs.StringVar(&configPath, 0, "config", "config.hsh", "config file to check for dangling hsh://NAME references")
+	}, func(ctx context.Context, args []string) error {
+		if len(args) != 1 {
+			return fmt.Errorf("secret rm requires exactly one NAME\n\n%s", secretUsage)
+		}
+		name := args[0]
+		if !secretstore.Exists(dbPath) {
+			return fmt.Errorf("no secret store at %s", dbPath)
+		}
+		db, _, err := secretstore.Open(dbPath)
 		if err != nil {
-			return fmt.Errorf("read value: %w", err)
+			return err
 		}
-		value = string(hidden)
-	}
-	if value == "" {
-		return fmt.Errorf("secret value must not be empty")
-	}
-
-	db, err := openStore(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := db.Set(name, value, *force); err != nil {
-		return err
-	}
-
-	configEntry := len(hosts) > 0 || *header != "" || *prefix != ""
-	if configEntry {
-		secret := config.Secret{
-			From:   "hsh://" + name,
-			Hosts:  hosts,
-			Header: *header,
-			Prefix: *prefix,
+		defer db.Close()
+		if err := db.Delete(name); err != nil {
+			return err
 		}
-		if err := config.AddSecret(*configPath, name, secret); err != nil {
-			return fmt.Errorf("stored the secret, but could not update the config: %w", err)
+		fmt.Printf("removed secret %s\n", name)
+		refs, err := config.FindSecretRefs(configPath, "hsh://"+name)
+		if err != nil {
+			return fmt.Errorf("removed the secret, but could not check the config: %w", err)
 		}
-		fmt.Printf("stored secret %s and added a secrets.%s entry (from: hsh://%s) to %s\n", name, name, name, *configPath)
-	} else {
-		fmt.Printf("stored secret %s\n", name)
-	}
-	return nil
-}
-
-func secretRm(args []string) error {
-	fpos := extractPositional(args)
-	fs := flag.NewFlagSet("secret rm", flag.ContinueOnError)
-	dbPath := fs.String("db", secretstore.DefaultPath(), "path to the secret store")
-	configPath := fs.String("config", "config.hsh", "config file to check for dangling hsh://NAME references")
-	if err := fs.Parse(fpos.rest); err != nil {
-		return err
-	}
-	name := fpos.positional
-	if name == "" && fs.NArg() == 1 {
-		name = fs.Arg(0)
-	}
-	if name == "" {
-		return fmt.Errorf("secret rm requires exactly one NAME\n\n%s", secretUsage)
-	}
-
-	if !secretstore.Exists(*dbPath) {
-		return fmt.Errorf("no secret store at %s", *dbPath)
-	}
-	db, _, err := secretstore.Open(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	if err := db.Delete(name); err != nil {
-		return err
-	}
-	fmt.Printf("removed secret %s\n", name)
-
-	refs, err := config.FindSecretRefs(*configPath, "hsh://"+name)
-	if err != nil {
-		return fmt.Errorf("removed the secret, but could not check the config: %w", err)
-	}
-	if len(refs) > 0 {
-		fmt.Fprintf(os.Stderr, "hsh: warning: %s still references hsh://%s (secrets.%s); the proxy will report it missing\n", *configPath, name, strings.Join(refs, ", secrets."))
-	}
-	return nil
-}
-
-func secretLs(args []string) error {
-	fs := flag.NewFlagSet("secret ls", flag.ContinueOnError)
-	dbPath := fs.String("db", secretstore.DefaultPath(), "path to the secret store")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("secret ls takes no arguments\n\n%s", secretUsage)
-	}
-	if !secretstore.Exists(*dbPath) {
-		fmt.Println("no secrets stored")
+		if len(refs) > 0 {
+			fmt.Fprintf(os.Stderr, "hsh: warning: %s still references hsh://%s (secrets.%s); the proxy will report it missing\n", configPath, name, strings.Join(refs, ", secrets."))
+		}
 		return nil
-	}
-	db, _, err := secretstore.Open(*dbPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	entries, err := db.List()
-	if err != nil {
-		return err
-	}
-	if len(entries) == 0 {
-		fmt.Println("no secrets stored")
+	})
+}
+
+func secretLsCommand() *ff.Command {
+	var dbPath string
+	return newCommand("ls", "hsh secret ls [--db PATH]", "list stored secret names (never values)", func(fs *ff.FlagSet) {
+		fs.StringVar(&dbPath, 0, "db", secretstore.DefaultPath(), "path to the secret store")
+	}, func(ctx context.Context, args []string) error {
+		if len(args) > 0 {
+			return fmt.Errorf("secret ls takes no arguments\n\n%s", secretUsage)
+		}
+		if !secretstore.Exists(dbPath) {
+			fmt.Println("no secrets stored")
+			return nil
+		}
+		db, _, err := secretstore.Open(dbPath)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		entries, err := db.List()
+		if err != nil {
+			return err
+		}
+		if len(entries) == 0 {
+			fmt.Println("no secrets stored")
+			return nil
+		}
+		fmt.Printf("%-30s %-20s %-20s\n", "NAME", "CREATED", "UPDATED")
+		for _, e := range entries {
+			fmt.Printf("%-30s %-20s %-20s\n", e.Name, e.CreatedAt, e.UpdatedAt)
+		}
 		return nil
-	}
-	fmt.Printf("%-30s %-20s %-20s\n", "NAME", "CREATED", "UPDATED")
-	for _, e := range entries {
-		fmt.Printf("%-30s %-20s %-20s\n", e.Name, e.CreatedAt, e.UpdatedAt)
-	}
-	return nil
-}
-
-type positionalArgs struct {
-	positional string
-	rest       []string
-}
-
-func extractPositional(args []string) positionalArgs {
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		return positionalArgs{positional: args[0], rest: args[1:]}
-	}
-	return positionalArgs{rest: args}
-}
-
-type multiFlag []string
-
-func (m *multiFlag) String() string {
-	return strings.Join(*m, ",")
-}
-
-func (m *multiFlag) Set(v string) error {
-	*m = append(*m, v)
-	return nil
+	})
 }

@@ -3,6 +3,8 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
+export XDG_STATE_HOME="$TMP/xdg"
+mkdir -p "$XDG_STATE_HOME"
 DUMMY_PID=""
 PROXY_PID=""
 OAUTH_PID=""
@@ -65,6 +67,7 @@ done
 
 mkdir -p "$TMP/workspace"
 echo meow >"$TMP/workspace/test.md"
+DB_SESSION=""
 cat >"$TMP/config.hsh" <<EOF
 {
   "image": "localhost/hsh-example:latest",
@@ -88,20 +91,32 @@ echo "curl-rc=$?"
 CMDS
 grep -q "response 407" "$TMP/session1.out" || fail "expected the proxy to deny api.mistral.ai with 407; got: $(tail -3 "$TMP/session1.out")"
 pass "api.mistral.ai denied with 407 before being allowlisted"
+DB_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format '{{.Name}}' | sed 's/^hsh-//')"
+[ -n "$DB_SESSION" ] || fail "the run left no session pod for the workspace"
+[ -d "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION" ] || fail "the run left no session state directory"
+grep -q '"mounts"' "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json" || fail "the session has no config copy"
+[ "$(cat "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/workspace")" = "$TMP/workspace" ] || fail "the session workspace file is wrong"
+pass "session created with a config copy and workspace file"
 
 DENIED="$("$HSH" proxy-denied --db "$DB")"
 echo "$DENIED" | grep -q "api.mistral.ai" || fail "denial was not recorded in the database"
-pass "denial recorded in the sqlite database"
+echo "$DENIED" | grep -q "$DB_SESSION" || fail "denial row is not attributed to the session"
+echo "$DENIED" | grep -q "$TMP/workspace" || fail "denial row is not attributed to the workspace"
+pass "denial recorded in the sqlite database with session + workspace attribution"
 
-echo "== step 2: proxy-auto-allow adds the denied host (TOFU)"
-OUT="$("$HSH" proxy-auto-allow --config "$TMP/config.hsh" --db "$DB")"
+echo "== step 2: proxy-auto-allow adds the denied host to the session's config (TOFU)"
+OUT="$("$HSH" proxy-auto-allow --session "$DB_SESSION" --db "$DB")"
 echo "$OUT"
 echo "$OUT" | grep -q "added api.mistral.ai" || fail "proxy-auto-allow did not report adding api.mistral.ai"
-grep -q '"api.mistral.ai"' "$TMP/config.hsh" || fail "config file was not updated"
-pass "api.mistral.ai added to network.allow"
+SESSION_CONFIG="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json"
+grep -q '"api.mistral.ai"' "$SESSION_CONFIG" || fail "the session's config copy was not updated"
+if sed -n '/"allow"/,/]$/p' "$TMP/config.hsh" | grep -q 'api.mistral.ai'; then
+	fail "the seed config file must never be modified in place"
+fi
+pass "api.mistral.ai added to the session's config copy (seed config untouched)"
 
 echo "== step 3: sandbox session — allowed endpoint, workspace mount, pi through the proxy"
-"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
+"$HSH" run --resume "$DB_SESSION" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
 echo "--- curl to the now-allowed endpoint (intercepted, secret injected):"
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
@@ -215,42 +230,91 @@ pass "standalone proxy denies non-allowlisted hosts with 407"
 kill "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
 
-echo "== step 5: --resume re-enters the same container"
-export XDG_STATE_HOME="$TMP/xdg"
-mkdir -p "$XDG_STATE_HOME"
-RESUME_POD="$(podman pod ls -q --filter "label=hsh.workspace=$TMP/workspace" 2>/dev/null || true)"
-if [ -n "$RESUME_POD" ]; then
-	fail "unexpected existing sandbox for the test workspace"
+echo "== step 5: sessions persist by default; --resume re-enters; idle pods are stopped"
+"$HSH" rm --all -f >/dev/null 2>&1 || true
+if (cd "$TMP/workspace" && "$HSH" run --resume >"$TMP/resume-none.out" 2>&1); then
+	fail "hsh run --resume with no session unexpectedly succeeded"
 fi
-"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" --resume >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
+grep -q "no session to resume" "$TMP/resume-none.out" || fail "resume without sessions did not explain: $(cat "$TMP/resume-none.out")"
+pass "hsh run --resume with no session fails clearly"
+
+cp "$TMP/config.hsh" "$TMP/workspace/config.hsh"
+(cd "$TMP/workspace" && "$HSH" run) >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
 echo resume-marker > /home/hsh/marker.txt
 echo "launch1-marker-written"
 exit
 CMDS
-RESUME_POD="$(podman pod ls -q --filter "label=hsh.workspace=$TMP/workspace" 2>/dev/null || true)"
+RESUME_POD="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format '{{.Name}}' 2>/dev/null)"
 if [ -z "$RESUME_POD" ]; then
-	fail "sandbox pod was not left behind after a --resume exit"
+	fail "a plain run must leave its session pod behind"
 fi
-pass "sandbox persists after a --resume exit"
-"$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" --resume >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
+RESUME_SESSION="${RESUME_POD#hsh-}"
+pass "plain runs persist their session pod"
+
+POD_STATE="$(podman pod inspect "$RESUME_POD" --format '{{.State}}')"
+[ "$POD_STATE" = "Exited" ] || fail "the idle session pod is $POD_STATE, want Exited"
+if [ -f "$XDG_STATE_HOME/hsh/sessions/$RESUME_SESSION/secrets.json" ]; then
+	fail "secrets.json must be scrubbed while the session is idle"
+fi
+pass "idle sessions stop their pod and scrub secrets.json"
+
+(cd "$TMP/workspace" && "$HSH" run --resume) >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
 echo "--- marker from the previous launch (same container?):"
 cat /home/hsh/marker.txt
 echo "--- proxied request after re-entry:"
-curl -sS -o /dev/null -w 'code=%{http_code}\n' --max-time 15 https://api.mistral.ai
+curl -sS -o /dev/null -w 'code=%{http_code}\n' --max-time 15 http://host.containers.internal:8899/v1/models
 echo "--- DNS after re-entry:"
-getent hosts api.mistral.ai | head -1
+getent hosts host.containers.internal | head -1
 exit
 CMDS
 grep -qx 'resume-marker' "$TMP/resume2.out" || fail "container state did not persist across --resume launches"
-pass "same container re-entered; state persisted"
-grep -Eq '^code=[1-5][0-9][0-9]$' "$TMP/resume2.out" || fail "proxy not working after re-entry"
+pass "bare --resume enters the workspace's only session; state persisted"
+grep -Eq '^code=200$' "$TMP/resume2.out" || fail "proxy not working after re-entry: $(cat "$TMP/resume2.out")"
 pass "proxy works after re-entry"
-grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+api\.mistral\.ai' "$TMP/resume2.out" || fail "DNS not working after re-entry"
+grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+host\.containers\.internal' "$TMP/resume2.out" || fail "DNS not working after re-entry"
 pass "DNS works after re-entry"
-podman pod rm -f "$RESUME_POD" >/dev/null 2>&1 || true
+
+(cd "$TMP/workspace" && "$HSH" run --rm) >"$TMP/resume-rm.out" 2>&1 <<'CMDS' || true
+echo ephemeral > /home/hsh/ephemeral.txt
+exit
+CMDS
+LEFTOVER="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format '{{.Name}}' | wc -l)"
+[ "$LEFTOVER" = "1" ] || fail "--rm run left $LEFTOVER pods for the workspace, want only the persistent session"
+pass "hsh run --rm removes its pod and state at exit"
+
+(cd "$TMP/workspace" && "$HSH" run) >"$TMP/resume-second.out" 2>&1 <<'CMDS' || true
+echo second > /home/hsh/second.txt
+exit
+CMDS
+if (cd "$TMP/workspace" && "$HSH" run --resume) >"$TMP/resume-multi.out" 2>&1; then
+	fail "resume with multiple sessions unexpectedly succeeded"
+fi
+grep -q "multiple sessions for workspace" "$TMP/resume-multi.out" || fail "no multiple-sessions error: $(cat "$TMP/resume-multi.out")"
+grep -q "$RESUME_SESSION" "$TMP/resume-multi.out" || fail "the error does not list the session ids"
+pass "resume lists the sessions when a workspace has several"
+
+(cd "$TMP/workspace" && "$HSH" run --resume "$RESUME_SESSION") >"$TMP/resume3.out" 2>&1 <<'CMDS' || true
+cat /home/hsh/marker.txt
+exit
+CMDS
+grep -qx 'resume-marker' "$TMP/resume3.out" || fail "--resume <id> did not re-enter the chosen session"
+pass "hsh run --resume <id> re-enters the chosen session"
+
+ORPHAN="deadsession01"
+mkdir -p "$XDG_STATE_HOME/hsh/sessions/$ORPHAN"
+echo '{}' >"$XDG_STATE_HOME/hsh/sessions/$ORPHAN/config.json"
+"$HSH" gc >"$TMP/gc.out" || fail "hsh gc failed"
+grep -q "removed session state $ORPHAN" "$TMP/gc.out" || fail "hsh gc did not collect the orphaned session state"
+if [ -d "$XDG_STATE_HOME/hsh/sessions/$ORPHAN" ]; then
+	fail "hsh gc left the orphaned session state behind"
+fi
+pass "hsh gc collects session state whose pod is gone"
+
+"$HSH" rm --all -f >/dev/null || fail "rm --all failed to clear sessions between steps"
 RESUME_POD=""
 
 echo "== step 6: hsh ls / hsh rm"
+"$HSH" rm --all -f >/dev/null 2>&1 || true
 OTHER_HSH_PODS="$(podman pod ls --format '{{.Name}}' | grep '^hsh-' || true)"
 POD_A="hsh-fn-a-$$"
 POD_B="hsh-fn-b-$$"
@@ -321,7 +385,7 @@ else
 fi
 
 echo "== step 7: proxy-watch requires a terminal"
-"$HSH" proxy-watch --config "$TMP/config.hsh" --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
+"$HSH" proxy-watch --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
 grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
 pass "proxy-watch refuses to run without a terminal"
 
@@ -333,12 +397,12 @@ FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"hsh://fn-label-key","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
 EOF
 podman build -q -t hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
-echo label-secret-value-42 | "$HSH" secret add fn-label-key --value-stdin --db "$TMP/secretstore/secrets.db" >/dev/null || fail "secret add for the label test failed"
+echo label-secret-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-label-key >/dev/null || fail "secret add for the label test failed"
 if (cd "$TMP/labelws" && "$HSH" run >"$TMP/label-noimg.out" 2>&1); then
-	fail "hsh run without a config file or --image succeeded"
+	fail "hsh run without a config file or an image succeeded"
 fi
 grep -q "no config file" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
-(cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" --image hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
 cat /workspace/marker.txt
 curl -sS -o /dev/null -w 'allowed=%{http_code}\n' http://host.containers.internal:8899/v1/models
 curl -sS -o /dev/null -w 'denied=%{http_code}\n' --max-time 8 http://example.com/ 2>&1 | tail -1
@@ -402,7 +466,7 @@ pass "oauth login inside the sandbox yields phantoms; real tokens stay on the ho
 
 echo "== step 10: the oauth flow inside the hsh-vibe image"
 if podman image exists localhost/hsh-vibe:latest; then
-	oauth_flow --image localhost/hsh-vibe:latest
+	oauth_flow localhost/hsh-vibe:latest
 	grep -Eq '^api2=200$' "$TMP/oauth.out" || fail "the oauth flow failed inside the hsh-vibe image: $(cat "$TMP/oauth.out")"
 	pass "oauth flow works inside the hsh-vibe sandbox image"
 else
@@ -425,7 +489,7 @@ Install gh for github access and clone https://github.com/philips/hsh
 
 Setup a Golang environment using the latest stable release
 EOF
-(cd "$TMP/labelws" && "$HSH" run hsh-tasks-test:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks.out" 2>&1)
+(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-tasks-test:latest >"$TMP/tasks.out" 2>&1)
 grep -q "1. Install gh for github access and clone https://github.com/philips/hsh" "$TMP/tasks.out" || fail "task 1 was not in the prompt: $(cat "$TMP/tasks.out")"
 grep -q "2. Setup a Golang environment using the latest stable release" "$TMP/tasks.out" || fail "task 2 was not in the prompt"
 grep -q "a comment" "$TMP/tasks.out" && fail "comment lines leaked into the prompt"
@@ -437,11 +501,11 @@ LABEL org.ifup.hsh='{"agent":{"command":["/bin/sh","-c","exit 3"]}}'
 EOF
 podman build -q -t hsh-tasks-fail:latest -f "$TMP/tasks-fail.Containerfile" "$TMP" >/dev/null
 rc=0
-(cd "$TMP/labelws" && "$HSH" run hsh-tasks-fail:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks-fail.out" 2>&1) || rc=$?
+(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-tasks-fail:latest >"$TMP/tasks-fail.out" 2>&1) || rc=$?
 [ "$rc" = "3" ] || fail "agent exit code was not propagated (got $rc)"
 pass "headless agent exit codes propagate"
 
-if (cd "$TMP/labelws" && "$HSH" run hsh-label-test:latest --tasks "$TMP/setup-tasks.txt" >"$TMP/tasks-noagent.out" 2>&1); then
+if (cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-label-test:latest >"$TMP/tasks-noagent.out" 2>&1); then
 	fail "hsh run --tasks succeeded without an agent command in the image"
 fi
 grep -q "agent command" "$TMP/tasks-noagent.out" || fail "missing-agent error did not explain the problem: $(cat "$TMP/tasks-noagent.out")"
@@ -479,7 +543,7 @@ pass "--network none denies everything"
 echo "== step 13: the hsh secret store (hsh:// references)"
 export XDG_CONFIG_HOME="$TMP/xdg-config"
 mkdir -p "$XDG_CONFIG_HOME"
-echo stored-value-42 | "$HSH" secret add fn-store-key --value-stdin --db "$TMP/secretstore/secrets.db" >"$TMP/secret-add.out" 2>&1 || fail "secret add failed: $(cat "$TMP/secret-add.out")"
+echo stored-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-store-key >"$TMP/secret-add.out" 2>&1 || fail "secret add failed: $(cat "$TMP/secret-add.out")"
 [ -f "$TMP/secretstore/secrets.db" ] || fail "the secret store was not created"
 STAT="$(stat -c '%a' "$TMP/secretstore/secrets.db")"
 [ "$STAT" = "600" ] || fail "secret store mode is $STAT, want 600"
@@ -491,10 +555,10 @@ fi
 "$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep -q fn-store-key || fail "secret ls did not list the stored name"
 pass "secret add stores values (0600/0700), ls shows names but never values"
 
-if echo other | "$HSH" secret add fn-store-key --value-stdin --db "$TMP/secretstore/secrets.db" >/dev/null 2>&1; then
+if echo other | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-store-key >/dev/null 2>&1; then
 	fail "secret add overwrote an existing name without --force"
 fi
-echo other | "$HSH" secret add fn-store-key --value-stdin --force --db "$TMP/secretstore/secrets.db" || fail "secret add --force failed"
+echo other | "$HSH" secret add --value-stdin --force --db "$TMP/secretstore/secrets.db" fn-store-key || fail "secret add --force failed"
 pass "secret add refuses duplicates without --force"
 
 cat >"$TMP/store-config.hsh" <<EOF
@@ -515,7 +579,7 @@ grep -Eq '^code=200$' "$TMP/store-run.out" || fail "the sandbox could not reach 
 grep -q 'Authorization: Bearer other' "$TMP/requests.log" || fail "the stored secret was not injected (after --force overwrite)"
 pass "hsh:// secrets resolve through the store and are injected"
 
-if "$HSH" secret rm fn-store-key --db "$TMP/secretstore/secrets.db" --config "$TMP/store-config.hsh" >"$TMP/secret-rm.out" 2>&1; then
+if "$HSH" secret rm --db "$TMP/secretstore/secrets.db" --config "$TMP/store-config.hsh" fn-store-key >"$TMP/secret-rm.out" 2>&1; then
 	pass "secret rm deletes the entry"
 else
 	fail "secret rm failed: $(cat "$TMP/secret-rm.out")"
@@ -535,6 +599,14 @@ if grep -q 'Authorization: Bearer other' <<<"$LAST_REQ"; then
 fi
 pass "a missing store entry warns and fails open, like an unset env var"
 unset XDG_CONFIG_HOME
+
+echo "== final sweep: every session the test created is removable"
+"$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"
+if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then
+	fail "sessions were left behind after the final sweep"
+fi
+[ -z "$(ls -A "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null)" ] || fail "session state was left behind after the final sweep"
+pass "hsh rm --all removes every session and its state"
 
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"

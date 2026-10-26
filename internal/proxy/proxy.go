@@ -33,6 +33,8 @@ type Options struct {
 	DeniedDB    string
 	OAuthStore  string
 	NetworkMode string
+	Session     string
+	Workspace   string
 }
 
 type state struct {
@@ -264,7 +266,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
 	log.Printf("denied %s (not in network.allow)", host)
 	if p.deniedDB != nil {
-		if err := denieddb.Record(p.deniedDB, host, target); err != nil {
+		if err := denieddb.Record(p.deniedDB, p.opts.Workspace, p.opts.Session, host, target); err != nil {
 			log.Printf("recording denial of %s: %v", host, err)
 		}
 	}

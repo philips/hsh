@@ -73,7 +73,7 @@ func TestOpenMigratesIgnoredColumn(t *testing.T) {
 		t.Fatalf("ignored column missing after migration: %v", columns)
 	}
 
-	all, err := All(db)
+	all, err := All(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,20 +88,20 @@ func TestOpenMigratesIgnoredColumn(t *testing.T) {
 func TestMarkIgnored(t *testing.T) {
 	db := openTemp(t)
 	defer db.Close()
-	if err := Record(db, "a.example.com", "a.example.com:443"); err != nil {
+	if err := Record(db, "", "", "a.example.com", "a.example.com:443"); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkIgnored(db, []string{"a.example.com"}); err != nil {
+	if err := MarkIgnored(db, "", []string{"a.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	pending, err := Pending(db)
+	pending, err := Pending(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 0 {
 		t.Errorf("ignored host still pending: %+v", pending)
 	}
-	ignored, err := Ignored(db)
+	ignored, err := Ignored(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,10 +112,10 @@ func TestMarkIgnored(t *testing.T) {
 		t.Errorf("unexpected ignored row: %+v", ignored[0])
 	}
 
-	if err := Record(db, "a.example.com", "a.example.com:443"); err != nil {
+	if err := Record(db, "", "", "a.example.com", "a.example.com:443"); err != nil {
 		t.Fatal(err)
 	}
-	pending, err = Pending(db)
+	pending, err = Pending(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,23 +127,23 @@ func TestMarkIgnored(t *testing.T) {
 func TestMarkAllowedClearsIgnored(t *testing.T) {
 	db := openTemp(t)
 	defer db.Close()
-	if err := Record(db, "a.example.com", "a.example.com:443"); err != nil {
+	if err := Record(db, "", "", "a.example.com", "a.example.com:443"); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkIgnored(db, []string{"a.example.com"}); err != nil {
+	if err := MarkIgnored(db, "", []string{"a.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := MarkAllowed(db, []string{"a.example.com"}); err != nil {
+	if err := MarkAllowed(db, "", []string{"a.example.com"}); err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := Ignored(db)
+	ignored, err := Ignored(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(ignored) != 0 {
 		t.Errorf("approved host still listed as ignored: %+v", ignored)
 	}
-	all, err := All(db)
+	all, err := All(db, Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}

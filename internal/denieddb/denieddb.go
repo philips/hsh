@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -12,29 +13,37 @@ import (
 
 const schema = `
 CREATE TABLE IF NOT EXISTS denied (
-	host       TEXT PRIMARY KEY,
+	host       TEXT NOT NULL,
+	session    TEXT NOT NULL DEFAULT '',
+	workspace  TEXT NOT NULL DEFAULT '',
 	target     TEXT NOT NULL,
 	count      INTEGER NOT NULL,
 	first_seen TEXT NOT NULL,
 	last_seen  TEXT NOT NULL,
 	allowed    INTEGER NOT NULL DEFAULT 0,
 	allowed_at TEXT,
-	ignored    INTEGER NOT NULL DEFAULT 0
+	ignored    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (host, session)
 );
 CREATE TABLE IF NOT EXISTS dns_denied (
-	host       TEXT PRIMARY KEY,
+	host       TEXT NOT NULL,
+	session    TEXT NOT NULL DEFAULT '',
+	workspace  TEXT NOT NULL DEFAULT '',
 	target     TEXT NOT NULL,
 	count      INTEGER NOT NULL,
 	first_seen TEXT NOT NULL,
 	last_seen  TEXT NOT NULL,
 	allowed    INTEGER NOT NULL DEFAULT 0,
 	allowed_at TEXT,
-	ignored    INTEGER NOT NULL DEFAULT 0
+	ignored    INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (host, session)
 );
 `
 
 type DeniedHost struct {
 	Host      string
+	Session   string
+	Workspace string
 	Target    string
 	Count     int
 	FirstSeen string
@@ -42,6 +51,28 @@ type DeniedHost struct {
 	Allowed   bool
 	AllowedAt string
 	Ignored   bool
+}
+
+type Filter struct {
+	Session   string
+	Workspace string
+}
+
+func (f Filter) where(extra ...string) (string, []any) {
+	conds := append([]string{}, extra...)
+	var args []any
+	if f.Session != "" {
+		conds = append(conds, "session = ?")
+		args = append(args, f.Session)
+	}
+	if f.Workspace != "" {
+		conds = append(conds, "workspace = ?")
+		args = append(args, f.Workspace)
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
 func StateDir() string {
@@ -53,6 +84,14 @@ func StateDir() string {
 		return "hsh-state"
 	}
 	return filepath.Join(home, ".local", "state", "hsh")
+}
+
+func SessionsDir() string {
+	return filepath.Join(StateDir(), "sessions")
+}
+
+func SessionDir(session string) string {
+	return filepath.Join(SessionsDir(), session)
 }
 
 func DefaultPath() string {
@@ -80,40 +119,83 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// migrate upgrades databases created before a column was added.
 func migrate(db *sql.DB) error {
 	for _, table := range []string{"denied", "dns_denied"} {
-		rows, err := db.Query("PRAGMA table_info(" + table + ")")
+		hasSession, hasWorkspace, hasIgnored, err := columns(db, table)
 		if err != nil {
 			return err
-		}
-		var columns []string
-		for rows.Next() {
-			var cid int
-			var name, ctype string
-			var notNull, pk int
-			var dflt sql.NullString
-			if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-				rows.Close()
-				return err
-			}
-			columns = append(columns, name)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		hasIgnored := false
-		for _, c := range columns {
-			if c == "ignored" {
-				hasIgnored = true
-				break
-			}
 		}
 		if !hasIgnored {
 			if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return err
 			}
+		}
+		if !hasSession || !hasWorkspace {
+			if err := rebuild(db, table); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func columns(db *sql.DB, table string) (session, workspace, ignored bool, err error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, false, false, err
+	}
+	defer rows.Close()
+	var names []string
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			return false, false, false, err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, false, false, err
+	}
+	for _, n := range names {
+		switch n {
+		case "session":
+			session = true
+		case "workspace":
+			workspace = true
+		case "ignored":
+			ignored = true
+		}
+	}
+	return session, workspace, ignored, nil
+}
+
+func rebuild(db *sql.DB, table string) error {
+	tmp := table + "_new"
+	queries := []string{
+		`CREATE TABLE ` + tmp + ` (
+			host       TEXT NOT NULL,
+			session    TEXT NOT NULL DEFAULT '',
+			workspace  TEXT NOT NULL DEFAULT '',
+			target     TEXT NOT NULL,
+			count      INTEGER NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen  TEXT NOT NULL,
+			allowed    INTEGER NOT NULL DEFAULT 0,
+			allowed_at TEXT,
+			ignored    INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (host, session)
+		)`,
+		`INSERT INTO ` + tmp + ` (host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored)
+			SELECT host, '', '', target, count, first_seen, last_seen, allowed, allowed_at, COALESCE(ignored, 0) FROM ` + table,
+		`DROP TABLE ` + table,
+		`ALTER TABLE ` + tmp + ` RENAME TO ` + table,
+	}
+	for _, q := range queries {
+		if _, err := db.Exec(q); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -135,57 +217,59 @@ func Exists(path string) bool {
 	return err == nil
 }
 
-func Record(db *sql.DB, host, target string) error {
-	return record(db, "denied", host, target)
+func Record(db *sql.DB, workspace, session, host, target string) error {
+	return record(db, "denied", workspace, session, host, target)
 }
 
-func RecordDNS(db *sql.DB, host, target string) error {
-	return record(db, "dns_denied", host, target)
+func RecordDNS(db *sql.DB, workspace, session, host, target string) error {
+	return record(db, "dns_denied", workspace, session, host, target)
 }
 
-func record(db *sql.DB, table, host, target string) error {
+func record(db *sql.DB, table, workspace, session, host, target string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(
-		`INSERT INTO `+table+` (host, target, count, first_seen, last_seen, allowed)
-		 VALUES (?, ?, 1, ?, ?, 0)
-		 ON CONFLICT(host) DO UPDATE SET
+		`INSERT INTO `+table+` (host, session, workspace, target, count, first_seen, last_seen, allowed)
+		 VALUES (?, ?, ?, ?, 1, ?, ?, 0)
+		 ON CONFLICT(host, session) DO UPDATE SET
 		 	count = `+table+`.count + 1,
 		 	last_seen = excluded.last_seen`,
-		host, target, now, now,
+		host, session, workspace, target, now, now,
 	)
 	return err
 }
 
-func Pending(db *sql.DB) ([]DeniedHost, error) {
-	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at, ignored
-		FROM denied WHERE allowed = 0 ORDER BY count DESC, host ASC`)
+const deniedCols = "host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored"
+
+func Pending(db *sql.DB, f Filter) ([]DeniedHost, error) {
+	where, args := f.where("allowed = 0")
+	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY count DESC, host ASC`, args...)
 }
 
-func All(db *sql.DB) ([]DeniedHost, error) {
-	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at, ignored
-		FROM denied ORDER BY allowed ASC, count DESC, host ASC`)
+func All(db *sql.DB, f Filter) ([]DeniedHost, error) {
+	where, args := f.where()
+	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY allowed ASC, count DESC, host ASC`, args...)
 }
 
-func Ignored(db *sql.DB) ([]DeniedHost, error) {
-	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at, ignored
-		FROM denied WHERE ignored = 1 ORDER BY last_seen DESC, host ASC`)
+func Ignored(db *sql.DB, f Filter) ([]DeniedHost, error) {
+	where, args := f.where("ignored = 1")
+	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY last_seen DESC, host ASC`, args...)
 }
 
-func PendingDNS(db *sql.DB) ([]DeniedHost, error) {
-	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at, ignored
-		FROM dns_denied WHERE allowed = 0 ORDER BY count DESC, host ASC`)
+func PendingDNS(db *sql.DB, f Filter) ([]DeniedHost, error) {
+	where, args := f.where("allowed = 0")
+	return query(db, `SELECT `+deniedCols+` FROM dns_denied`+where+` ORDER BY count DESC, host ASC`, args...)
 }
 
-func AllDNS(db *sql.DB) ([]DeniedHost, error) {
-	return query(db, `SELECT host, target, count, first_seen, last_seen, allowed, allowed_at, ignored
-		FROM dns_denied ORDER BY allowed ASC, count DESC, host ASC`)
+func AllDNS(db *sql.DB, f Filter) ([]DeniedHost, error) {
+	where, args := f.where()
+	return query(db, `SELECT `+deniedCols+` FROM dns_denied`+where+` ORDER BY allowed ASC, count DESC, host ASC`, args...)
 }
 
-func MarkAllowed(db *sql.DB, hosts []string) error {
+func MarkAllowed(db *sql.DB, session string, hosts []string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, host := range hosts {
 		for _, table := range []string{"denied", "dns_denied"} {
-			if _, err := db.Exec(`UPDATE `+table+` SET allowed = 1, ignored = 0, allowed_at = ? WHERE host = ?`, now, host); err != nil {
+			if _, err := db.Exec(`UPDATE `+table+` SET allowed = 1, ignored = 0, allowed_at = ? WHERE host = ? AND session = ?`, now, host, session); err != nil {
 				return err
 			}
 		}
@@ -193,20 +277,18 @@ func MarkAllowed(db *sql.DB, hosts []string) error {
 	return nil
 }
 
-// MarkIgnored marks hosts as handled without allowing them: they leave the
-// review list permanently (a later denial does not reset allowed).
-func MarkIgnored(db *sql.DB, hosts []string) error {
+func MarkIgnored(db *sql.DB, session string, hosts []string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, host := range hosts {
-		if _, err := db.Exec(`UPDATE denied SET allowed = 1, ignored = 1, allowed_at = ? WHERE host = ?`, now, host); err != nil {
+		if _, err := db.Exec(`UPDATE denied SET allowed = 1, ignored = 1, allowed_at = ? WHERE host = ? AND session = ?`, now, host, session); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func query(db *sql.DB, q string) ([]DeniedHost, error) {
-	rows, err := db.Query(q)
+func query(db *sql.DB, q string, args ...any) ([]DeniedHost, error) {
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +298,7 @@ func query(db *sql.DB, q string) ([]DeniedHost, error) {
 		var h DeniedHost
 		var allowed, ignored int
 		var allowedAt sql.NullString
-		if err := rows.Scan(&h.Host, &h.Target, &h.Count, &h.FirstSeen, &h.LastSeen, &allowed, &allowedAt, &ignored); err != nil {
+		if err := rows.Scan(&h.Host, &h.Session, &h.Workspace, &h.Target, &h.Count, &h.FirstSeen, &h.LastSeen, &allowed, &allowedAt, &ignored); err != nil {
 			return nil, err
 		}
 		h.Allowed = allowed != 0

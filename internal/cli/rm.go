@@ -1,89 +1,80 @@
 package cli
 
 import (
-	"flag"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/peterbourgon/ff/v4"
 )
 
 type notFoundError struct{ msg string }
 
 func (e *notFoundError) Error() string { return e.msg }
 
-func Rm(args []string) error {
-	fs := flag.NewFlagSet("rm", flag.ContinueOnError)
-	var all bool
-	fs.BoolVar(&all, "all", false, "remove all hsh sandboxes")
-	fs.BoolVar(&all, "a", false, "remove all hsh sandboxes")
-	var force bool
-	fs.BoolVar(&force, "force", false, "stop running containers first, then remove")
-	fs.BoolVar(&force, "f", false, "stop running containers first, then remove")
-	var ignore bool
-	fs.BoolVar(&ignore, "ignore", false, "do not fail when a specified sandbox is missing")
-	fs.BoolVar(&ignore, "i", false, "do not fail when a specified sandbox is missing")
+func rmCommand() *ff.Command {
+	var all, force, ignore, latest bool
 	var timeout int
-	fs.IntVar(&timeout, "time", 10, "seconds to wait for pod stop before killing")
-	fs.IntVar(&timeout, "t", 10, "seconds to wait for pod stop before killing")
-	var latest bool
-	fs.BoolVar(&latest, "latest", false, "act on the most recently created sandbox")
-	fs.BoolVar(&latest, "l", false, "act on the most recently created sandbox")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if !all && !latest && fs.NArg() == 0 {
-		return fmt.Errorf("specify a sandbox, or --all/--latest")
-	}
-
-	pods, err := listSandboxes()
-	if err != nil {
-		return err
-	}
-	pods = sandboxPods(pods)
-	targets, err := resolveTargets(fs.Args(), pods, all, latest, ignore)
-	if err != nil {
-		return err
-	}
-
-	failed := false
-	for _, p := range targets {
-		rmArgs := []string{"pod", "rm"}
-		if force {
-			rmArgs = append(rmArgs, "--force", "--time", fmt.Sprint(timeout))
+	return newCommand("rm", "hsh rm [FLAGS] SANDBOX...", "remove hsh sandboxes, like podman pod rm", func(fs *ff.FlagSet) {
+		fs.BoolVar(&all, 'a', "all", "remove all hsh sandboxes")
+		fs.BoolVar(&force, 'f', "force", "stop running containers first, then remove")
+		fs.BoolVar(&ignore, 'i', "ignore", "do not fail when a specified sandbox is missing")
+		fs.IntVar(&timeout, 't', "time", 10, "seconds to wait for pod stop before killing")
+		fs.BoolVar(&latest, 'l', "latest", "act on the most recently created sandbox")
+	}, func(ctx context.Context, args []string) error {
+		if !all && !latest && len(args) == 0 {
+			return fmt.Errorf("specify a sandbox, or --all/--latest")
 		}
-		rmArgs = append(rmArgs, p.Name)
-		out, err := podman(rmArgs...)
+		pods, err := listSandboxes()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "hsh: removing %s: %v\n%s", p.Name, err, out)
-			failed = true
-			continue
+			return err
 		}
-		removed, err := removeSessionDir(p.Name)
+		pods = sandboxPods(pods)
+		targets, err := resolveTargets(args, pods, all, latest, ignore)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "hsh: removing session state for %s: %v\n", p.Name, err)
-			failed = true
-			continue
+			return err
 		}
-		if removed {
-			fmt.Printf("removed %s (and its session state)\n", p.Name)
-		} else {
-			fmt.Printf("removed %s\n", p.Name)
+		failed := false
+		for _, p := range targets {
+			rmArgs := []string{"pod", "rm"}
+			if force {
+				rmArgs = append(rmArgs, "--force", "--time", fmt.Sprint(timeout))
+			}
+			rmArgs = append(rmArgs, p.Name)
+			out, err := podman(rmArgs...)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "hsh: removing %s: %v\n%s", p.Name, err, out)
+				failed = true
+				continue
+			}
+			removed, err := removeSessionDir(p.Name)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "hsh: removing session state for %s: %v\n", p.Name, err)
+				failed = true
+				continue
+			}
+			if removed {
+				fmt.Printf("removed %s (and its session state)\n", p.Name)
+			} else {
+				fmt.Printf("removed %s\n", p.Name)
+			}
 		}
-	}
-	if all {
-		n, err := sweepSessionDirs()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "hsh: sweeping session state: %v\n", err)
-			failed = true
-		} else if n > 0 {
-			fmt.Printf("removed %d session state director%s\n", n, pluralY(n))
+		if all {
+			n, err := sweepSessionDirs()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "hsh: sweeping session state: %v\n", err)
+				failed = true
+			} else if n > 0 {
+				fmt.Printf("removed %d session state director%s\n", n, pluralY(n))
+			}
 		}
-	}
-	if failed {
-		return fmt.Errorf("some sandboxes could not be removed")
-	}
-	return nil
+		if failed {
+			return fmt.Errorf("some sandboxes could not be removed")
+		}
+		return nil
+	})
 }
 
 func pluralY(n int) string {

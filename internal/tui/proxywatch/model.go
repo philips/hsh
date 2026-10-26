@@ -20,17 +20,17 @@ import (
 type Model struct {
 	list        list.Model
 	db          *sql.DB
-	configPath  string
+	filter      denieddb.Filter
 	showIgnored bool
 	status      string
 	pendingRows []denieddb.DeniedHost
 	ignoredRows []denieddb.DeniedHost
 }
 
-func New(db *sql.DB, configPath string, pending, ignored []denieddb.DeniedHost, showIgnored bool) Model {
+func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedHost, showIgnored bool) Model {
 	m := Model{
 		db:          db,
-		configPath:  configPath,
+		filter:      filter,
 		showIgnored: showIgnored,
 		pendingRows: pending,
 		ignoredRows: ignored,
@@ -114,7 +114,7 @@ func title(showIgnored bool) string {
 func buildItems(pending, ignored []denieddb.DeniedHost, showIgnored bool, selected map[string]bool) []list.Item {
 	var items []item
 	for _, h := range pending {
-		items = append(items, newItem(h, selected[h.Host]))
+		items = append(items, newItem(h, selected[h.Host+"@"+h.Session]))
 	}
 	if showIgnored {
 		for _, h := range ignored {
@@ -125,7 +125,10 @@ func buildItems(pending, ignored []denieddb.DeniedHost, showIgnored bool, select
 		if !items[a].lastSeen.Equal(items[b].lastSeen) {
 			return items[a].lastSeen.After(items[b].lastSeen)
 		}
-		return items[a].host < items[b].host
+		if items[a].host != items[b].host {
+			return items[a].host < items[b].host
+		}
+		return items[a].session < items[b].session
 	})
 	out := make([]list.Item, len(items))
 	for i, it := range items {
@@ -138,24 +141,24 @@ func currentSelection(l list.Model) map[string]bool {
 	selected := map[string]bool{}
 	for _, it := range l.Items() {
 		if i, ok := it.(item); ok && i.selected && !i.ignored {
-			selected[i.host] = true
+			selected[i.key()] = true
 		}
 	}
 	return selected
 }
 
-func selectedHosts(l list.Model) []string {
-	var hosts []string
+func selectedRows(l list.Model) []denieddb.DeniedHost {
+	var rows []denieddb.DeniedHost
 	for _, it := range l.Items() {
 		if i, ok := it.(item); ok && i.selected && !i.ignored {
-			hosts = append(hosts, i.host)
+			rows = append(rows, denieddb.DeniedHost{Host: i.host, Session: i.session, Workspace: i.workspace})
 		}
 	}
-	return hosts
+	return rows
 }
 
 func countSelected(l list.Model) int {
-	return len(selectedHosts(l))
+	return len(selectedRows(l))
 }
 
 func (m Model) applyRefresh(msg refreshMsg) (Model, tea.Cmd) {
@@ -171,11 +174,11 @@ func (m Model) applyRefresh(msg refreshMsg) (Model, tea.Cmd) {
 func (m Model) refreshCmd() tea.Cmd {
 	db := m.db
 	return func() tea.Msg {
-		pending, err := denieddb.Pending(db)
+		pending, err := denieddb.Pending(db, m.filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		ignored, err := denieddb.Ignored(db)
+		ignored, err := denieddb.Ignored(db, m.filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
@@ -232,40 +235,48 @@ func (m Model) toggleIgnored() (Model, tea.Cmd) {
 }
 
 func (m Model) approve() (Model, tea.Cmd) {
-	hosts := selectedHosts(m.list)
-	if len(hosts) == 0 {
+	rows := selectedRows(m.list)
+	if len(rows) == 0 {
 		m.status = "select hosts with space"
 		return m, nil
 	}
-	return m, m.actionCmd(actionApprove, hosts)
+	return m, m.actionCmd(actionApprove, rows)
 }
 
 func (m Model) ignore() (Model, tea.Cmd) {
-	hosts := selectedHosts(m.list)
-	if len(hosts) == 0 {
+	rows := selectedRows(m.list)
+	if len(rows) == 0 {
 		m.status = "select hosts with space"
 		return m, nil
 	}
-	return m, m.actionCmd(actionIgnore, hosts)
+	return m, m.actionCmd(actionIgnore, rows)
 }
 
-func (m Model) actionCmd(kind action, hosts []string) tea.Cmd {
-	db, configPath := m.db, m.configPath
+func (m Model) actionCmd(kind action, rows []denieddb.DeniedHost) tea.Cmd {
+	db := m.db
 	return func() tea.Msg {
-		switch kind {
-		case actionApprove:
-			if _, err := config.AddAllowedHosts(configPath, hosts); err != nil {
-				return actionMsg{kind: kind, err: err}
-			}
-			if err := denieddb.MarkAllowed(db, hosts); err != nil {
-				return actionMsg{kind: kind, err: err}
-			}
-		case actionIgnore:
-			if err := denieddb.MarkIgnored(db, hosts); err != nil {
-				return actionMsg{kind: kind, err: err}
+		bySession := map[string][]string{}
+		for _, r := range rows {
+			bySession[r.Session] = append(bySession[r.Session], r.Host)
+		}
+		for session, hosts := range bySession {
+			switch kind {
+			case actionApprove:
+				if session != "" {
+					if _, err := config.AddAllowedHosts(denieddb.SessionDir(session)+"/config.json", hosts); err != nil {
+						return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
+					}
+				}
+				if err := denieddb.MarkAllowed(db, session, hosts); err != nil {
+					return actionMsg{kind: kind, err: err}
+				}
+			case actionIgnore:
+				if err := denieddb.MarkIgnored(db, session, hosts); err != nil {
+					return actionMsg{kind: kind, err: err}
+				}
 			}
 		}
-		return actionMsg{kind: kind, hosts: hosts}
+		return actionMsg{kind: kind, rows: rows}
 	}
 }
 
@@ -275,12 +286,12 @@ func (m Model) applyAction(msg actionMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	handled := map[string]bool{}
-	for _, h := range msg.hosts {
-		handled[h] = true
+	for _, r := range msg.rows {
+		handled[r.Host+"@"+r.Session] = true
 	}
 	var kept []denieddb.DeniedHost
 	for _, h := range m.pendingRows {
-		if handled[h.Host] {
+		if handled[h.Host+"@"+h.Session] {
 			if msg.kind == actionIgnore {
 				h.Allowed = true
 				h.Ignored = true
@@ -294,9 +305,9 @@ func (m Model) applyAction(msg actionMsg) (Model, tea.Cmd) {
 	m.pendingRows = kept
 	switch msg.kind {
 	case actionApprove:
-		m.status = fmt.Sprintf("approved %d host(s) — proxies reload within ~1s", len(msg.hosts))
+		m.status = fmt.Sprintf("approved %d host(s) — proxies reload within ~1s", len(msg.rows))
 	case actionIgnore:
-		m.status = fmt.Sprintf("ignored %d host(s) — press t to review ignored hosts", len(msg.hosts))
+		m.status = fmt.Sprintf("ignored %d host(s) — press t to review ignored hosts", len(msg.rows))
 	}
 	return m, m.list.SetItems(buildItems(m.pendingRows, m.ignoredRows, m.showIgnored, currentSelection(m.list)))
 }

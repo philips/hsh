@@ -24,7 +24,7 @@ Build one locally with `podman build -t hsh-vibe images/vibe/`.
 
 Each image carries an `org.ifup.hsh` label whose value is a JSON config
 in the [config file](config.md) format (without `image`, which comes
-from `--image`). It provides the defaults the harness needs: the
+from the positional image argument). It provides the defaults the harness needs: the
 provider API hosts in `network.allow`, and the `secrets` that reference
 the [hsh secret store](config.md#the-hsh-secret-store) (`hsh://NAME`)
 for the provider's API key.
@@ -40,12 +40,12 @@ It also declares how the image's agent runs headless, which is what
 task prompt. `pi -p`, `vibe -p`, `claude -p`, and `codex exec` are the
 headless invocations of the four harness images.
 
-`hsh run --image IMAGE` in a directory without a `config.hsh` uses the
+`hsh run IMAGE` in a directory without a `config.hsh` uses the
 image's label as its config:
 
 ```
 $ cd my-project
-$ hsh run --image ghcr.io/ifup/hsh-vibe:latest
+$ hsh run ghcr.io/ifup/hsh-vibe:latest
 ```
 
 The current directory is mounted at `/workspace` (or whatever `mounts`
@@ -57,7 +57,7 @@ default mode for configs without one is `https` (TLS to any host —
 see [network policy modes](config.md#network-policy-modes)).
 
 Precedence: a `config.hsh` file (or `--config PATH`) always wins — the
-label is only a fallback for when no config file exists. `--image`
+label is only a fallback for when no config file exists. The image
 also overrides the `image` field when a config file is present.
 
 The label JSON must be quoted in the Containerfile so the Dockerfile

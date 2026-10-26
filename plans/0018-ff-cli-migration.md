@@ -1,6 +1,6 @@
 # Migrate to peterbourgon/ff (v4 beta), remove --image, one positional contract
 
-> **Status: not implemented.**
+> **Status: implemented.**
 
 ## Goal
 

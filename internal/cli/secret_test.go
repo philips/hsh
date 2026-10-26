@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,7 +18,11 @@ func testStorePath(t *testing.T) string {
 
 func runSecret(t *testing.T, args ...string) error {
 	t.Helper()
-	return Secret(args)
+	root := secretCommand()
+	if err := root.Parse(args); err != nil {
+		return err
+	}
+	return root.Run(context.Background())
 }
 
 func feedStdin(t *testing.T, value string) {
@@ -38,7 +43,7 @@ func feedStdin(t *testing.T, value string) {
 func TestSecretAddLsRm(t *testing.T) {
 	db := testStorePath(t)
 	feedStdin(t, "super-secret\n")
-	if err := runSecret(t, "add", "mistral-key", "--db", db, "--value-stdin"); err != nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	store, _, err := secretstore.Open(db)
@@ -52,11 +57,11 @@ func TestSecretAddLsRm(t *testing.T) {
 	}
 
 	feedStdin(t, "super-secret\n")
-	if err := runSecret(t, "add", "mistral-key", "--db", db, "--value-stdin"); !errors.Is(err, secretstore.ErrExists) {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); !errors.Is(err, secretstore.ErrExists) {
 		t.Fatalf("duplicate add error = %v, want ErrExists", err)
 	}
 	feedStdin(t, "other-secret\n")
-	if err := runSecret(t, "add", "mistral-key", "--db", db, "--value-stdin", "--force"); err != nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "--force", "mistral-key"); err != nil {
 		t.Fatalf("add --force: %v", err)
 	}
 	v, err = store.Get("mistral-key")
@@ -64,13 +69,13 @@ func TestSecretAddLsRm(t *testing.T) {
 		t.Fatalf("Get after --force = (%q, %v), want (other-secret, nil)", v, err)
 	}
 
-	if err := runSecret(t, "rm", "nope", "--db", db); !errors.Is(err, secretstore.ErrNotFound) {
+	if err := runSecret(t, "rm", "--db", db, "nope"); !errors.Is(err, secretstore.ErrNotFound) {
 		t.Fatalf("rm missing error = %v, want ErrNotFound", err)
 	}
-	if err := runSecret(t, "rm", "mistral-key", "--db", db); err != nil {
+	if err := runSecret(t, "rm", "--db", db, "mistral-key"); err != nil {
 		t.Fatalf("rm: %v", err)
 	}
-	if err := runSecret(t, "rm", "mistral-key", "--db", db); !errors.Is(err, secretstore.ErrNotFound) {
+	if err := runSecret(t, "rm", "--db", db, "mistral-key"); !errors.Is(err, secretstore.ErrNotFound) {
 		t.Fatalf("second rm error = %v, want ErrNotFound", err)
 	}
 }
@@ -78,7 +83,7 @@ func TestSecretAddLsRm(t *testing.T) {
 func TestSecretAddRejectsEmptyValue(t *testing.T) {
 	db := testStorePath(t)
 	feedStdin(t, "\n")
-	if err := runSecret(t, "add", "empty", "--db", db, "--value-stdin"); err == nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "empty"); err == nil {
 		t.Fatal("expected an error for an empty value")
 	}
 }
@@ -92,9 +97,9 @@ func TestSecretAddWritesConfigEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	feedStdin(t, "sk-test\n")
-	err := runSecret(t, "add", "mistral-key", "--db", db, "--value-stdin",
+	err := runSecret(t, "add", "--db", db, "--value-stdin",
 		"--config", configPath, "--host", "api.mistral.ai",
-		"--header", "Authorization", "--prefix", "Bearer ")
+		"--header", "Authorization", "--prefix", "Bearer ", "mistral-key")
 	if err != nil {
 		t.Fatalf("add with config flags: %v", err)
 	}
@@ -124,10 +129,10 @@ func TestSecretRmWarnsOnDanglingRef(t *testing.T) {
 	}
 
 	feedStdin(t, "sk-test\n")
-	if err := runSecret(t, "add", "mistral-key", "--db", db, "--value-stdin"); err != nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if err := runSecret(t, "rm", "mistral-key", "--db", db, "--config", configPath); err != nil {
+	if err := runSecret(t, "rm", "--db", db, "--config", configPath, "mistral-key"); err != nil {
 		t.Fatalf("rm: %v", err)
 	}
 	data, err := os.ReadFile(configPath)
@@ -152,5 +157,17 @@ func TestSecretLsMissingStore(t *testing.T) {
 func TestSecretUnknownSubcommand(t *testing.T) {
 	if err := runSecret(t, "show"); err == nil {
 		t.Fatal("expected an error for an unknown subcommand")
+	}
+}
+
+func TestFlagsBeforePositionalsContract(t *testing.T) {
+	db := testStorePath(t)
+	feedStdin(t, "value\n")
+	err := runSecret(t, "add", "some-name", "--db", db, "--value-stdin")
+	if err == nil {
+		t.Fatal("expected an error: flags must come before the NAME positional")
+	}
+	if !strings.Contains(err.Error(), "exactly one NAME") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

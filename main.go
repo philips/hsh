@@ -6,57 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/peterbourgon/ff/v4/ffhelp"
+
 	"hsh/internal/cli"
 )
-
-const usage = `hsh - container sandbox for agent harness isolation
-
-usage:
-  hsh run [IMAGE] [flags]                 start a sandboxed shell
-                                               (with no command hsh prints this help)
-  hsh proxy-denied [--db PATH] [--all] [--dns]  list hosts denied by the egress proxy
-                                               (--dns lists DNS query denials)
-  hsh proxy-auto-allow [--config PATH]    allow denied hosts in a config file
-  hsh proxy-watch [--config PATH] [--db PATH] [--all]
-                                               interactive review of denied hosts (TUI):
-                                               approve or ignore them one by one
-  hsh secret add NAME [--db PATH] [--force] [--value-stdin]
-                                               [--config PATH] [--host HOST]... [--header HEADER] [--prefix PREFIX]
-                                               store a secret in the hsh secret store ($XDG_CONFIG_HOME/hsh/secrets.db)
-  hsh secret rm NAME [--db PATH] [--config PATH]
-                                               remove a secret from the store
-  hsh secret ls [--db PATH]                list stored secret names (never values)
-  hsh ls [flags]                               list hsh sandboxes (pods), like podman pod ls
-  hsh rm [flags] SANDBOX...                    remove hsh sandboxes, like podman pod rm
-                                               (-a/--all, -f/--force, -i/--ignore, -t/--time, -l/--latest;
-                                               an existing directory argument resolves to its workspace's sandbox)
-
-run flags:
-  hsh run [IMAGE] [flags]                      IMAGE is a positional alias for --image
-  --config PATH     path to the config file (default: config.hsh)
-  --image IMAGE     workspace image; without a config file the image's
-                    org.ifup.hsh label provides the default config
-  --tasks PATH      newline-delimited tasks (or - for stdin); runs the
-                    image's agent headless with the tasks as its prompt
-  --network MODE    network policy: https (default), allowlist, or none
-  --workspace PATH  workspace directory inside the container (default: first mount target)
-  --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
-  --secret-db PATH  secret store for hsh:// secret references
-                    (default: $XDG_CONFIG_HOME/hsh/secrets.db)
-  --verbose         print progress information to stderr (or set HSH_VERBOSE=1)
-  --resume          reuse the sandbox for this workspace directory: reattach to the
-                    existing container instead of creating a new one; the sandbox
-                    is left in place on exit so a later --resume re-enters it
-  --fresh           with --resume: discard the existing sandbox and start a new one
-
-The container roles (hsh-proxy, hsh-workspace, hsh-workspace-inner) are
-dispatched by argv[0]: hsh run bind-mounts the same binary under those
-names and uses them as the container entrypoints. The proxy, workspace,
-and workspace-inner subcommand names remain as aliases for them.
-
-Progress information is suppressed by default so the sandbox starts with a
-clean terminal prompt; warnings and errors are always printed.
-`
 
 func main() {
 	args := os.Args[1:]
@@ -73,44 +26,31 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hsh: %v\n", err)
+		if cli.IsUnknownCommand(err) {
+			os.Exit(2)
+		}
 		os.Exit(1)
 	}
 }
 
 func hostCommand(args []string) error {
-	if len(args) == 0 {
-		fmt.Print(usage)
-		return nil
+	if len(args) > 0 {
+		rest := args[1:]
+		switch args[0] {
+		case "proxy":
+			return cli.Proxy(rest)
+		case "workspace":
+			return cli.Workspace(rest)
+		case "workspace-inner":
+			return cli.WorkspaceInner(rest)
+		}
 	}
-	cmd, rest := args[0], args[1:]
-	var err error
-	switch cmd {
-	case "run":
-		err = cli.Run(rest)
-	case "proxy":
-		err = cli.Proxy(rest)
-	case "workspace":
-		err = cli.Workspace(rest)
-	case "workspace-inner":
-		err = cli.WorkspaceInner(rest)
-	case "proxy-denied":
-		err = cli.ProxyDenied(rest)
-	case "proxy-auto-allow":
-		err = cli.ProxyAutoAllow(rest)
-	case "proxy-watch":
-		err = cli.ProxyWatch(rest)
-	case "secret":
-		err = cli.Secret(rest)
-	case "ls":
-		err = cli.Ls(rest)
-	case "rm":
-		err = cli.Rm(rest)
-	case "help", "-h", "--help":
-		fmt.Print(usage)
-		return nil
-	default:
-		fmt.Fprintf(os.Stderr, "hsh: unknown command %q\n\n%s", cmd, usage)
-		os.Exit(2)
+	root := cli.Root()
+	if err := root.ParseAndRun(nil, args); err != nil {
+		if cli.IsUnknownCommand(err) {
+			fmt.Fprint(os.Stderr, ffhelp.Command(root))
+		}
+		return err
 	}
-	return err
+	return nil
 }

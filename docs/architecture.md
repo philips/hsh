@@ -135,6 +135,15 @@ override with `hsh run --denied-db PATH`). The database is opened in WAL
 mode with a busy timeout, so the proxy (writer) and the CLI (reader) can use
 it concurrently, including across simultaneous sessions.
 
+The database is global: rows from every session and workspace land in one
+review queue, attributed per row — `hsh run` passes the session id and the
+workspace path to the proxy container (`--session`/`--workspace` on
+`hsh-proxy`), and both are stored on each row of `denied` and `dns_denied`
+(keyed by host + session). `proxy-denied`, `proxy-watch`, and
+`proxy-auto-allow` filter on `--session`/`--workspace`; `proxy-auto-allow`
+takes a `--session` and writes that session's config copy, so one
+session's approvals never leak into another session's policy.
+
 ```sql
 CREATE TABLE IF NOT EXISTS denied (
     host       TEXT PRIMARY KEY,
@@ -243,10 +252,10 @@ config format or the proxy; the model is nono.sh's credential injection
 
 ## TLS interception
 
-`hsh run` generates a fresh ECDSA P-256 CA per run; with `--resume` it is
-persisted in the session state (`$XDG_STATE_HOME/hsh/sessions/<hash>/`) so
-the CA the workspace trusts stays stable across launches, and it is never
-written anywhere else. The CA certificate is bind-mounted into the
+`hsh run` generates a fresh ECDSA P-256 CA per session; it is persisted in
+the session state (`$XDG_STATE_HOME/hsh/sessions/<session-id>/ca.key`,
+mode 0600) so the CA the workspace trusts stays stable across re-entries,
+and it is never written anywhere else. The CA certificate is bind-mounted into the
 workspace (which appends it to the system trust bundle and exports
 `SSL_CERT_FILE`, `GIT_SSL_CAINFO`, `NODE_EXTRA_CA_CERTS`,
 `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`); the CA private key is mounted
@@ -311,27 +320,47 @@ hsh rm --all -f                           # full cleanup
 `-t/--time`, `-i/--ignore`, `-l/--latest`, `-a/--all`). A sandbox with
 running containers is refused without `--force`, exactly like
 `podman pod rm`. Removing a sandbox also removes its session state
-directory (`$XDG_STATE_HOME/hsh/sessions/<hash>/`), and `rm --all`
-sweeps orphaned session state directories whose pod is already gone.
-Pods that are not hsh sandboxes are never touched.
+directory, and `rm --all` sweeps everything. `hsh gc` collects session
+state directories whose pod is already gone. Pods that are not hsh
+sandboxes are never touched.
 
-## Sandbox reuse: `hsh --resume`
+## Sessions and workspaces
 
-By default every launch creates a fresh pod (random name) and removes it on
-exit. With `--resume`, the sandbox is keyed by the workspace directory (the
-first mount's source) and persists across launches:
+A **session** is one podman pod (name `hsh-<12 hex>`; the suffix is the
+session id) plus its state directory
+`$XDG_STATE_HOME/hsh/sessions/<session-id>/`:
 
-- The pod is named `hsh-<sha256(workspace)[:12]>`; find it with
-  `hsh ls --workspace <path>` or
-  `podman pod ls --filter label=hsh.workspace=<path>`.
-- On exit the pod is left in place (the workspace container stops, the
-  proxy keeps running). A later `--resume` re-enters the **same
-  container** — its filesystem persists, so state inside the workspace
-  container (pi's `~/.pi` sign-in and sessions, packages installed into
-  the container, files in its home) survives across launches.
-- Per-sandbox state (the MITM CA and resolved secrets) lives in
-  `$XDG_STATE_HOME/hsh/sessions/<hash>/` and is reused, so the CA the
-  workspace trusts stays stable across launches.
+```
+config.json   the session's config copy — the only writable config
+ca.crt ca.key the session's MITM CA, stable across re-entries
+workspace     file with the absolute path of the workspace
+```
+
+A **workspace** is the host directory the first mount sources from
+(recorded as the pod label `hsh.workspace`); there may be several
+sessions per workspace.
+
+- Every `hsh run` creates a persistent session. The seed config
+  (`--config PATH`, or `./config.hsh`, or the image's `org.ifup.hsh`
+  label) is copied into the session directory with mounts resolved to
+  absolute paths; the copy is the live config — watched for hot reload,
+  and the only file the review commands edit.
+- On exit the whole pod is stopped (proxy and infra included — verified:
+  `podman start` auto-starts the infra container, so re-entry needs no
+  extra handling) and the resolved `secrets.json` is scrubbed from the
+  session directory: an idle session holds no key material. Re-entry
+  re-resolves secrets from the session config.
+- `hsh run --rm` is the temporary variant: pod and state are removed at
+  exit.
+- `hsh run --resume` re-enters the current workspace's session — the
+  only one directly, or it lists the ids; `hsh run --resume <id>` picks
+  one (the full pod name also works). Re-entry reattaches to the
+  **same container**, so state inside the workspace container (pi's
+  `~/.pi` sign-in, installed packages, files in its home) survives.
+  On re-entry the workspace entrypoint deletes the stale veth pair left
+  in the pod network namespace and creates a fresh one.
+- `hsh rm` removes a session and its state; `rm --all` sweeps everything;
+  `hsh gc` collects session state whose pod is gone.
 - On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one; the proxy's
   listeners keep working across this.

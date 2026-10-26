@@ -1,5 +1,7 @@
 # Definitions 
 
+> **Status: implemented.**
+
 Sessions are an instance of a hsh pod running on the host. 
 
 ```

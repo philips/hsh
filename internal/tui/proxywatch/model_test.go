@@ -19,13 +19,14 @@ type testEnv struct {
 	db         *sql.DB
 	configPath string
 	dir        string
+	session    string
 }
 
-func recordAt(t *testing.T, db *sql.DB, host, target string, lastSeen time.Time) {
+func recordAt(t *testing.T, db *sql.DB, host, target string, lastSeen time.Time, session string) {
 	t.Helper()
 	stamp := lastSeen.UTC().Format(time.RFC3339)
-	_, err := db.Exec(`INSERT INTO denied (host, target, count, first_seen, last_seen, allowed, allowed_at, ignored)
-		VALUES (?, ?, 1, ?, ?, 0, NULL, 0)`, host, target, stamp, stamp)
+	_, err := db.Exec(`INSERT INTO denied (host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored)
+		VALUES (?, ?, ?, ?, 1, ?, ?, 0, NULL, 0)`, host, session, "/tmp/ws", target, stamp, stamp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,24 +35,30 @@ func recordAt(t *testing.T, db *sql.DB, host, target string, lastSeen time.Time)
 func newTestEnv(t *testing.T, hosts ...string) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	db, err := denieddb.Open(filepath.Join(dir, "denied.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	configPath := filepath.Join(dir, "config.hsh")
+	session := "testsess"
+	sessionDir := denieddb.SessionDir(session)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(sessionDir, "config.json")
 	if err := os.WriteFile(configPath, []byte(`{"network": {"allow": ["already.example.com"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := &testEnv{db: db, configPath: configPath, dir: dir}
+	env := &testEnv{db: db, configPath: configPath, dir: dir, session: session}
 	for i, h := range hosts {
-		recordAt(t, db, h, h+":443", time.Now().UTC().Add(-time.Duration(len(hosts)-i)*time.Hour))
+		recordAt(t, db, h, h+":443", time.Now().UTC().Add(-time.Duration(len(hosts)-i)*time.Hour), session)
 	}
-	pending, err := denieddb.Pending(db)
+	pending, err := denieddb.Pending(db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env.model = New(db, configPath, pending, nil, false)
+	env.model = New(db, denieddb.Filter{}, pending, nil, false)
 	return env
 }
 
@@ -127,7 +134,7 @@ func TestApproveSelected(t *testing.T) {
 	if got := allowlist(t, env.configPath); !hasHost(got, "beta.example.com") {
 		t.Errorf("approved host missing from network.allow: %v", got)
 	}
-	all, err := denieddb.All(env.db)
+	all, err := denieddb.All(env.db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +168,7 @@ func TestIgnoreSelected(t *testing.T) {
 	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
 		t.Errorf("ignored host was added to the allowlist: %v", got)
 	}
-	ignored, err := denieddb.Ignored(env.db)
+	ignored, err := denieddb.Ignored(env.db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,15 +212,15 @@ func TestShowIgnoredToggle(t *testing.T) {
 		}
 	}
 
-	pending, err := denieddb.Pending(env.db)
+	pending, err := denieddb.Pending(env.db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := denieddb.Ignored(env.db)
+	ignored, err := denieddb.Ignored(env.db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m2 := New(env.db, env.configPath, pending, ignored, true)
+	m2 := New(env.db, denieddb.Filter{}, pending, ignored, true)
 	if !hasHost(listHosts(m2), "beta.example.com") {
 		t.Error("New with showIgnored=true does not list ignored hosts")
 	}
@@ -264,7 +271,7 @@ func TestSelectAllIgnoresFilter(t *testing.T) {
 
 func TestRefreshBringsNewDenials(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
-	recordAt(t, env.db, "fresh.example.com", "fresh.example.com:443", time.Now().UTC())
+	recordAt(t, env.db, "fresh.example.com", "fresh.example.com:443", time.Now().UTC(), env.session)
 	msg := runCmd(env.model.refreshCmd())
 	m, _ := send(env.model, msg)
 	got := listHosts(m)
@@ -292,7 +299,9 @@ func TestApproveEmptySelection(t *testing.T) {
 
 func TestApproveConfigFailure(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
-	env.model.configPath = filepath.Join(env.dir, "missing.hsh")
+	if err := os.Remove(env.configPath); err != nil {
+		t.Fatal(err)
+	}
 	m, _ := send(env.model, keyMsg(" "))
 	m, cmd := send(m, keyMsg("enter"))
 	msg := runCmd(cmd)
@@ -303,7 +312,7 @@ func TestApproveConfigFailure(t *testing.T) {
 	if !strings.Contains(m.status, "error") {
 		t.Errorf("config failure not surfaced: %q", m.status)
 	}
-	pending, err := denieddb.Pending(env.db)
+	pending, err := denieddb.Pending(env.db, denieddb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,11 +1,10 @@
 package cli
 
 import (
+	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/peterbourgon/ff/v4"
+
 	"hsh/internal/certs"
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
@@ -23,101 +24,244 @@ import (
 	"hsh/internal/secretstore"
 )
 
-var verbose = os.Getenv("HSH_VERBOSE") != ""
+type runOptions struct {
+	configPath   string
+	workspaceDir string
+	deniedDB     string
+	secretDB     string
+	tasksPath    string
+	networkMode  string
+	verbose      bool
+	resume       bool
+	fresh        bool
+	rm           bool
+}
 
-func infof(format string, args ...any) {
-	if verbose {
-		fmt.Fprintf(os.Stderr, format, args...)
+func runCommand() *ff.Command {
+	ro := runOptions{
+		configPath: "config.hsh",
+		deniedDB:   denieddb.DefaultPath(),
+		secretDB:   secretstore.DefaultPath(),
+	}
+	fs := ff.NewFlagSet("run")
+	fs.StringVar(&ro.configPath, 0, "config", "config.hsh", "config file that seeds the session's config copy")
+	fs.StringVar(&ro.workspaceDir, 0, "workspace", "", "workspace directory inside the container (default: first mount target)")
+	fs.StringVar(&ro.deniedDB, 0, "denied-db", denieddb.DefaultPath(), "proxy denial database")
+	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
+	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
+	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
+	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
+	fs.BoolVar(&ro.resume, 0, "resume", "re-enter a session for this workspace (positional: session id)")
+	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
+	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
+	return &ff.Command{
+		Name:      "run",
+		Usage:     "hsh run [FLAGS] [IMAGE]",
+		ShortHelp: "start a sandboxed shell (persistent session; re-enter with --resume)",
+		Flags:     fs,
+		Exec: func(ctx context.Context, args []string) error {
+			if len(args) > 1 {
+				return fmt.Errorf("unexpected arguments %v: at most one positional (IMAGE, or a session id with --resume) is accepted, and flags must come before it", args)
+			}
+			positional := ""
+			if len(args) == 1 {
+				positional = args[0]
+			}
+			return run(ctx, ro, positional)
+		},
 	}
 }
 
-func Run(args []string) error {
-	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	configPath := fs.String("config", "config.hsh", "path to the config file")
-	imageFlag := fs.String("image", "", "workspace image; without a config file the image's org.ifup.hsh label provides the default config")
-	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
-	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
-	secretDB := fs.String("secret-db", secretstore.DefaultPath(), "path to the secret store (for hsh:// secret references)")
-	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
-	resumeFlag := fs.Bool("resume", false, "reuse the sandbox for this workspace directory instead of creating a new one")
-	freshFlag := fs.Bool("fresh", false, "with --resume: discard the existing sandbox and start a new one")
-	tasksPath := fs.String("tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless with the tasks as its prompt")
-	networkMode := fs.String("network", "", "network policy: https, allowlist, or none (default: the config's network.mode, else https)")
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		*imageFlag = args[0]
-		args = args[1:]
-	}
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	switch *networkMode {
-	case "", "https", "allowlist", "none":
-	default:
-		return fmt.Errorf("invalid --network value %q (want https, allowlist, or none)", *networkMode)
-	}
-	if *verboseFlag {
+func run(ctx context.Context, ro runOptions, positional string) error {
+	if ro.verbose {
 		verbose = true
 	}
-	positional := fs.Args()
-	if len(positional) > 0 {
-		if len(positional) > 1 {
-			return fmt.Errorf("unexpected arguments: %v", positional)
-		}
-		if *imageFlag != "" && positional[0] != *imageFlag {
-			return fmt.Errorf("both --image %s and a positional image %s given", *imageFlag, positional[0])
-		}
-		*imageFlag = positional[0]
+	switch ro.networkMode {
+	case "", "https", "allowlist", "none":
+	default:
+		return fmt.Errorf("invalid --network value %q (want https, allowlist, or none)", ro.networkMode)
+	}
+	if ro.rm && ro.resume {
+		return fmt.Errorf("--rm and --resume are mutually exclusive: --rm sessions are removed at exit, --resume re-enters a persistent one")
+	}
+	if ro.fresh && !ro.resume {
+		return fmt.Errorf("--fresh requires --resume")
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
 	}
 	var tasksPrompt string
-	if *tasksPath != "" {
+	if ro.tasksPath != "" {
 		var data []byte
-		var err error
-		if *tasksPath == "-" {
+		if ro.tasksPath == "-" {
 			data, err = io.ReadAll(os.Stdin)
 		} else {
-			data, err = os.ReadFile(*tasksPath)
+			data, err = os.ReadFile(ro.tasksPath)
 		}
 		if err != nil {
 			return fmt.Errorf("read tasks: %w", err)
 		}
 		tasks := config.ParseTasks(data)
 		if len(tasks) == 0 {
-			return fmt.Errorf("no tasks found in %s", *tasksPath)
+			return fmt.Errorf("no tasks found in %s", ro.tasksPath)
 		}
 		tasksPrompt = config.ComposePrompt(tasks)
-		infof("hsh: %d task(s) from %s\n", len(tasks), *tasksPath)
+		infof("hsh: %d task(s) from %s\n", len(tasks), ro.tasksPath)
 	}
-	absConfig, err := filepath.Abs(*configPath)
+	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(absConfig)
-	cfgIsFile := true
+	exe, err = filepath.EvalSymlinks(exe)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		if *imageFlag == "" {
-			return fmt.Errorf("no config file at %s and no --image given; pass --image (a harness image supplies its default config via the org.ifup.hsh label) or --config", absConfig)
-		}
-		label, err := imageLabel(*imageFlag)
-		if err != nil {
-			return err
-		}
-		cfg, err = config.FromImageLabel(label)
-		if err != nil {
-			return err
-		}
-		cfgIsFile = false
-		infof("hsh: using config from the org.ifup.hsh label of %s\n", *imageFlag)
+		return err
 	}
-	if *imageFlag != "" {
-		cfg.Image = *imageFlag
+	if _, err := exec.LookPath("podman"); err != nil {
+		return fmt.Errorf("podman is required but was not found in PATH")
+	}
+
+	var sessionID string
+	resumeSession := false
+	freshImage := ""
+	if ro.resume {
+		resumeSession = true
+		if positional != "" {
+			sessionID = strings.TrimPrefix(positional, "hsh-")
+		} else {
+			pods, err := listSandboxes("label=hsh.workspace=" + cwd)
+			if err != nil {
+				return err
+			}
+			switch len(pods) {
+			case 0:
+				return fmt.Errorf("no session to resume, try: hsh run IMAGE")
+			case 1:
+				sessionID = strings.TrimPrefix(pods[0].Name, "hsh-")
+			default:
+				var ids []string
+				for _, p := range pods {
+					ids = append(ids, strings.TrimPrefix(p.Name, "hsh-"))
+				}
+				return fmt.Errorf("multiple sessions for workspace %s:\n  %s\nre-enter with: hsh run --resume <session id>", cwd, strings.Join(ids, "\n  "))
+			}
+		}
+	} else {
+		sessionID = randHex(6)
+	}
+	podName := "hsh-" + sessionID
+	sessionDir := denieddb.SessionDir(sessionID)
+	sessionConfig := filepath.Join(sessionDir, "config.json")
+
+	var cfg *config.Config
+	var mounts []config.Mount
+	var workspaceSource string
+
+	if resumeSession {
+		cfg, err = config.Load(sessionConfig)
+		if err != nil {
+			return fmt.Errorf("session %s: %w (remove orphaned session state with: hsh gc)", sessionID, err)
+		}
+		if !podExists(podName) {
+			return fmt.Errorf("session %s has no pod (remove orphaned session state with: hsh gc)", sessionID)
+		}
+		mounts, err = cfg.ParsedMounts(sessionDir)
+		if err != nil {
+			return err
+		}
+		workspaceSource = readWorkspaceFile(sessionDir)
+		if ro.fresh {
+			infof("hsh: discarding session %s (--fresh)\n", sessionID)
+			_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
+			_ = os.RemoveAll(sessionDir)
+			freshImage = cfg.Image
+			resumeSession = false
+			ro.resume = false
+			ro.fresh = false
+			sessionID = randHex(6)
+			podName = "hsh-" + sessionID
+			sessionDir = denieddb.SessionDir(sessionID)
+			sessionConfig = filepath.Join(sessionDir, "config.json")
+		}
+	}
+
+	if !resumeSession {
+		image := positional
+		if image == "" && freshImage != "" {
+			image = freshImage
+		}
+		absSeed, err := filepath.Abs(ro.configPath)
+		if err != nil {
+			return err
+		}
+		var mountBase string
+		if fileExists(absSeed) {
+			cfg, err = config.Load(absSeed)
+			if err != nil {
+				return err
+			}
+			mountBase = filepath.Dir(absSeed)
+		} else {
+			if image == "" {
+				return fmt.Errorf("no config file at %s and no image given; try: hsh run IMAGE (a harness image supplies its default config via the org.ifup.hsh label)", absSeed)
+			}
+			label, err := imageLabel(image)
+			if err != nil {
+				return err
+			}
+			cfg, err = config.FromImageLabel(label)
+			if err != nil {
+				return err
+			}
+			mountBase = cwd
+			infof("hsh: using config from the org.ifup.hsh label of %s\n", image)
+		}
+		if image != "" {
+			cfg.Image = image
+		}
+		mounts, err = cfg.ParsedMounts(mountBase)
+		if err != nil {
+			return err
+		}
+		absMounts := make([]string, 0, len(mounts))
+		for _, m := range mounts {
+			am := m.Source + ":" + m.Target
+			if m.Options != "" {
+				am += ":" + m.Options
+			}
+			absMounts = append(absMounts, am)
+		}
+		cfg.Mounts = absMounts
+		workspaceSource = mounts[0].Source
+		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+			return err
+		}
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(sessionConfig, append(data, '\n'), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "workspace"), []byte(workspaceSource+"\n"), 0o644); err != nil {
+			return err
+		}
+	}
+	failureCleanup := true
+	defer func() {
+		if failureCleanup && !resumeSession && !ro.resume {
+			removeSessionState(podName, sessionDir)
+		}
+	}()
+
+	wsDir := ro.workspaceDir
+	if wsDir == "" {
+		wsDir = mounts[0].Target
 	}
 	var agentExec []string
 	if tasksPrompt != "" {
 		if len(cfg.Agent.Command) == 0 {
-			return fmt.Errorf("--tasks needs an agent command; the image must declare one (\"agent\":{\"command\":[...]}) in its org.ifup.hsh label or config")
+			return fmt.Errorf("--tasks needs an agent command; the session config must declare one (\"agent\":{\"command\":[...]})")
 		}
 		agentExec = make([]string, len(cfg.Agent.Command))
 		substituted := false
@@ -134,78 +278,17 @@ func Run(args []string) error {
 		}
 		infof("hsh: running agent headless: %s\n", strings.Join(agentExec[:min(len(agentExec), 3)], " "))
 	}
-	configDir := filepath.Dir(absConfig)
-	mountBase := configDir
-	if !cfgIsFile {
-		if wd, err := os.Getwd(); err == nil {
-			mountBase = wd
-		}
-	}
-	mounts, err := cfg.ParsedMounts(mountBase)
-	if err != nil {
+	caCertPath := filepath.Join(sessionDir, "ca.crt")
+	secretsPath := filepath.Join(sessionDir, "secrets.json")
+	if _, err := ensureCA(sessionDir, resumeSession); err != nil {
 		return err
 	}
-	if len(mounts) == 0 {
-		mounts = []config.Mount{{Source: configDir, Target: "/workspace"}}
-	}
-	wsDir := *workspaceDir
-	if wsDir == "" {
-		wsDir = mounts[0].Target
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return err
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		return fmt.Errorf("podman is required but was not found in PATH")
-	}
-	resume := *resumeFlag
-	workspaceSource := mounts[0].Source
-	var podName, runDir string
-	var cleanupPod bool
-	if resume {
-		hash := hashPath(workspaceSource)
-		podName = "hsh-" + hash
-		runDir = filepath.Join(denieddb.StateDir(), "sessions", hash)
-	} else {
-		podName = "hsh-" + randHex(6)
-		tmpDir, err := os.MkdirTemp("", "hsh-")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmpDir)
-		runDir = filepath.Join(tmpDir, "run")
-		cleanupPod = true
-	}
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return err
-	}
-	if !cfgIsFile {
-		absConfig = filepath.Join(runDir, "config.json")
-		data, err := json.MarshalIndent(cfg, "", "  ")
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(absConfig, append(data, '\n'), 0o644); err != nil {
-			return err
-		}
-		configDir = runDir
-	}
-	caCertPath := filepath.Join(runDir, "ca.crt")
-	caKeyPath := filepath.Join(runDir, "ca.key")
-	secretsPath := filepath.Join(runDir, "secrets.json")
-	if _, err := loadOrCreateCA(resume, caCertPath, caKeyPath); err != nil {
-		return err
-	}
+
 	var secretStore config.SecretStore
 	storeOpened := false
 	openStore := func() (config.SecretStore, error) {
 		if !storeOpened {
-			db, _, err := secretstore.Open(*secretDB)
+			db, _, err := secretstore.Open(ro.secretDB)
 			if err != nil {
 				return nil, err
 			}
@@ -214,21 +297,21 @@ func Run(args []string) error {
 		}
 		return secretStore, nil
 	}
-	storeFor := func(cfg *config.Config) config.SecretStore {
-		for _, s := range cfg.Secrets {
+	storeFor := func(c *config.Config) config.SecretStore {
+		for _, s := range c.Secrets {
 			if strings.HasPrefix(s.From, "hsh://") {
-				if store, err := openStore(); err == nil {
-					return store
-				} else {
+				store, err := openStore()
+				if err != nil {
 					fmt.Fprintf(os.Stderr, "hsh: warning: opening the secret store: %v\n", err)
 					return nil
 				}
+				return store
 			}
 		}
 		return nil
 	}
-	resolve := func(cfg *config.Config) error {
-		rs, missing, err := config.ResolveSecrets(cfg, storeFor(cfg))
+	resolve := func(c *config.Config) error {
+		rs, missing, err := config.ResolveSecrets(c, storeFor(c))
 		if err != nil {
 			return err
 		}
@@ -244,8 +327,8 @@ func Run(args []string) error {
 	if err := resolve(cfg); err != nil {
 		return err
 	}
-	go config.WatchFile(absConfig, time.Second, func([]byte) {
-		cfg2, err := config.Load(absConfig)
+	go config.WatchFile(sessionConfig, time.Second, func([]byte) {
+		cfg2, err := config.Load(sessionConfig)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hsh: config reload: %v\n", err)
 			return
@@ -256,25 +339,10 @@ func Run(args []string) error {
 		}
 		infof("hsh: configuration reloaded\n")
 	})
+
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
-	cleanup := func() {
-		if cleanupPod {
-			_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
-		}
-	}
-	if cleanupPod {
-		defer cleanup()
-	}
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cleanup()
-		os.Exit(130)
-	}()
-	roots := findRootBundle()
-	stateDir := filepath.Dir(*deniedDB)
+	stateDir := filepath.Dir(ro.deniedDB)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -283,41 +351,33 @@ func Run(args []string) error {
 		"--security-opt", "label=disable",
 		"--entrypoint", "/hsh-proxy",
 		"-v", exe + ":/hsh-proxy:ro",
-		"-v", configDir + ":/hsh-config:ro",
-		"-v", runDir + ":/hsh-run:ro",
+		"-v", sessionDir + ":/hsh-session:ro",
 		"-v", stateDir + ":/hsh-state",
 	}
+	roots := findRootBundle()
 	if roots != "" {
-		proxyArgs = append(proxyArgs, "-v", roots+":/hsh-run/roots.pem:ro")
+		proxyArgs = append(proxyArgs, "-v", roots+":/hsh-roots.pem:ro")
 	}
 	proxyArgs = append(proxyArgs,
 		cfg.Image,
 		"--listen", netsetup.HostIP+":"+netsetup.ProxyPort,
-		"--config", "/hsh-config/"+filepath.Base(absConfig),
-		"--secrets", "/hsh-run/secrets.json",
-		"--ca-cert", "/hsh-run/ca.crt",
-		"--ca-key", "/hsh-run/ca.key",
-		"--denied-db", "/hsh-state/"+filepath.Base(*deniedDB),
+		"--config", "/hsh-session/config.json",
+		"--secrets", "/hsh-session/secrets.json",
+		"--ca-cert", "/hsh-session/ca.crt",
+		"--ca-key", "/hsh-session/ca.key",
+		"--denied-db", "/hsh-state/"+filepath.Base(ro.deniedDB),
+		"--session", sessionID,
+		"--workspace", workspaceSource,
 	)
 	if roots != "" {
-		proxyArgs = append(proxyArgs, "--roots", "/hsh-run/roots.pem")
+		proxyArgs = append(proxyArgs, "--roots", "/hsh-roots.pem")
 	}
-	if *networkMode != "" {
-		proxyArgs = append(proxyArgs, "--network-mode", *networkMode)
+	if ro.networkMode != "" {
+		proxyArgs = append(proxyArgs, "--network-mode", ro.networkMode)
 	}
+
 	reattach := false
-	if resume {
-		if podExists(podName) {
-			if *freshFlag {
-				infof("hsh: discarding existing sandbox %s (--fresh)\n", podName)
-				_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
-			} else {
-				reattach = true
-			}
-		}
-	}
-	if reattach {
-		infof("hsh: resuming sandbox %s for workspace %s\n", podName, workspaceSource)
+	if resumeSession {
 		if !containerExists(proxyName) {
 			if out, err := podman(proxyArgs...); err != nil {
 				return fmt.Errorf("create proxy container: %w\n%s", err, out)
@@ -327,8 +387,10 @@ func Run(args []string) error {
 				return fmt.Errorf("start proxy container: %w\n%s", err, out)
 			}
 		}
+		reattach = true
+		infof("hsh: resuming session %s for workspace %s\n", sessionID, workspaceSource)
 	} else {
-		infof("hsh: creating pod %s (image %s)\n", podName, cfg.Image)
+		infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
 		podCreateArgs := []string{"pod", "create", "--name", podName,
 			"--label", "hsh.workspace=" + workspaceSource}
 		if out, err := podman(podCreateArgs...); err != nil {
@@ -341,6 +403,26 @@ func Run(args []string) error {
 			return fmt.Errorf("start proxy container: %w\n%s", err, out)
 		}
 	}
+	failureCleanup = false
+
+	stopSession := func() {
+		_ = os.Remove(secretsPath)
+		if out, err := podman("pod", "stop", "--time", "2", podName); err != nil {
+			fmt.Fprintf(os.Stderr, "hsh: stopping session pod: %v\n%s", err, out)
+		}
+	}
+	cleanup := stopSession
+	if ro.rm {
+		cleanup = func() { removeSessionState(podName, sessionDir) }
+	}
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cleanup()
+		os.Exit(130)
+	}()
+
 	wsArgs := []string{
 		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
@@ -379,16 +461,17 @@ func Run(args []string) error {
 		wsArgs = append(wsArgs, "--exec-json", string(execJSON))
 	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
-	if reattach || resume {
-		if reattach && containerRunning(wsName) {
-			return fmt.Errorf("sandbox for workspace %s is already running; exit it first or launch without --resume", workspaceSource)
+	if reattach {
+		if containerRunning(wsName) {
+			return fmt.Errorf("session %s is already running; exit it first or pick another session", sessionID)
 		}
-		if !reattach || !containerExists(wsName) {
+		if !containerExists(wsName) {
 			if out, err := podman(wsArgs...); err != nil {
 				return fmt.Errorf("create workspace container: %w\n%s", err, out)
 			}
 		}
 		code, err := attachContainer(wsName)
+		cleanup()
 		if err != nil {
 			return err
 		}
@@ -403,24 +486,30 @@ func Run(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	runErr := cmd.Run()
+	cleanup()
 	code := 0
 	if runErr != nil {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			code = exitErr.ExitCode()
 		} else {
-			cleanup()
 			return runErr
 		}
 	}
-	cleanup()
 	if code != 0 {
 		os.Exit(code)
 	}
 	return nil
 }
 
-func loadOrCreateCA(reuse bool, certPath, keyPath string) (*certs.CA, error) {
-	if reuse {
+func removeSessionState(podName, sessionDir string) {
+	_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
+	_ = os.RemoveAll(sessionDir)
+}
+
+func ensureCA(sessionDir string, existing bool) (*certs.CA, error) {
+	certPath := filepath.Join(sessionDir, "ca.crt")
+	keyPath := filepath.Join(sessionDir, "ca.key")
+	if existing {
 		certPEM, err1 := os.ReadFile(certPath)
 		keyPEM, err2 := os.ReadFile(keyPath)
 		if err1 == nil && err2 == nil {
@@ -440,6 +529,14 @@ func loadOrCreateCA(reuse bool, certPath, keyPath string) (*certs.CA, error) {
 		return nil, err
 	}
 	return ca, nil
+}
+
+func readWorkspaceFile(sessionDir string) string {
+	data, err := os.ReadFile(filepath.Join(sessionDir, "workspace"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func attachContainer(name string) (int, error) {
@@ -478,11 +575,6 @@ func containerRunning(name string) bool {
 		return false
 	}
 	return strings.TrimSpace(out) == "true"
-}
-
-func hashPath(p string) string {
-	sum := sha256.Sum256([]byte(p))
-	return hex.EncodeToString(sum[:])[:12]
 }
 
 func podman(args ...string) (string, error) {

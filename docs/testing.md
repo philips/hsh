@@ -10,10 +10,13 @@ proxy, the denial database, and the example image:
 - ensures the fixture image exists (builds it with
   `podman build -t hsh-example test/fixtures/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
-  denied with 407 and recorded in a throwaway denial database
-- **step 2**: `hsh proxy-auto-allow` adds the denied host to the config
-  (trust on first use)
-- **step 3**: in a fresh sandbox session, the endpoint is allowed (real
+  denied with 407 and recorded in a throwaway denial database, attributed
+  with the session id and workspace; the session state directory holds
+  the config copy and workspace file
+- **step 2**: `hsh proxy-auto-allow --session ID` adds the denied host to
+  the session's config copy (trust on first use; the seed config is
+  never modified)
+- **step 3**: resuming that session, the endpoint is allowed (real
   upstream response through the intercepting proxy), the workspace mount
   works, and `echo hi | pi` returns `hello world` from the dummy endpoint
   that pi is configured against (`~/.pi/agent/models.json` +
@@ -21,11 +24,15 @@ proxy, the denial database, and the example image:
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 407
-- **step 5**: `--resume` re-enters the same container, with state
-  persisted and the proxy/DNS working after re-entry
+- **step 5**: the session model — resume without a session fails clearly;
+  plain runs persist their pod; idle pods are `Exited` with `secrets.json`
+  scrubbed; bare `--resume` re-enters the workspace's only session with
+  state, proxy, and DNS intact; `--rm` runs remove themselves; a second
+  session makes bare `--resume` list the ids; `--resume <id>` picks one;
+  `hsh gc` collects orphaned session state
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
 - **step 7**: `proxy-watch` refuses to run without a terminal
-- **step 8**: `hsh run --image` uses the image's `org.ifup.hsh` label
+- **step 8**: `hsh run IMAGE` uses the image's `org.ifup.hsh` label
   config (mount, allowlist, and an `hsh://` secret resolved from the
   store, matching the harness images' labels)
 - **step 9**: a sandboxed OAuth login (`test/oauthsrv`): the sandbox

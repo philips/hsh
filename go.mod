@@ -8,6 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/dustin/go-humanize v1.1.0
 	github.com/miekg/dns v1.1.73
+	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0

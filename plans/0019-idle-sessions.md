@@ -1,6 +1,6 @@
 # Idle sessions: stop the whole pod on exit, scrub secrets while idle
 
-> **Status: not implemented.** Depends on the session model and state
+> **Status: implemented.** Depends on the session model and state
 > layout in plans/0014-workspaces.md; land after it (and after
 > plans/0018-ff-cli-migration.md, which reserves the `--resume`
 > positional the session model uses).

@@ -1,10 +1,15 @@
 # Configuration reference
 
 hsh reads a JSON config file (default: `./config.hsh`, override
-with `hsh run --config PATH`). Relative mount sources are resolved
-against the config file's directory.
+with `hsh run --config PATH`). The config file is a seed: every run
+copies it into the session's state directory
+(`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the copy —
+not the seed — is the live config, hot-reloaded and edited by the
+review commands. The seed file is never modified in place. Relative
+mount sources are resolved against the seed config's directory and
+stored as absolute paths in the session copy.
 
-Without a config file, `hsh run --image IMAGE` falls back to the
+Without a config file, `hsh run IMAGE` falls back to the
 image's `org.ifup.hsh` label as the config — see
 [pre-built harness images](images.md).
 
@@ -164,8 +169,35 @@ endpoint; for untrusted code use `--network allowlist`.
 ## Hot reload
 
 `network.allow` and everything under `secrets` are reloaded automatically
-when the config file changes (the proxy polls once per second). `image`,
+when the config file changes (the proxy polls once per second) — for a
+running session that file is its config copy in the state directory, so
+`proxy-auto-allow` approvals apply to a live session within ~1s. `image`,
 `shell`, and `mounts` require restarting the sandbox.
+
+## Sessions
+
+Every `hsh run` creates a persistent session: a podman pod plus a state
+directory at `$XDG_STATE_HOME/hsh/sessions/<session-id>/` (the session
+id is the pod name suffix):
+
+```
+config.json   the session's config copy — the only writable config
+ca.crt ca.key the session's MITM CA (stable across re-entries)
+workspace     file with the absolute path of the workspace
+```
+
+- sessions persist when the shell exits: the pod is stopped (infra and
+  proxy included) and the resolved `secrets.json` is scrubbed, so an idle
+  session holds no key material; re-entry re-resolves secrets from the
+  session config
+- `hsh run --rm` makes a run temporary: pod and state are removed at exit
+- `hsh run --resume` re-enters the current workspace's session — the only
+  one directly, or lists the ids when there are several
+  (`hsh run --resume <id>` picks one; the full pod name also works)
+- sessions do not share approved proxy configuration on purpose: one
+  session's allowlist is that session's policy
+- `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
+  every sandbox; `hsh gc` collects session state whose pod is gone
 
 ## Managing the allowlist
 
@@ -175,10 +207,10 @@ database (`$XDG_STATE_HOME/hsh/denied.db`, default
 
 ```
 hsh proxy-denied [--all]              # list hosts awaiting review
-hsh proxy-auto-allow [--config PATH]  # add them to network.allow
+hsh proxy-auto-allow --session ID   # add a session's denied hosts to its config copy
 ```
 
-`proxy-auto-allow` rewrites the config file as canonical JSON (keys
+`proxy-auto-allow` rewrites the session's config copy as canonical JSON (keys
 sorted, 2-space indent); only `network.allow` changes.
 
 `network.allow` also gates DNS: the workspace resolves names through a

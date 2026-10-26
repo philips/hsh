@@ -19,6 +19,8 @@ func Proxy(args []string) error {
 	deniedDB := fs.String("denied-db", "", "denial database path (empty disables recording)")
 	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the denial database)")
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
+	session := fs.String("session", "", "session id recorded with each denial")
+	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -36,6 +38,8 @@ func Proxy(args []string) error {
 		DeniedDB:    *deniedDB,
 		OAuthStore:  storePath,
 		NetworkMode: *networkMode,
+		Session:     *session,
+		Workspace:   *workspace,
 	})
 	if err != nil {
 		return err
