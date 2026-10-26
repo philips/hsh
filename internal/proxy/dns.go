@@ -64,7 +64,15 @@ func (p *Proxy) serveDNS(w dns.ResponseWriter, r *dns.Msg, upstream []string) {
 	}
 	q := r.Question[0]
 	name := strings.TrimSuffix(q.Name, ".")
-	if !p.allowed(name) {
+	mode := p.mode()
+	if mode == "none" {
+		log.Printf("dns: refused %s (network mode none)", name)
+		m := new(dns.Msg)
+		m.SetRcode(r, dns.RcodeRefused)
+		_ = w.WriteMsg(m)
+		return
+	}
+	if mode == "allowlist" && !p.allowListed(name) {
 		log.Printf("dns: denied %s (not in network.allow)", name)
 		if p.deniedDB != nil {
 			if err := denieddb.RecordDNS(p.deniedDB, name, name+":53"); err != nil {

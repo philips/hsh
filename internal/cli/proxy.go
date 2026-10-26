@@ -18,6 +18,7 @@ func Proxy(args []string) error {
 	roots := fs.String("roots", "", "upstream root CA bundle path")
 	deniedDB := fs.String("denied-db", "", "denial database path (empty disables recording)")
 	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the denial database)")
+	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -34,6 +35,7 @@ func Proxy(args []string) error {
 		RootsPath:   *roots,
 		DeniedDB:    *deniedDB,
 		OAuthStore:  storePath,
+		NetworkMode: *networkMode,
 	})
 	if err != nil {
 		return err

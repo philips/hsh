@@ -74,7 +74,7 @@ func writeConfig(t *testing.T, dir string, upstreamURL string) (configPath strin
 	t.Helper()
 	host := upstreamHost(upstreamURL)
 	cfg := fmt.Sprintf(`{
-  "network": {"allow": [%q]},
+  "network": {"mode": "allowlist", "allow": [%q]},
   "oauth": {"testprov": {
     "token_endpoint": {"host": %q, "path": "/token"},
     "response_fields": ["access_token", "refresh_token"],
@@ -98,6 +98,10 @@ func upstreamHost(raw string) string {
 }
 
 func startTestProxy(t *testing.T, dir, configPath string, rootsPEM []byte) (addr string, caPool *x509.CertPool) {
+	return startTestProxyMode(t, dir, configPath, rootsPEM, "")
+}
+
+func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, networkMode string) (addr string, caPool *x509.CertPool) {
 	t.Helper()
 	ca, err := certs.NewCA()
 	if err != nil {
@@ -121,6 +125,7 @@ func startTestProxy(t *testing.T, dir, configPath string, rootsPEM []byte) (addr
 		CAKeyPath:   filepath.Join(dir, "ca.key"),
 		DeniedDB:    "",
 		OAuthStore:  storePath,
+		NetworkMode: networkMode,
 	}
 	if rootsPEM != nil {
 		rootsPath := filepath.Join(dir, "roots.pem")

@@ -73,7 +73,7 @@ cat >"$TMP/config.hsh" <<EOF
   "secrets": {
     "API_KEY": { "from": "HSH_TEST_SECRET", "hosts": ["api.mistral.ai"] }
   },
-  "network": { "allow": ["host.containers.internal"] }
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
 }
 EOF
 
@@ -184,7 +184,7 @@ pass "DNS denials recorded in a separate table, not in the HTTP review list"
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
 cat >"$TMP/proxy-config.hsh" <<'EOF'
-{ "network": { "allow": ["localhost"] } }
+{ "network": { "mode": "allowlist", "allow": ["localhost"] } }
 EOF
 cat >"$TMP/proxy-secrets.json" <<'EOF'
 { "secrets": [ { "name": "API_KEY", "value": "test-secret-value-123", "header": "Authorization", "prefix": "Bearer ", "hosts": ["localhost"] } ] }
@@ -330,7 +330,7 @@ mkdir -p "$TMP/labelws"
 echo label-mount >"$TMP/labelws/marker.txt"
 cat >"$TMP/label.Containerfile" <<EOF
 FROM localhost/hsh-example:latest
-LABEL org.ifup.hsh='{"network":{"allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"HSH_LABEL_SECRET","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
+LABEL org.ifup.hsh='{"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"HSH_LABEL_SECRET","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
 EOF
 podman build -q -t hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
 export HSH_LABEL_SECRET=label-secret-value-42
@@ -361,7 +361,7 @@ cat >"$TMP/oauth-config.hsh" <<EOF
 {
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
-  "network": { "allow": ["host.containers.internal"] },
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] },
   "oauth": {
     "testprov": {
       "token_endpoint": { "host": "host.containers.internal", "path": "/token" },
@@ -446,6 +446,35 @@ if (cd "$TMP/labelws" && "$HSH" run hsh-label-test:latest --tasks "$TMP/setup-ta
 fi
 grep -q "agent command" "$TMP/tasks-noagent.out" || fail "missing-agent error did not explain the problem: $(cat "$TMP/tasks-noagent.out")"
 pass "hsh run --tasks fails clearly without an agent command"
+
+echo "== step 12: network policy modes"
+cat >"$TMP/mode-config.hsh" <<'EOF'
+{
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash"
+}
+EOF
+"$HSH" run --config "$TMP/mode-config.hsh" --denied-db "$DB" >"$TMP/mode-https.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
+curl -sS -o /dev/null -w 'http=%{http_code}\n' --max-time 15 http://example.com/ 2>&1 | tail -1
+getent hosts example.com >/dev/null && echo dns=resolved || echo dns=failed
+CMDS
+grep -Eq '^https=(200|301|30[0-9])$' "$TMP/mode-https.out" || fail "https mode did not allow TLS to an arbitrary host: $(cat "$TMP/mode-https.out")"
+grep -Eq '^http=407$' "$TMP/mode-https.out" || fail "https mode allowed plaintext to a non-allowlisted host: $(cat "$TMP/mode-https.out")"
+grep -q '^dns=resolved$' "$TMP/mode-https.out" || fail "https mode did not resolve arbitrary names: $(cat "$TMP/mode-https.out")"
+pass "https mode (default) allows TLS to any host, denies plaintext, resolves all names"
+
+"$HSH" run --config "$TMP/mode-config.hsh" --denied-db "$DB" --network allowlist >"$TMP/mode-allowlist.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
+CMDS
+grep -Eq '^https=000$' "$TMP/mode-allowlist.out" || fail "--network allowlist did not deny TLS to a non-allowlisted host: $(cat "$TMP/mode-allowlist.out")"
+pass "--network allowlist restores the deny-by-default policy"
+
+"$HSH" run --config "$TMP/mode-config.hsh" --denied-db "$DB" --network none >"$TMP/mode-none.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
+CMDS
+grep -Eq '^https=000$' "$TMP/mode-none.out" || fail "--network none did not deny TLS: $(cat "$TMP/mode-none.out")"
+pass "--network none denies everything"
 
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"

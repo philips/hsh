@@ -33,6 +33,7 @@ run flags:
                     org.ifup.hsh label provides the default config
   --tasks PATH      newline-delimited tasks (or - for stdin); runs the
                     image's agent headless with the tasks as its prompt
+  --network MODE    network policy: https (default), allowlist, or none
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
   --verbose         print progress information to stderr (or set HSH_VERBOSE=1)

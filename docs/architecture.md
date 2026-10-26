@@ -6,7 +6,7 @@ controlled egress. It is a single static Go binary that plays three roles:
 | Mode | Runs | Purpose |
 |---|---|---|
 | `hsh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
-| `hsh proxy` | proxy container, inside the pod | egress proxy: allowlist, TLS interception, secret injection |
+| `hsh proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
 | `hsh workspace` / `hsh workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
 
 The same binary is bind-mounted read-only at `/hsh` in both containers.
@@ -350,8 +350,18 @@ Protected against:
   snapshots
 - local filesystem damage: only configured mounts are visible; the shell
   has no capabilities
-- unrestricted network egress: no default route; the proxy enforces the
-  allowlist for every connection
+- plaintext egress: in every mode the sandbox cannot speak plaintext
+  HTTP to a host that is not allowlisted
+
+The default network policy is `https`: any host may be reached over
+TLS on port 443, and DNS resolves every name. That trades destination
+control for out-of-the-box usability; the `allowlist` mode (`--network
+allowlist` or `network.mode` in the config, used by the pre-built
+harness images) restores deny-by-default — only `network.allow` hosts
+on any port, DNS gated by the same list, denials recorded for review.
+`none` disables egress entirely. In `https` mode a compromised agent
+can exfiltrate data to any TLS endpoint; use `allowlist` for untrusted
+code.
 
 Not protected against (see the README: use a VM for persistent attackers or
 hostile inference providers):

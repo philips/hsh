@@ -32,10 +32,12 @@ type Options struct {
 	RootsPath   string
 	DeniedDB    string
 	OAuthStore  string
+	NetworkMode string
 }
 
 type state struct {
 	allow   []string
+	mode    string
 	secrets []config.ResolvedSecret
 	oauth   []oauthProvider
 }
@@ -95,9 +97,10 @@ func (p *Proxy) Run() error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 	p.mu.RLock()
+	mode := p.st.mode
 	allowN, secretN := len(p.st.allow), len(p.st.secrets)
 	p.mu.RUnlock()
-	log.Printf("configuration loaded: %d allowlist entries, %d secret(s)", allowN, secretN)
+	log.Printf("configuration loaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
 	go p.watch(1 * time.Second)
 	var listener net.Listener
 	var err error
@@ -138,6 +141,10 @@ func (p *Proxy) reload() error {
 	}
 	p.mu.Lock()
 	p.st.allow = cfg.Network.Allow
+	p.st.mode = p.opts.NetworkMode
+	if p.st.mode == "" {
+		p.st.mode = cfg.Network.ModeOrDefault()
+	}
 	p.st.secrets = rs.Secrets
 	p.st.oauth = oauthProviders(cfg.OAuth)
 	p.mu.Unlock()
@@ -163,17 +170,38 @@ func (p *Proxy) watch(interval time.Duration) {
 			log.Printf("configuration reload failed: %v", err)
 		} else {
 			p.mu.RLock()
-			allowN, secretN := len(p.st.allow), len(p.st.secrets)
+			mode, allowN, secretN := p.st.mode, len(p.st.allow), len(p.st.secrets)
 			p.mu.RUnlock()
-			log.Printf("configuration reloaded: %d allowlist entries, %d secret(s)", allowN, secretN)
+			log.Printf("configuration reloaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
 		}
 	}
 }
 
-func (p *Proxy) allowed(host string) bool {
+func (p *Proxy) mode() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.st.mode
+}
+
+func (p *Proxy) allowListed(host string) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return HostMatches(p.st.allow, host)
+}
+
+func (p *Proxy) plaintextAllowed(host string) bool {
+	return p.mode() != "none" && p.allowListed(host)
+}
+
+func (p *Proxy) connectAllowed(host, port string) bool {
+	switch p.mode() {
+	case "none":
+		return false
+	case "https":
+		return port == "443" || p.allowListed(host)
+	default:
+		return p.allowListed(host)
+	}
 }
 
 func (p *Proxy) secretsFor(host string) []config.ResolvedSecret {
@@ -215,7 +243,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := r.URL.Hostname()
-	if !p.allowed(host) {
+	if !p.plaintextAllowed(host) {
 		p.deny(w, host, r.URL.Host)
 		return
 	}
@@ -249,10 +277,14 @@ func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
-	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+	port := "443"
+	if h, p2, err := net.SplitHostPort(r.Host); err == nil {
 		host = h
+		if p2 != "" {
+			port = p2
+		}
 	}
-	if !p.allowed(host) {
+	if !p.connectAllowed(host, port) {
 		p.deny(w, host, r.Host)
 		return
 	}

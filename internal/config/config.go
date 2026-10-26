@@ -18,7 +18,24 @@ type Secret struct {
 }
 
 type Network struct {
+	Mode  string   `json:"mode"`
 	Allow []string `json:"allow"`
+}
+
+func (n Network) ModeOrDefault() string {
+	if n.Mode == "" {
+		return "https"
+	}
+	return n.Mode
+}
+
+func (n Network) ValidateMode() error {
+	switch n.Mode {
+	case "", "https", "allowlist", "none":
+		return nil
+	default:
+		return fmt.Errorf("invalid network mode %q (want https, allowlist, or none)", n.Mode)
+	}
 }
 
 type OAuthTokenEndpoint struct {
@@ -91,6 +108,9 @@ func Load(path string) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := cfg.Network.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -100,6 +120,9 @@ func FromImageLabel(label string) (*Config, error) {
 		return cfg, nil
 	}
 	if err := json.Unmarshal([]byte(label), cfg); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	if err := cfg.Network.ValidateMode(); err != nil {
 		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
 	}
 	return cfg, nil

@@ -35,7 +35,8 @@ image's `org.ifup.hsh` label as the config — see
 | `shell` | `/bin/sh` | shell to exec in the workspace |
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
 | `secrets` | `{}` | map of secret name → secret definition (below) |
-| `network.allow` | `[]` | egress allowlist; empty means no egress at all |
+| `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
+| `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name → OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)) |
 
@@ -80,6 +81,23 @@ placeholder key (e.g. in pi's `auth.json`) and never see the real one.
 `from` reads the **host** environment (`export MISTRAL_API_KEY=...` before
 launching); hsh does not read `.env` files, and keys should not live
 inside mounted directories where the sandbox can read them.
+
+## Network policy modes
+
+`network.mode` selects the egress policy:
+
+- `https` (default) — any host may be reached over TLS on port 443
+  (tunneled blind; interception stays limited to hosts with configured
+  secrets or OAuth endpoints). Plaintext HTTP and non-443 ports are
+  denied unless the host is in `network.allow`. DNS resolves every
+  name.
+- `allowlist` — only hosts in `network.allow`, any port; DNS is gated
+  by the same list. The pre-built harness images use this mode.
+- `none` — no egress; DNS is refused.
+
+`hsh run --network MODE` overrides the mode from the command line.
+In `https` mode a compromised agent can exfiltrate data to any TLS
+endpoint; for untrusted code use `--network allowlist`.
 
 ## Allowlist matching
 

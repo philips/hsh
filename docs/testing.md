@@ -35,6 +35,9 @@ proxy, the denial database, and the example image:
 - **step 11**: `hsh run IMAGE --tasks` — the image's agent command
   receives the numbered task prompt, agent exit codes propagate, and a
   missing agent command fails clearly
+- **step 12**: network policy modes — the `https` default allows TLS to
+  an arbitrary host but denies plaintext there, and resolves all DNS
+  names; `--network allowlist` and `--network none` deny it
 
 Run it with:
 

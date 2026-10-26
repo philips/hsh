@@ -40,12 +40,18 @@ func Run(args []string) error {
 	resumeFlag := fs.Bool("resume", false, "reuse the sandbox for this workspace directory instead of creating a new one")
 	freshFlag := fs.Bool("fresh", false, "with --resume: discard the existing sandbox and start a new one")
 	tasksPath := fs.String("tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless with the tasks as its prompt")
+	networkMode := fs.String("network", "", "network policy: https, allowlist, or none (default: the config's network.mode, else https)")
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		*imageFlag = args[0]
 		args = args[1:]
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *networkMode {
+	case "", "https", "allowlist", "none":
+	default:
+		return fmt.Errorf("invalid --network value %q (want https, allowlist, or none)", *networkMode)
 	}
 	if *verboseFlag {
 		verbose = true
@@ -258,6 +264,9 @@ func Run(args []string) error {
 	)
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "--roots", "/hsh-run/roots.pem")
+	}
+	if *networkMode != "" {
+		proxyArgs = append(proxyArgs, "--network-mode", *networkMode)
 	}
 	reattach := false
 	if resume {

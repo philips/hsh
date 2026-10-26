@@ -1,16 +1,23 @@
 {
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
-  "mounts": [".:/workspace"],
+  "mounts": [
+    ".:/workspace"
+  ],
   "secrets": {
     "API_KEY": {
       "from": "MISTRAL_API_KEY",
-      "hosts": ["api.mistral.ai"],
+      "hosts": [
+        "api.mistral.ai"
+      ],
       "header": "Authorization",
       "prefix": "Bearer "
     }
   },
   "network": {
-    "allow": ["api.mistral.ai"]
+    "allow": [
+      "api.mistral.ai"
+    ],
+    "mode": "allowlist"
   }
 }

@@ -132,13 +132,17 @@ existing `org.ifup.hsh` label so `hsh run` stays harness-agnostic:
   failure)? Adds resumability semantics (`ax`-like task phase
   tracking) but also state; proposed no for now — one session, one
   prompt.
+> no, just one shot no tracking
+
 - Whether to also pass the task list as a file into the workspace
-  (e.g. `/workspace/.hsh-tasks.md`) so the agent can re-read it;
-  proposed no: the prompt carries it, and files in the workspace
-  persist in the user's directory.
+  (e.g. `/workspace/.hsh-tasks.md`) 
+> No, agent can keep the task list in context
+
 - Resource/turn/cost limits on headless runs (ax's `maxTurns`-style
   controls): the harnesses' own flags can be embedded in the agent
   command template per image; a first-class `hsh` limit is out of
   scope.
+> Yes, out of scope
+
 - Concurrent headless runs of the same image: already works (random
   pod names); only `--resume` is keyed to the workspace.

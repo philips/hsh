@@ -44,7 +44,10 @@ $ hsh run --image ghcr.io/ifup/hsh-vibe:latest
 The current directory is mounted at `/workspace` (or whatever `mounts`
 the label specifies, resolved against the current directory), the
 label's allowlist and secrets are applied, and only the image's
-declared provider endpoints are reachable.
+declared provider endpoints are reachable. The harness images pin
+`"mode":"allowlist"` in their labels to keep that promise; the
+default mode for configs without one is `https` (TLS to any host —
+see [network policy modes](config.md#network-policy-modes)).
 
 Precedence: a `config.hsh` file (or `--config PATH`) always wins — the
 label is only a fallback for when no config file exists. `--image`
