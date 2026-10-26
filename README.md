@@ -67,6 +67,7 @@ These projects documentation can be used as inpiration:
 - https://github.com/EddyPronk/podman-agent-sandbox
 - https://github.com/superhq-ai/shuru
 - https://nono.sh/
+- https://github.com/agent-substrate/substrate/blob/main/docs/egress-credential-injection.md
 
 ## TODO
 
