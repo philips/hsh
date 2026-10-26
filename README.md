@@ -1,12 +1,12 @@
 # hsh
 
-`hsh` (pronounced hush) keeps your agents quiet: no open internet, no filesystem access
+`hsh` (pronounced hush) is a developer focused Linux container based sandbox to keep you agents quiet: no open internet, no filesystem access. 
 
 ![](docs/hsh-logo.jpg)
 
 ## Overview
 
-`hsh` is a developer focused Linux container based sandbox for agent harness isolation. The goals include:
+The goals of `hsh` isolation include:
 
 - Single install binary
 - Standard isolation via Linux containers (podman)
