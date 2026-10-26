@@ -72,7 +72,9 @@ This will require adding workspace + session columns on both denied and dns_deni
 
 # Lifecycle
 
-Sessions are either remove manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped.
+Sessions are either remove manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped. Sessions that need cleanup due to pods missing can be removed with a new `hsh gc` command to garbage collect.
+
+# Identity
 
 # Configuration
 
