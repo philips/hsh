@@ -23,20 +23,102 @@ is not part of the user-facing command set. The `proxy`, `workspace`, and
 
 ## Pod layout
 
-`hsh run` creates one podman pod with two containers:
+`hsh run` creates one podman pod (a session) with two containers — the
+diagram shows the network namespaces, the user-namespace mapping, and
+every bind mount:
 
-```
-host
-└── pod (shared network namespace, pasta networking, internet access)
-    ├── proxy container    (/hsh-proxy, listens on 10.77.0.1:8080)
-    └── workspace container (/hsh-workspace → user shell)
-        └── inner network namespace (created by /hsh-workspace-inner)
-            └── user shell + tools (no default route)
+```mermaid
+flowchart TB
+    classDef host fill:#e8eef7,stroke:#5b7fa6
+    classDef proc fill:#fdf3d8,stroke:#b59b3e
+    classDef file fill:#e7f4e7,stroke:#6a9a6a
+    classDef ctr fill:#f3e7f4,stroke:#9a6a9a
+    classDef net fill:#e2ecf5,stroke:#5b7fa6,stroke-dasharray: 4 2
+    classDef secret fill:#f9e3e3,stroke:#c46a6a
+
+    subgraph HOST["HOST (user session, no root)"]
+        direction TB
+        hshrun["hsh run (host process)<br/>resolves secrets, copies config,<br/>creates pod, passes --session/--workspace"]
+        pasta["pasta process<br/>(per-pod, dies when the pod stops)"]
+        subgraph STATE["state: $XDG_STATE_HOME/hsh/"]
+            denieddb[("denied.db<br/>global, attributed rows")]
+            subgraph SESDIR["sessions/&lt;session-id&gt;/"]
+                cfgcopy[("config.json<br/>the only writable config")]
+                cafiles[("ca.crt / ca.key<br/>MITM CA (0600)")]
+                wsfile[("workspace<br/>absolute path")]
+                secretsjson[("secrets.json<br/>resolved keys, scrubbed when idle")]
+            end
+        end
+        secretstore[("secrets.db<br/>$XDG_CONFIG_HOME/hsh/")]
+        caBundle["host CA bundle<br/>(/etc/ssl/certs/...)"]
+        wsdir[("workspace directory<br/>git checkouts, shared via mount")]
+    end
+
+    subgraph PODNET["POD NETWORK NAMESPACE 10.77.0.0/24 (shared)"]
+        direction TB
+        infra["infra container (pause)<br/>holds the pod netns; stops when idle"]
+        subgraph PROXY["proxy container (/hsh-proxy)"]
+            proxy["egress proxy<br/>CONNECT :8080 + DNS forwarder :53<br/>TLS MITM, secret injection"]
+            hsh0["hsh0 10.77.0.1/24"]
+        end
+        subgraph WSC["workspace container (/hsh-workspace)"]
+            parent["workspace parent<br/>NET_ADMIN+SYS_ADMIN (dropped after wiring)<br/>creates veth pair, re-execs inner"]
+            subgraph INNERNET["inner netns (unshare CLONE_NEWNET)"]
+                inner["hsh-workspace-inner → shell / agent<br/>zero caps + NO_NEW_PRIVS, setuid stripped"]
+                hsh1["hsh1 10.77.0.2/24 + lo"]
+            end
+        end
+    end
+
+    hshrun -->|"creates / re-enters"| infra
+    hshrun -->|"uid 0 in container<br/>= host user (rootless subuid map)"| WSC
+
+    pasta === PODNET
+
+    hsh0 ---|"veth pair"| hsh1
+    hsh1 -->|"only route: 10.77.0.0/24"| hsh0
+    inner -->|"HTTP(S) via proxy env<br/>resolv.conf → 10.77.0.1:53"| proxy
+    proxy -->|"allowlisted egress<br/>(TLS-verified upstream)"| pasta
+
+    hshrun -.->|"bind ro → /hsh-proxy"| PROXY
+    cfgcopy -.->|"bind ro → /hsh-session/config.json"| PROXY
+    secretsjson -.->|"bind ro → /hsh-session/secrets.json"| PROXY
+    cafiles -.->|"bind ro → /hsh-session/ca.crt + ca.key"| PROXY
+    caBundle -.->|"bind ro → /hsh-roots.pem"| PROXY
+    denieddb <-.->|"bind rw → /hsh-state/denied.db"| PROXY
+
+    hshrun -.->|"bind ro → /hsh-workspace,<br/>/hsh-workspace-inner"| WSC
+    cafiles -.->|"bind ro → /hsh-run/ca.crt"| WSC
+    wsdir -.->|"bind rw → /workspace<br/>(the shared filesystem)"| WSC
+
+    secretstore -.->|"read on the host only,<br/>never mounted anywhere"| hshrun
+
+    class hshrun,pasta,proxy,parent,inner proc
+    class denieddb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
+    class infra,PODNET net
 ```
 
-The pod's shared network namespace is what lets the workspace reach the
-proxy. Pods do not share PID namespaces, so the workspace cannot see or
-signal the proxy's processes.
+Reading notes:
+
+- **Two network namespaces**: everything of the pod shares one netns
+  (infra, proxy, workspace parent); the shell runs one netns deeper —
+  `/hsh-workspace-inner` calls `unshare(CLONE_NEWNET)` and the parent
+  moves the `hsh1` veth end into it. The only route out of the inner
+  netns is the veth to the proxy; direct egress fails at the TCP layer.
+- **User namespace**: rootless podman — container uid 0 maps to the
+  invoking host user (subuid mapping). The parent process briefly holds
+  NET_ADMIN/SYS_ADMIN to wire the veth pair, then drops all
+  capabilities; the inner process starts with none, sets
+  NO_NEW_PRIVS, and setuid binaries are stripped from the workspace.
+- **Filesystem**: solid edges are network/data flow, dashed edges are
+  bind mounts. The session directory is mounted read-only into the
+  proxy only (config copy, resolved secrets, CA); the workspace sees
+  only the CA certificate. `secrets.json` never enters the workspace.
+- Pods do not share PID namespaces, so the workspace cannot see or
+  signal the proxy's processes.
+- **Idle**: when the shell exits the whole pod is stopped (infra and
+  proxy included, killing the pod's pasta process) and `secrets.json`
+  is unlinked from the session directory.
 
 ## Network isolation
 
