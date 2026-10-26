@@ -358,6 +358,14 @@ agent pre-installed:
 podman build -t hsh-example examples/
 ```
 
+Each release also publishes a prebuilt multi-arch (amd64/arm64) image to
+the GitHub Container Registry, so a config can use it directly instead of
+building locally:
+
+```
+ghcr.io/philips/hsh-example:latest
+```
+
 `examples/config.hsh` uses it (`image: localhost/hsh-example:latest`,
 `shell: /bin/bash`). Pre-installing tools in the image means they work without
 allowlisting their install sources, so the egress allowlist can stay minimal

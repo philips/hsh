@@ -6,10 +6,28 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
+  test:
+    name: vet + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: vet
+        run: go vet ./...
+
+      - name: unit tests
+        run: go test ./...
+
   release:
     name: release binaries (linux amd64 + arm64)
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -18,11 +36,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: vet + unit tests
-        run: |
-          go vet ./...
-          go test ./...
 
       # hsh is pure Go (modernc.org/sqlite, CGO_ENABLED=0), so both
       # targets cross-compile from the runner without a cross toolchain.
@@ -42,3 +55,40 @@ jobs:
             dist/hsh-linux-amd64
             dist/hsh-linux-arm64
             dist/SHA256SUMS
+
+  # Build the example workspace image (examples/Containerfile) and publish
+  # it multi-arch so users can pull it instead of building it locally:
+  #   ghcr.io/<owner>/hsh-example:latest
+  # The arm64 leg runs under QEMU emulation and is the slow one.
+  image:
+    name: example image (ghcr.io, amd64 + arm64)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: amd64,arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build and push the example workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: examples/
+          file: examples/Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/hsh-example:latest
+            ghcr.io/${{ github.repository_owner }}/hsh-example:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
