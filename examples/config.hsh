@@ -11,6 +11,6 @@
     }
   },
   "network": {
-    "allow": ["vllm.tailb55c1.ts.net", "api.mistral.ai"]
+    "allow": ["api.mistral.ai"]
   }
 }
