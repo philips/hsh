@@ -433,34 +433,22 @@ CGO_ENABLED=0 go build -o hsh .
 
 Requires Go 1.26+ and a working rootless podman installation.
 
-## Example workspace image
+## Test fixture workspace image
 
-`examples/Containerfile` builds a Fedora workspace image with the Pi coding
-agent pre-installed:
-
-```
-podman build -t hsh-example examples/
-```
-
-Each release also publishes a prebuilt multi-arch (amd64/arm64) image to
-the GitHub Container Registry, so a config can use it directly instead of
-building locally:
+`test/fixtures/Containerfile` builds the Fedora workspace image that
+`test/functional.sh` runs its sandboxes in, with the Pi coding agent
+pre-installed:
 
 ```
-ghcr.io/philips/hsh-example:latest
+podman build -t hsh-example test/fixtures/
 ```
-
-`examples/config.hsh` uses it (`image: localhost/hsh-example:latest`,
-`shell: /bin/bash`). Pre-installing tools in the image means they work without
-allowlisting their install sources, so the egress allowlist can stay minimal
-(the example config's allowlist is exactly the MVP plan's).
 
 The workspace shell inherits the image's environment (including `PATH`), so
 `ENV` directives in the image apply. The workspace home directory is
-`/home/hsh`; the example image sets `HOME` to the same value and
+`/home/hsh`; the fixture image sets `HOME` to the same value and
 installs Pi there.
 
-The example image also pre-installs `fd-find` and `ripgrep` and sets
+The fixture image also pre-installs `fd-find` and `ripgrep` and sets
 `PI_OFFLINE=1`. Pi resolves its `find`/`grep` tools from system PATH before
 downloading them, so this keeps Pi's tools working without allowlisting
 GitHub (see docs/config.md), and `PI_OFFLINE` keeps Pi from attempting any

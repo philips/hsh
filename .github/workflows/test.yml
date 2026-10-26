@@ -33,7 +33,7 @@ jobs:
         run: CGO_ENABLED=0 go build -o hsh .
 
   # The functional test runs real sandboxes with rootless podman and
-  # exercises the example image (built from examples/) plus live
+  # exercises the fixture image (built from test/fixtures/) plus live
   # api.mistral.ai egress, so it needs internet and a few minutes.
   functional:
     name: functional (podman sandbox)

@@ -7,8 +7,8 @@ proxy, the denial database, and the example image:
 
 - builds `hsh` and the dummy OpenAI-compatible endpoint
   (`test/dummyopenai`)
-- ensures the example image exists (builds it with
-  `podman build -t hsh-example examples/` if missing)
+- ensures the fixture image exists (builds it with
+  `podman build -t hsh-example test/fixtures/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
   denied with 407 and recorded in a throwaway denial database
 - **step 2**: `hsh proxy-auto-allow` adds the denied host to the config

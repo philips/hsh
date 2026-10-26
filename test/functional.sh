@@ -48,7 +48,7 @@ echo "== building hsh and the dummy endpoint"
 
 echo "== ensuring the example image exists"
 if ! podman image exists localhost/hsh-example:latest; then
-	(cd "$REPO" && podman build -q -t hsh-example examples/)
+	(cd "$REPO" && podman build -q -t hsh-example test/fixtures/)
 fi
 
 echo "== starting the dummy OpenAI-compatible endpoint on 0.0.0.0:8899"
