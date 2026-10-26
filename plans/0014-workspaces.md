@@ -72,9 +72,15 @@ This will require adding workspace + session columns on both denied and dns_deni
 
 # Lifecycle
 
-Sessions are either remove manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped. Sessions that need cleanup due to pods missing can be removed with a new `hsh gc` command to garbage collect.
+`hsh` sessions started with `hsh run`, by default, persist. This is so users can re-enter the filesystem between reboots or other interruptions to the process. 
+
+`hsh` sessions can be made temporary with `hsh run --rm` flag.
+
+Sessions can be removed manually by the user via `hsh rm` or with `hsh rm --all` if the pods are stopped. Sessions that need cleanup due to pods missing can be removed with a new `hsh gc` command to garbage collect.
 
 # Identity
+
+`hsh run` passes the session id and workspace path to the proxy container so denials are tagged; rows display session + workspace
 
 # Configuration
 
