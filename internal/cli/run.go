@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ func infof(format string, args ...any) {
 func Run(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := fs.String("config", "config.hsh", "path to the config file")
+	imageFlag := fs.String("image", "", "workspace image; without a config file the image's org.ifup.hsh label provides the default config")
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
 	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
 	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
@@ -47,11 +49,36 @@ func Run(args []string) error {
 		return err
 	}
 	cfg, err := config.Load(absConfig)
+	cfgIsFile := true
 	if err != nil {
-		return err
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if *imageFlag == "" {
+			return fmt.Errorf("no config file at %s and no --image given; pass --image (a harness image supplies its default config via the org.ifup.hsh label) or --config", absConfig)
+		}
+		label, err := imageLabel(*imageFlag)
+		if err != nil {
+			return err
+		}
+		cfg, err = config.FromImageLabel(label)
+		if err != nil {
+			return err
+		}
+		cfgIsFile = false
+		infof("hsh: using config from the org.ifup.hsh label of %s\n", *imageFlag)
+	}
+	if *imageFlag != "" {
+		cfg.Image = *imageFlag
 	}
 	configDir := filepath.Dir(absConfig)
-	mounts, err := cfg.ParsedMounts(configDir)
+	mountBase := configDir
+	if !cfgIsFile {
+		if wd, err := os.Getwd(); err == nil {
+			mountBase = wd
+		}
+	}
+	mounts, err := cfg.ParsedMounts(mountBase)
 	if err != nil {
 		return err
 	}
@@ -93,6 +120,17 @@ func Run(args []string) error {
 	}
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return err
+	}
+	if !cfgIsFile {
+		absConfig = filepath.Join(runDir, "config.json")
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(absConfig, append(data, '\n'), 0o644); err != nil {
+			return err
+		}
+		configDir = runDir
 	}
 	caCertPath := filepath.Join(runDir, "ca.crt")
 	caKeyPath := filepath.Join(runDir, "ca.key")
@@ -344,6 +382,14 @@ func podman(args ...string) (string, error) {
 		return string(out), fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
 	}
 	return string(out), nil
+}
+
+func imageLabel(image string) (string, error) {
+	out, err := podman("image", "inspect", "--format", `{{index .Labels "org.ifup.hsh"}}`, image)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %s: %w\n%s", image, err, out)
+	}
+	return strings.TrimSpace(out), nil
 }
 
 func isTerminal(f *os.File) bool {

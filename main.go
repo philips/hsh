@@ -28,6 +28,8 @@ usage:
 
 run flags:
   --config PATH     path to the config file (default: config.hsh)
+  --image IMAGE     workspace image; without a config file the image's
+                    org.ifup.hsh label provides the default config
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
   --verbose         print progress information to stderr (or set HSH_VERBOSE=1)

@@ -1,0 +1,11 @@
+FROM registry.fedoraproject.org/fedora:latest
+
+LABEL org.opencontainers.image.title="hsh Mistral Vibe workspace" \
+      org.opencontainers.image.description="Fedora workspace image with the Mistral Vibe coding agent pre-installed, for use as the hsh workspace image"
+
+LABEL org.ifup.hsh='{"shell":"/bin/bash","secrets":{"MISTRAL_API_KEY":{"from":"MISTRAL_API_KEY","hosts":["api.mistral.ai"],"header":"Authorization","prefix":"Bearer "}},"network":{"allow":["api.mistral.ai"]}}'
+
+ENV HOME=/home/hsh
+ENV PATH="/home/hsh/.local/bin:${PATH}"
+RUN dnf install -y bash curl git python3 fd-find ripgrep unzip && dnf clean all
+RUN mkdir -p /home/hsh && curl -fsSL https://mistral.ai/vibe/install.sh | bash

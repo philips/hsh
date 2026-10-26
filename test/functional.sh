@@ -321,6 +321,34 @@ echo "== step 7: proxy-watch requires a terminal"
 grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
 pass "proxy-watch refuses to run without a terminal"
 
+echo "== step 8: image label default config (--image without a config file)"
+mkdir -p "$TMP/labelws"
+echo label-mount >"$TMP/labelws/marker.txt"
+cat >"$TMP/label.Containerfile" <<EOF
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"network":{"allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"HSH_LABEL_SECRET","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
+EOF
+podman build -q -t hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
+export HSH_LABEL_SECRET=label-secret-value-42
+if (cd "$TMP/labelws" && "$HSH" run >"$TMP/label-noimg.out" 2>&1); then
+	fail "hsh run without a config file or --image succeeded"
+fi
+grep -q "no config file" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
+(cd "$TMP/labelws" && "$HSH" run --image hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
+cat /workspace/marker.txt
+curl -sS -o /dev/null -w 'allowed=%{http_code}\n' http://host.containers.internal:8899/v1/models
+curl -sS -o /dev/null -w 'denied=%{http_code}\n' --max-time 8 http://example.com/ 2>&1 | tail -1
+CMDS
+)
+grep -qx 'label-mount' "$TMP/label.out" || fail "the current directory was not mounted with the label config"
+grep -Eq '^allowed=200$' "$TMP/label.out" || fail "the label allowlist did not permit the dummy endpoint: $(tail -5 "$TMP/label.out")"
+grep -Eq '^denied=407$' "$TMP/label.out" || fail "the label config did not deny a non-allowlisted host"
+grep -q "Authorization: Bearer label-secret-value-42" "$TMP/requests.log" || fail "the label secrets were not injected"
+if grep -Eq '^denied=200$' "$TMP/label.out"; then
+	fail "a non-allowlisted host was reachable with the label config"
+fi
+pass "hsh run --image uses the org.ifup.hsh label config (mount, allowlist, secrets)"
+
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"
 PASSED=1

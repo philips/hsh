@@ -4,6 +4,10 @@ hsh reads a JSON config file (default: `./config.hsh`, override
 with `hsh run --config PATH`). Relative mount sources are resolved
 against the config file's directory.
 
+Without a config file, `hsh run --image IMAGE` falls back to the
+image's `org.ifup.hsh` label as the config — see
+[pre-built harness images](images.md).
+
 ```json
 {
   "image": "docker.io/library/alpine:latest",

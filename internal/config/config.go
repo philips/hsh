@@ -55,6 +55,17 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+func FromImageLabel(label string) (*Config, error) {
+	cfg := Default()
+	if label == "" {
+		return cfg, nil
+	}
+	if err := json.Unmarshal([]byte(label), cfg); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	return cfg, nil
+}
+
 func (c *Config) ParsedMounts(configDir string) ([]Mount, error) {
 	var out []Mount
 	for _, m := range c.Mounts {
