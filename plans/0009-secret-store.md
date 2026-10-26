@@ -1,5 +1,7 @@
 # Secret store: `hsh secret add` / `hsh secret rm` and URL secret references
 
+> **Status: implemented.**
+
 ## Goal
 
 Give hsh a first-party secret store so users stop hand-editing

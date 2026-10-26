@@ -3,9 +3,11 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -99,35 +101,6 @@ func Default() *Config {
 	}
 }
 
-func Load(path string) (*Config, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	cfg := Default()
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	if err := cfg.Network.ValidateMode(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return cfg, nil
-}
-
-func FromImageLabel(label string) (*Config, error) {
-	cfg := Default()
-	if label == "" {
-		return cfg, nil
-	}
-	if err := json.Unmarshal([]byte(label), cfg); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
-	}
-	if err := cfg.Network.ValidateMode(); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
-	}
-	return cfg, nil
-}
-
 func (c *Config) ParsedMounts(configDir string) ([]Mount, error) {
 	var out []Mount
 	for _, m := range c.Mounts {
@@ -155,6 +128,74 @@ func (s Secret) HeaderName(name string) string {
 	return strings.ReplaceAll(name, "_", "-")
 }
 
+func ParseSecretRef(from string) (scheme, name string, err error) {
+	if from == "" {
+		return "", "", fmt.Errorf("empty secret reference")
+	}
+	if before, after, found := strings.Cut(from, "://"); found {
+		scheme, name = before, after
+		if name == "" {
+			return "", "", fmt.Errorf("secret reference %q has no name", from)
+		}
+		switch scheme {
+		case "env", "hsh":
+			return scheme, name, nil
+		default:
+			return "", "", fmt.Errorf("unknown secret reference scheme in %q (want env://VAR or hsh://NAME)", from)
+		}
+	}
+	return "env", from, nil
+}
+
+func (c *Config) validateSecretRefs() error {
+	names := make([]string, 0, len(c.Secrets))
+	for name := range c.Secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, _, err := ParseSecretRef(c.Secrets[name].From); err != nil {
+			return fmt.Errorf("secret %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg := Default()
+	if err := json.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := cfg.Network.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := cfg.validateSecretRefs(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+func FromImageLabel(label string) (*Config, error) {
+	cfg := Default()
+	if label == "" {
+		return cfg, nil
+	}
+	if err := json.Unmarshal([]byte(label), cfg); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	if err := cfg.Network.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	if err := cfg.validateSecretRefs(); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	return cfg, nil
+}
+
 type ResolvedSecret struct {
 	Name   string   `json:"name"`
 	Value  string   `json:"value"`
@@ -167,11 +208,37 @@ type ResolvedSecrets struct {
 	Secrets []ResolvedSecret `json:"secrets"`
 }
 
-func ResolveSecrets(cfg *Config) (ResolvedSecrets, []string) {
+var ErrSecretNotFound = errors.New("secret not found in the store")
+
+type SecretStore interface {
+	Get(name string) (string, error)
+}
+
+func ResolveSecrets(cfg *Config, store SecretStore) (ResolvedSecrets, []string, error) {
 	var out ResolvedSecrets
 	var missing []string
 	for name, s := range cfg.Secrets {
-		v := os.Getenv(s.From)
+		scheme, ref, err := ParseSecretRef(s.From)
+		if err != nil {
+			return out, nil, err
+		}
+		var v string
+		switch scheme {
+		case "env":
+			v = os.Getenv(ref)
+		case "hsh":
+			if store != nil {
+				got, err := store.Get(ref)
+				if err != nil {
+					if errors.Is(err, ErrSecretNotFound) {
+						v = ""
+						break
+					}
+					return out, nil, fmt.Errorf("secret store: %w", err)
+				}
+				v = got
+			}
+		}
 		if v == "" {
 			missing = append(missing, s.From)
 			continue
@@ -184,7 +251,7 @@ func ResolveSecrets(cfg *Config) (ResolvedSecrets, []string) {
 			Hosts:  s.Hosts,
 		})
 	}
-	return out, missing
+	return out, missing, nil
 }
 
 func WriteSecretsFile(path string, rs ResolvedSecrets) error {
@@ -255,6 +322,77 @@ func AddAllowedHosts(path string, hosts []string) ([]string, error) {
 		return nil, err
 	}
 	return added, os.Rename(tmp, path)
+}
+
+func AddSecret(path, name string, secret Secret) error {
+	entry := map[string]any{"from": secret.From}
+	if len(secret.Hosts) > 0 {
+		entry["hosts"] = secret.Hosts
+	}
+	if secret.Header != "" {
+		entry["header"] = secret.Header
+	}
+	if secret.Prefix != "" {
+		entry["prefix"] = secret.Prefix
+	}
+	entryJSON, err := json.Marshal(entry)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	secDoc := map[string]json.RawMessage{}
+	if raw, ok := doc["secrets"]; ok {
+		if err := json.Unmarshal(raw, &secDoc); err != nil {
+			return fmt.Errorf("%s: secrets: %w", path, err)
+		}
+	}
+	secDoc[name] = entryJSON
+	secJSON, err := json.Marshal(secDoc)
+	if err != nil {
+		return err
+	}
+	doc["secrets"] = secJSON
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func FindSecretRefs(path, ref string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var doc struct {
+		Secrets map[string]Secret `json:"secrets"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	var out []string
+	for name, s := range doc.Secrets {
+		if s.From == ref {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func WatchFile(path string, interval time.Duration, onChange func(data []byte)) {

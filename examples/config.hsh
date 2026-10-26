@@ -6,7 +6,7 @@
   ],
   "secrets": {
     "API_KEY": {
-      "from": "MISTRAL_API_KEY",
+      "from": "env://MISTRAL_API_KEY",
       "hosts": [
         "api.mistral.ai"
       ],

@@ -9,6 +9,10 @@ controlled egress. It is a single static Go binary that plays three roles:
 | `hsh proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
 | `hsh workspace` / `hsh workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
 
+Host-side subcommands manage state around the sandbox: `hsh secret`
+(the secret store below), `hsh proxy-denied`/`proxy-auto-allow`/`proxy-watch`
+(denial review), and `hsh ls`/`hsh rm` (sandbox lifecycle).
+
 The same binary is bind-mounted read-only at `/hsh` in both containers.
 
 ## Pod layout
@@ -182,7 +186,9 @@ with `proxy-denied --dns`.
 
 Secrets are declared in the config as `secrets.<NAME>` with:
 
-- `from`: host environment variable to read the value from
+- `from`: a reference URL — `env://VAR` (host environment variable,
+  also written as a bare `VAR`), or `hsh://NAME` (the hsh secret store;
+  see below). Unknown schemes fail at config load.
 - `hosts`: hosts the secret may be injected for
 - `header` (optional): header name; defaults to the secret name with `_`
   replaced by `-` (e.g. `API_KEY` → `Api-Key`)
@@ -190,7 +196,8 @@ Secrets are declared in the config as `secrets.<NAME>` with:
 
 The flow keeps the secret out of the workspace entirely:
 
-1. `hsh run` reads the values from the host environment and writes them
+1. `hsh run` resolves the references (`os.Getenv` for `env://`, the
+   secret store for `hsh://`) and writes the values
    to `secrets.json` in a temporary directory (mode 0600)
 2. the temporary directory is bind-mounted read-only into the **proxy
    container only** — the workspace container never sees it
@@ -201,6 +208,32 @@ The workspace cannot read the proxy container's files (different container,
 private PID namespace, root-owned 0600 file), cannot redirect an injected
 request to another host (the proxy dials the `CONNECT` target itself), and
 the proxy logs header names but never values.
+
+### The hsh secret store
+
+`hsh secret add/rm/ls` manage a first-party store so users stop
+hand-editing configs or exporting keys into their shell environment:
+
+- a SQLite database at `$XDG_CONFIG_HOME/hsh/secrets.db` (directory
+  `0700`, file `0600`, plaintext values — the same trust level as
+  `~/.netrc`; a first-use note warns about it)
+- `secret add NAME` prompts with echo disabled (or `--value-stdin` for
+  scripting); there is deliberately no `--value` flag, since values on
+  the command line leak into shell history and the process list
+- `secret add --host/--header/--prefix` also writes the
+  `secrets.<NAME>` config entry with `from: "hsh://NAME"`
+  (RawMessage-preserving rewrite, like `proxy-auto-allow`)
+- `secret rm` warns when the config still references the entry but never
+  edits the config; `secret ls` prints names and timestamps, never values
+- only the host-side `hsh run` process and the `secret` subcommands touch
+  the store; the store lives on the host and is never mounted into the
+  sandbox. A missing entry behaves exactly like an unset environment
+  variable: a warning, and the secret is skipped.
+
+The scheme-based `from` makes further backends (OS keyrings, `dotenv`,
+password managers) a scheme-registration addition without changing the
+config format or the proxy; the model is nono.sh's credential injection
+(https://nono.sh/docs/cli/features/credential-injection).
 
 ## TLS interception
 

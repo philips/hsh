@@ -20,6 +20,7 @@ import (
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
 	"hsh/internal/netsetup"
+	"hsh/internal/secretstore"
 )
 
 var verbose = os.Getenv("HSH_VERBOSE") != ""
@@ -36,6 +37,7 @@ func Run(args []string) error {
 	imageFlag := fs.String("image", "", "workspace image; without a config file the image's org.ifup.hsh label provides the default config")
 	workspaceDir := fs.String("workspace", "", "workspace directory inside the container (default: first mount target)")
 	deniedDB := fs.String("denied-db", denieddb.DefaultPath(), "path to the proxy denial database")
+	secretDB := fs.String("secret-db", secretstore.DefaultPath(), "path to the secret store (for hsh:// secret references)")
 	verboseFlag := fs.Bool("verbose", false, "print progress information to stderr")
 	resumeFlag := fs.Bool("resume", false, "reuse the sandbox for this workspace directory instead of creating a new one")
 	freshFlag := fs.Bool("fresh", false, "with --resume: discard the existing sandbox and start a new one")
@@ -199,11 +201,47 @@ func Run(args []string) error {
 	if _, err := loadOrCreateCA(resume, caCertPath, caKeyPath); err != nil {
 		return err
 	}
-	rs, missing := config.ResolveSecrets(cfg)
-	for _, m := range missing {
-		fmt.Fprintf(os.Stderr, "hsh: warning: environment variable %s is not set; its secret will not be injected\n", m)
+	var secretStore config.SecretStore
+	storeOpened := false
+	openStore := func() (config.SecretStore, error) {
+		if !storeOpened {
+			db, _, err := secretstore.Open(*secretDB)
+			if err != nil {
+				return nil, err
+			}
+			secretStore = db
+			storeOpened = true
+		}
+		return secretStore, nil
 	}
-	if err := config.WriteSecretsFile(secretsPath, rs); err != nil {
+	storeFor := func(cfg *config.Config) config.SecretStore {
+		for _, s := range cfg.Secrets {
+			if strings.HasPrefix(s.From, "hsh://") {
+				if store, err := openStore(); err == nil {
+					return store
+				} else {
+					fmt.Fprintf(os.Stderr, "hsh: warning: opening the secret store: %v\n", err)
+					return nil
+				}
+			}
+		}
+		return nil
+	}
+	resolve := func(cfg *config.Config) error {
+		rs, missing, err := config.ResolveSecrets(cfg, storeFor(cfg))
+		if err != nil {
+			return err
+		}
+		for _, m := range missing {
+			fmt.Fprintf(os.Stderr, "hsh: warning: secret %s is not set (env variable or hsh secret); it will not be injected\n", m)
+		}
+		if err := config.WriteSecretsFile(secretsPath, rs); err != nil {
+			return err
+		}
+		infof("hsh: %d secret(s) resolved, %d missing\n", len(rs.Secrets), len(missing))
+		return nil
+	}
+	if err := resolve(cfg); err != nil {
 		return err
 	}
 	go config.WatchFile(absConfig, time.Second, func([]byte) {
@@ -212,12 +250,11 @@ func Run(args []string) error {
 			fmt.Fprintf(os.Stderr, "hsh: config reload: %v\n", err)
 			return
 		}
-		rs2, missing2 := config.ResolveSecrets(cfg2)
-		if err := config.WriteSecretsFile(secretsPath, rs2); err != nil {
+		if err := resolve(cfg2); err != nil {
 			fmt.Fprintf(os.Stderr, "hsh: secrets reload: %v\n", err)
 			return
 		}
-		infof("hsh: configuration reloaded (%d secret(s) resolved, %d missing)\n", len(rs2.Secrets), len(missing2))
+		infof("hsh: configuration reloaded\n")
 	})
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"

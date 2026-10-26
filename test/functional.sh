@@ -476,6 +476,66 @@ CMDS
 grep -Eq '^https=000$' "$TMP/mode-none.out" || fail "--network none did not deny TLS: $(cat "$TMP/mode-none.out")"
 pass "--network none denies everything"
 
+echo "== step 13: the hsh secret store (hsh:// references)"
+export XDG_CONFIG_HOME="$TMP/xdg-config"
+mkdir -p "$XDG_CONFIG_HOME"
+echo stored-value-42 | "$HSH" secret add fn-store-key --value-stdin --db "$TMP/secretstore/secrets.db" >"$TMP/secret-add.out" 2>&1 || fail "secret add failed: $(cat "$TMP/secret-add.out")"
+[ -f "$TMP/secretstore/secrets.db" ] || fail "the secret store was not created"
+STAT="$(stat -c '%a' "$TMP/secretstore/secrets.db")"
+[ "$STAT" = "600" ] || fail "secret store mode is $STAT, want 600"
+STAT="$(stat -c '%a' "$TMP/secretstore")"
+[ "$STAT" = "700" ] || fail "store directory mode is $STAT, want 700"
+if "$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep -q stored-value-42; then
+	fail "secret ls printed the secret value"
+fi
+"$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep -q fn-store-key || fail "secret ls did not list the stored name"
+pass "secret add stores values (0600/0700), ls shows names but never values"
+
+if echo other | "$HSH" secret add fn-store-key --value-stdin --db "$TMP/secretstore/secrets.db" >/dev/null 2>&1; then
+	fail "secret add overwrote an existing name without --force"
+fi
+echo other | "$HSH" secret add fn-store-key --value-stdin --force --db "$TMP/secretstore/secrets.db" || fail "secret add --force failed"
+pass "secret add refuses duplicates without --force"
+
+cat >"$TMP/store-config.hsh" <<EOF
+{
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "mounts": ["$TMP/workspace:/workspace"],
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] },
+  "secrets": {
+    "API_KEY": { "from": "hsh://fn-store-key", "hosts": ["host.containers.internal"], "header": "Authorization", "prefix": "Bearer " }
+  }
+}
+EOF
+"$HSH" run --config "$TMP/store-config.hsh" --denied-db "$DB" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-run.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'code=%{http_code}\n' http://host.containers.internal:8899/v1/models
+CMDS
+grep -Eq '^code=200$' "$TMP/store-run.out" || fail "the sandbox could not reach the dummy endpoint with an hsh:// secret: $(cat "$TMP/store-run.out")"
+grep -q 'Authorization: Bearer other' "$TMP/requests.log" || fail "the stored secret was not injected (after --force overwrite)"
+pass "hsh:// secrets resolve through the store and are injected"
+
+if "$HSH" secret rm fn-store-key --db "$TMP/secretstore/secrets.db" --config "$TMP/store-config.hsh" >"$TMP/secret-rm.out" 2>&1; then
+	pass "secret rm deletes the entry"
+else
+	fail "secret rm failed: $(cat "$TMP/secret-rm.out")"
+fi
+grep -q "still references hsh://fn-store-key" "$TMP/secret-rm.out" || fail "secret rm did not warn about the dangling config reference"
+grep -q 'hsh://fn-store-key' "$TMP/store-config.hsh" || fail "secret rm must not edit the config"
+pass "secret rm warns about dangling config references without editing them"
+
+"$HSH" run --config "$TMP/store-config.hsh" --denied-db "$DB" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-missing.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'code=%{http_code}\n' http://host.containers.internal:8899/v1/models
+CMDS
+grep -Eq '^code=200$' "$TMP/store-missing.out" || fail "the request was forwarded after secret removal"
+grep -q "hsh://fn-store-key is not set" "$TMP/store-missing.out" || fail "hsh run did not warn about the missing store entry: $(cat "$TMP/store-missing.out")"
+LAST_REQ="$(grep '/v1/models' "$TMP/requests.log" | tail -1)"
+if grep -q 'Authorization: Bearer other' <<<"$LAST_REQ"; then
+	fail "the secret was still injected after secret rm"
+fi
+pass "a missing store entry warns and fails open, like an unset env var"
+unset XDG_CONFIG_HOME
+
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"
 PASSED=1

@@ -15,7 +15,7 @@ image's `org.ifup.hsh` label as the config — see
   "mounts": [".:/workspace"],
   "secrets": {
     "API_KEY": {
-      "from": "OPENAI_API_KEY",
+      "from": "env://OPENAI_API_KEY",
       "hosts": ["api.openai.com"],
       "header": "Authorization",
       "prefix": "Bearer "
@@ -47,14 +47,21 @@ The workspace starts in the first mount's target directory
 
 | Field | Required | Description |
 |---|---|---|
-| `from` | yes | host environment variable to read the value from |
+| `from` | yes | secret reference: `env://VAR`, `hsh://NAME`, or a bare `VAR` (treated as `env://VAR`) |
 | `hosts` | yes | hosts the secret is injected for (same matching as `network.allow`) |
 | `header` | no | header to set; defaults to the secret name with `_` → `-` |
 | `prefix` | no | string prepended to the value, e.g. `"Bearer "` |
 
-If the environment variable named by `from` is not set, hsh prints a
-warning and the secret is not injected (fail-open for availability; the
-request is still forwarded, just without the header).
+The scheme of `from` decides where the value comes from. The design
+follows nono.sh's credential injection — pluggable secret backends with
+host-scoped routes and proxy-side injection instead of environment
+injection:
+https://nono.sh/docs/cli/features/credential-injection
+
+If the referenced value is missing (an unset environment variable or an
+absent store entry), hsh prints a warning and the secret is not injected
+(fail-open for availability; the request is still forwarded, just without
+the header). An unknown scheme is a hard error at config load.
 
 Injection happens for every request to a matching host, **replacing** any
 value the workspace sent for that header. Hosts with a secret are
@@ -67,7 +74,7 @@ prefix explicitly, because the default header name (the secret name with
 ```json
 "secrets": {
   "API_KEY": {
-    "from": "MISTRAL_API_KEY",
+    "from": "env://MISTRAL_API_KEY",
     "hosts": ["api.mistral.ai"],
     "header": "Authorization",
     "prefix": "Bearer "
@@ -78,9 +85,57 @@ prefix explicitly, because the default header name (the secret name with
 With this, the proxy rewrites the request's `Authorization` header to
 `Bearer <value>`, so tools inside the sandbox can be signed in with a
 placeholder key (e.g. in pi's `auth.json`) and never see the real one.
-`from` reads the **host** environment (`export MISTRAL_API_KEY=...` before
-launching); hsh does not read `.env` files, and keys should not live
-inside mounted directories where the sandbox can read them.
+Values are resolved on the **host** before the sandbox starts; hsh does
+not read `.env` files, and keys should not live inside mounted
+directories where the sandbox can read them.
+
+### The hsh secret store
+
+Instead of exporting keys into your shell environment, store them once
+in hsh's own secret store and reference them by name:
+
+```
+hsh secret add mistral-api-key --host api.mistral.ai \
+  --header Authorization --prefix "Bearer "
+```
+
+`secret add` prompts for the value with echo disabled (never on the
+command line, where it would leak into shell history); `--value-stdin`
+reads it from stdin for scripting. With `--host`/`--header`/`--prefix`
+it also writes the `secrets.<NAME>` entry into the config file
+(default `config.hsh`, override with `--config PATH`), using
+`from: "hsh://NAME"`. Without those flags it only stores the value.
+
+```
+hsh secret add NAME [--db PATH] [--force] [--value-stdin]
+                     [--config PATH] [--host HOST]... [--header HEADER] [--prefix PREFIX]
+hsh secret rm NAME [--db PATH] [--config PATH]
+hsh secret ls [--db PATH]
+```
+
+- the store is a SQLite database at `$XDG_CONFIG_HOME/hsh/secrets.db`
+  (default `~/.config/hsh/secrets.db`, `--db` overrides; used by
+  `hsh run` via `--secret-db`)
+- the directory is created `0700` and the database `0600`; values are
+  stored **unencrypted**, readable only by your user — the same trust
+  level as `~/.netrc` or `~/.aws/credentials` (a first-use note says so)
+- `secret ls` prints names and timestamps, never values
+- `secret rm` deletes the entry and warns if the config still references
+  `hsh://NAME`; it never edits the config
+- adding an existing name fails without `--force`
+
+A config entry referencing the store:
+
+```json
+"secrets": {
+  "API_KEY": {
+    "from": "hsh://mistral-api-key",
+    "hosts": ["api.mistral.ai"],
+    "header": "Authorization",
+    "prefix": "Bearer "
+  }
+}
+```
 
 ## Network policy modes
 
@@ -156,7 +211,7 @@ Minimal dev sandbox with an API key:
 {
   "mounts": [".:/workspace"],
   "secrets": {
-    "API_KEY": {"from": "OPENAI_API_KEY", "hosts": ["api.openai.com"]}
+    "API_KEY": {"from": "env://OPENAI_API_KEY", "hosts": ["api.openai.com"]}
   },
   "network": {"allow": ["api.openai.com", "registry.npmjs.org", "github.com"]}
 }

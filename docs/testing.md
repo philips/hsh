@@ -38,6 +38,13 @@ proxy, the denial database, and the example image:
 - **step 12**: network policy modes — the `https` default allows TLS to
   an arbitrary host but denies plaintext there, and resolves all DNS
   names; `--network allowlist` and `--network none` deny it
+- **step 13**: the secret store — `hsh secret add` stores values (0600
+  file, 0700 directory), refuses duplicates without `--force`, `secret
+  ls` shows names but never values, an `hsh://` config reference resolves
+  through the store and is injected (observed in the dummy endpoint's
+  request log), and after `secret rm` the entry goes missing: a warning,
+  no injection, the request still forwarded, and a dangling-reference
+  warning without editing the config
 
 Run it with:
 
@@ -47,6 +54,11 @@ Run it with:
 
 `internal/proxy/oauth_test.go` covers the OAuth capture over both the
 plain-HTTP and the TLS MITM path as Go unit tests.
+`internal/secretstore` covers the store CRUD, overwrite semantics, and
+file/directory permissions; `internal/config` covers secret reference
+parsing (`env://`, `hsh://`, bare, unknown schemes), resolution through
+a fake store, and the config rewrite for `secret add`; `internal/cli`
+covers `secret add`/`rm`/`ls` behavior via `--value-stdin`.
 
 Requirements: Go, rootless podman, network access (for `api.mistral.ai` and
 the image build), and port 8899 free on the host. The test is hermetic: it

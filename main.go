@@ -21,6 +21,12 @@ usage:
   hsh proxy-watch [--config PATH] [--db PATH] [--all]
                                                interactive review of denied hosts (TUI):
                                                approve or ignore them one by one
+  hsh secret add NAME [--db PATH] [--force] [--value-stdin]
+                                               [--config PATH] [--host HOST]... [--header HEADER] [--prefix PREFIX]
+                                               store a secret in the hsh secret store ($XDG_CONFIG_HOME/hsh/secrets.db)
+  hsh secret rm NAME [--db PATH] [--config PATH]
+                                               remove a secret from the store
+  hsh secret ls [--db PATH]                list stored secret names (never values)
   hsh ls [flags]                               list hsh sandboxes (pods), like podman pod ls
   hsh rm [flags] SANDBOX...                    remove hsh sandboxes, like podman pod rm
                                                (-a/--all, -f/--force, -i/--ignore, -t/--time, -l/--latest;
@@ -36,6 +42,8 @@ run flags:
   --network MODE    network policy: https (default), allowlist, or none
   --workspace PATH  workspace directory inside the container (default: first mount target)
   --denied-db PATH  proxy denial database (default: $XDG_STATE_HOME/hsh/denied.db)
+  --secret-db PATH  secret store for hsh:// secret references
+                    (default: $XDG_CONFIG_HOME/hsh/secrets.db)
   --verbose         print progress information to stderr (or set HSH_VERBOSE=1)
   --resume          reuse the sandbox for this workspace directory: reattach to the
                     existing container instead of creating a new one; the sandbox
@@ -69,6 +77,8 @@ func main() {
 		err = cli.ProxyAutoAllow(rest)
 	case "proxy-watch":
 		err = cli.ProxyWatch(rest)
+	case "secret":
+		err = cli.Secret(rest)
 	case "ls":
 		err = cli.Ls(rest)
 	case "rm":
