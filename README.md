@@ -2,7 +2,9 @@
 
 `hsh` (pronounced hush) is a developer focused Linux container sandbox to keep the agents under your care from chatting with systems you don't want them to using a MitM proxy HTTPS proxy with secret injection and containerized filesystem access. 
 
-![](docs/hsh-logo.jpg)
+<p align="right">
+    <img src="docs/hsh-logo.jpg" alt="emoji whisper face in water color and inked lines" width="300">
+</p>
 
 ## Overview
 
