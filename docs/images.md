@@ -2,8 +2,14 @@
 
 hsh ships pre-built workspace images for popular coding agents, each
 with the agent pre-installed and a default hsh config baked in as a
-container label. Published per release to ghcr.io (see
-`.github/workflows/release.yml`):
+container label. Published to ghcr.io by two workflows:
+
+- `.github/workflows/release.yml` publishes `:latest` plus a version tag
+  (matching the release tag) on every `v*` release.
+- `.github/workflows/images.yml` republishes `:latest` on pushes to main
+  that change `images/`, on a weekly schedule (so `fedora:latest` and the
+  agent installers stay current), and build-checks PRs that change
+  `images/`.
 
 | Image | Harness | Installer |
 |---|---|---|
