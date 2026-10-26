@@ -52,3 +52,13 @@ hsh proxy-watch # watch all workspaces and all sessions
 # Configuration
 
 Configuration should be stored in the state directory for a session and edited there. If the session is started from a container with a org.ifup.hsh label that config should be copied to the session directory for modification.
+
+# Breaking Change Decisions
+
+These are all OK changes. Do not implement backwards compatiblity.
+
+- Multi-session per workspace breaks the existing state layout. The state layout will need to change to implement this. 
+- proxy-auto-allow writes to the state files instead of a configuration file in the cwd
+- a local or flag provided config.hsh is copied to the state directory and never modified in place
+- use the podname suffix as the session idname
+- hsh run --resume will error instead of creating as it does today
