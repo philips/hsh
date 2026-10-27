@@ -75,6 +75,7 @@ func Root() *ff.Command {
 			secretCommand(),
 			proxyCommand(),
 			monitorCommand(),
+			oauthCommand(),
 			lsCommand(),
 			rmCommand(),
 			gcCommand(),

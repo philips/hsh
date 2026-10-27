@@ -7,17 +7,20 @@ import (
 )
 
 const (
-	HostVethName  = "hsh0"
-	InnerVethName = "hsh1"
-	HostIP        = "10.77.0.1"
-	InnerIP       = "10.77.0.2"
-	ProxyPort     = "8080"
+	HostVethName      = "hsh0"
+	InnerVethName     = "hsh1"
+	HostIP            = "10.77.0.1"
+	InnerIP           = "10.77.0.2"
+	ProxyPort         = "8080"
+	CallbackRelayPort = "7788"
 )
 
 func HostCIDR() string  { return HostIP + "/24" }
 func InnerCIDR() string { return InnerIP + "/24" }
 
 func ProxyAddr() string { return "http://" + HostIP + ":" + ProxyPort }
+
+func CallbackRelayAddr() string { return InnerIP + ":" + CallbackRelayPort }
 
 func CreateHostVeth() error {
 	for _, name := range []string{InnerVethName, HostVethName} {

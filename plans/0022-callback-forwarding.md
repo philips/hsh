@@ -1,7 +1,11 @@
 # OAuth browser-redirect callback forwarding (the phase-2 callback bridge)
 
-> **Status: not implemented.** This is the "browser-redirect callback
-> bridge" that docs/sandboxed-oauth.md defers to phase 2.
+> **Status: partially implemented.** The paste variant is done:
+> `hsh oauth callback '<url>'` delivers a browser callback URL into
+> the waiting session via the per-session callback relay
+> (10.77.0.2:7788, started by the workspace-inner, reached through
+> `podman exec` into the pod netns). The `--forward` published-port
+> bridge for fully automated redirects remains future work.
 
 ## Problem
 

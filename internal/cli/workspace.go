@@ -54,8 +54,24 @@ func WorkspaceInner(args []string) error {
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
 	home := fs.String("home", "/home/hsh", "home directory")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
+	callbackRelay := fs.String("callback-relay", "", "internal: run the OAuth callback relay on this address")
+	oauthDeliver := []string{}
+	fs.Func("oauth-deliver", "internal: relay ADDR, target PORT, and raw HTTP REQUEST", func(v string) error {
+		oauthDeliver = append(oauthDeliver, v)
+		return nil
+	})
+	httpEcho := fs.String("http-echo", "", "internal: listen once on 127.0.0.1:PORT, print the request line, answer 200")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *callbackRelay != "" {
+		return workspace.CallbackRelay(*callbackRelay)
+	}
+	if len(oauthDeliver) == 3 {
+		return workspace.OAuthDeliver(oauthDeliver[0], oauthDeliver[1], oauthDeliver[2])
+	}
+	if *httpEcho != "" {
+		return workspace.HTTPEcho(*httpEcho)
 	}
 	var exec []string
 	if *execJSON != "" {

@@ -729,6 +729,36 @@ CMDS
 grep -q '^TRANSPORT-SESSION$' "$TMP/transport-run.out" || fail "hsh run docker-archive:... did not start a session: $(cat "$TMP/transport-run.out")"
 pass "docker-archive: transport references are pulled and run"
 
+echo "== step 16: hsh oauth callback replays a loopback OAuth callback into the session"
+mkdir -p "$TMP/oauthws"
+(cd "$TMP/oauthws" && "$HSH" run localhost/hsh-example:latest) >"$TMP/oauth-run.out" 2>&1 <<'CMDS' &
+/hsh-workspace-inner --http-echo 1455 > /workspace/callback.txt 2>&1 &
+sleep 30
+exit
+CMDS
+OAUTH_SESSION_PID=$!
+for _ in $(seq 1 50); do
+	if podman pod ls --filter "label=hsh.workspace=$TMP/oauthws" --format '{{.Name}}' | grep -q hsh-; then
+		break
+	fi
+	sleep 0.5
+done
+sleep 3
+OUT="$(cd "$TMP/oauthws" && "$HSH" oauth callback 'http://127.0.0.1:1455/auth/callback?code=xyz123&state=abc789')"
+echo "$OUT"
+echo "$OUT" | grep -q "delivered the callback to session" || fail "the callback was not delivered: $OUT"
+echo "$OUT" | grep -q "200 OK" || fail "the session's listener did not answer 200: $OUT"
+wait "$OAUTH_SESSION_PID"
+grep -q "GET /auth/callback?code=xyz123&state=abc789 HTTP/1.1" "$TMP/oauthws/callback.txt" || fail "the loopback listener never received the callback: $(cat "$TMP/oauthws/callback.txt" 2>/dev/null)"
+pass "hsh oauth callback delivers a browser callback URL into the waiting session"
+
+if (cd "$TMP/oauthws" && "$HSH" oauth callback 'https://evil.example.com/auth') >/dev/null 2>&1; then
+	fail "oauth callback must reject non-loopback URLs"
+fi
+(cd "$TMP/oauthws" && "$HSH" oauth callback 'https://evil.example.com/auth') >"$TMP/oauth-reject.out" 2>&1 || true
+grep -q "not a loopback callback" "$TMP/oauth-reject.out" || fail "oauth callback did not explain the loopback requirement: $(cat "$TMP/oauth-reject.out")"
+pass "oauth callback rejects non-loopback URLs"
+
 echo "== final sweep: every session the test created is removable"
 "$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"
 if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then

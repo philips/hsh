@@ -199,8 +199,32 @@ CREATE TABLE IF NOT EXISTS oauth_phantoms (
   or URL, the user completes it in a host browser) work with no extra
   plumbing.
 - **Browser-redirect flows** (the provider redirects the *host* browser
-  to a loopback callback inside the sandbox) need a callback bridge —
-  the sandbox's loopback is not reachable from the host. Phase 2.
+  to a loopback callback inside the sandbox): the sandbox's loopback is
+  not reachable from the host, so the bridge is the `hsh oauth
+  callback` command — over SSH the browser lands on the failed
+  loopback URL, and replaying it delivers the callback into the waiting
+  session:
+
+  ```
+  laptop$ ssh server
+  server$ hsh run ghcr.io/philips/hsh-codex
+  sandbox$ codex login                      # prints the authorize URL
+  laptop-browser: open the URL, complete the login — the redirect to
+              http://127.0.0.1:1455/auth/callback?code=... fails, but
+              the URL is visible in the address bar
+  server$ hsh oauth callback 'http://127.0.0.1:1455/auth/callback?code=...&state=...'
+  # delivered into the session: the CLI completes the exchange through
+  # the egress proxy, which captures the real tokens and returns phantoms
+  ```
+
+  Run it from the workspace directory (the session is resolved the same
+  way `hsh run --resume` resolves it; `--session` picks explicitly) and
+  promptly — authorization codes are short-lived. The pasted URL's
+  `state` makes mis-delivery fail safe: a wrong session's CLI rejects
+  it. Non-loopback URLs are refused. The reverse path is a small
+  per-session callback relay on the workspace veth (`10.77.0.2:7788`)
+  that dials the session's loopback on demand; the workspace-inner
+  starts it automatically.
 - **Persistence**: with `--resume`, the workspace container keeps the
   client's stored phantoms across launches, and the host-side store keeps
   the phantom→real mapping — a logged-in session survives `hsh` restarts.

@@ -182,6 +182,7 @@ func RunInner(opts InnerOptions) error {
 	if err := os.Chdir(opts.Workspace); err != nil {
 		return err
 	}
+	startCallbackRelay()
 	if len(opts.Exec) > 0 {
 		argv := opts.Exec
 		if !strings.Contains(argv[0], "/") {
