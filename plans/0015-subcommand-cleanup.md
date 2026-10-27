@@ -49,8 +49,8 @@ added https://example.com
 ## DNS Proxy
 
 The DNS policy for the allowlist mode is that the DNS proxy blocks all lookups
-unless the name is in the allowlist. (Which will be expanded to other protocols
-and ports later).
+unless the name is in the allowlist. (Port and protocol columns will be
+designed in a separate follow-up plan.)
 
 DNS denials are recorded in the same `denied` table as egress denials —
 there is no separate `dns_denied` table and no separate DNS policy: a
@@ -95,5 +95,14 @@ no-backwards-compatibility stance.
 
 main.go becomes: argv[0] role dispatch (hsh-proxy, hsh-workspace,
 hsh-workspace-inner) plus the command tree, nothing else.
+
+**One `denied` table.** Egress denials and DNS denials share the
+single `denied` table — there is no `dns_denied` table. A refused lookup
+and a refused CONNECT are both "the agent tried to reach X": one review
+queue, one approval per host. The migration merges existing
+`dns_denied` rows into `denied` (bumping counts on collision) and drops
+the table; `proxy denied --dns` and the separate-table behavior go
+away. Separate port and protocol columns — for denials and for
+allowlist entries — will be designed in a separate plan.
 
 
