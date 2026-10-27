@@ -44,3 +44,45 @@ added https://example.com
 ```
 
 All of these commands take a `--watch` flag to continuously output new denied requests or approve them.
+
+## Decisions (recorded)
+
+**The egress-proxy role is argv[0]-only; the `proxy` subcommand alias is
+deleted.** Like `hsh-workspace`, the proxy lives only under its role
+name: new pods already invoke `/hsh-proxy` (argv[0] dispatch), so
+freeing the `hsh proxy` subcommand turns `proxy` into a purely
+host-facing command group with no flag collision and no
+disambiguation. Standalone proxy use (e.g. the functional test) invokes
+it the way the container does — via argv[0].
+
+Consequence, accepted by design: **pre-migration sessions become
+unresumable.** Old pods' proxy containers exec `/hsh proxy --listen
+...`; with the alias gone they hit the command group and fail. Users
+`hsh rm` old sessions and start fresh — consistent with the
+no-backwards-compatibility stance.
+
+**The dead code that existed only for those old sessions goes too:**
+
+- the main.go pre-map and with it the `proxy`, `workspace`, and
+  `workspace-inner` subcommand aliases — once `proxy` is reclaimed, a
+  reattach needs both containers of an old pod to work, so the
+  workspace aliases preserve nothing
+- `RunParent`'s legacy re-exec fallback (`--inner-exe` empty: re-exec
+  self with the `workspace-inner` subcommand) — only old containers
+  took that path; `--inner-exe` becomes mandatory
+
+main.go becomes: argv[0] role dispatch (hsh-proxy, hsh-workspace,
+hsh-workspace-inner) plus the command tree, nothing else.
+
+**DNS policy direction: the DNS proxy blocks all lookups unless the
+name is allowed.** Today only `allowlist` mode gates DNS; `https` mode
+resolves every name. Making DNS allow-gated in all modes strengthens
+the exfiltration story (no resolving names that were never approved)
+at the cost of https mode resolving nothing before the first approval.
+Open question to resolve alongside: what "allowed for the https proxy"
+means in https mode, where TLS to any host on 443 is otherwise
+permitted.
+
+The `--watch` / `allow` UX is deliberately not specified here yet;
+it is being worked separately and this plan will be updated with the
+resolved design.
