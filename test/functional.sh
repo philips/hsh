@@ -755,6 +755,7 @@ FROM localhost/hsh-example:latest
 ENV HSH_ARCH_MARKER=arch-v1
 EOF
 podman build -q -t localhost/hsh-arch:latest -f "$TMP/arch.Containerfile" "$TMP" >/dev/null || fail "could not build the archive test image"
+rm -f "$TMP/arch.tar"
 podman save -q -o "$TMP/arch.tar" localhost/hsh-arch:latest
 (cd "$TMP/pullws" && "$HSH" run docker-archive:"$TMP/arch.tar") >"$TMP/arch-run1.out" 2>&1 <<'CMDS' || true
 echo marker=$HSH_ARCH_MARKER
@@ -766,6 +767,7 @@ FROM localhost/hsh-example:latest
 ENV HSH_ARCH_MARKER=arch-v2
 EOF
 podman build -q -t localhost/hsh-arch:latest -f "$TMP/arch.Containerfile" "$TMP" >/dev/null || fail "could not rebuild the archive test image"
+rm -f "$TMP/arch.tar"
 podman save -q -o "$TMP/arch.tar" localhost/hsh-arch:latest
 (cd "$TMP/pullws" && "$HSH" run docker-archive:"$TMP/arch.tar") >"$TMP/arch-run2.out" 2>&1 <<'CMDS' || true
 echo marker=$HSH_ARCH_MARKER
