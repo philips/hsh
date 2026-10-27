@@ -75,6 +75,68 @@ directly against the provider.
 | helpers (`status`/`login`/`logout`) | `hsh oauth status` / `hsh oauth logout` (host-side, shape only) |
 | session persistence | `--resume` keeps the workspace container (where the client persists phantoms); the host-side store keeps the mapping across launches |
 
+## Flow
+
+The whole lifecycle — login (browser-redirect, over SSH), an API call,
+and a token refresh — with real tokens crossing into the sandbox
+**never**; the sandbox holds phantom tokens (`hsh_…`) that only this
+session's proxy can redeem:
+
+```mermaid
+sequenceDiagram
+    participant B as laptop browser
+    participant H as hsh (host)
+    participant A as agent CLI (sandbox)
+    participant P as egress proxy (pod)
+    participant T as oauth-tokens.json<br/>(host state, proxy-only mount)
+    participant O as provider<br/>(auth.openai.com, api.openai.com)
+
+    rect rgb(240, 240, 240)
+    note over A,O: login (browser-redirect, over SSH)
+    A->>A: codex login - listener on 127.0.0.1:1455
+    A-->>B: prints the authorize URL - user opens it
+    B->>O: browser login
+    O-->>B: redirect to http://127.0.0.1:1455/auth/callback?code=...&state=...
+    note over B: the redirect fails - the CLI's loopback is inside<br/>the sandbox's private netns, unreachable from the laptop
+    B-->>H: user copies the failed callback URL and runs<br/>hsh oauth callback '<url>'
+    H->>A: podman exec -> callback relay (10.77.0.2:7788) -> 127.0.0.1:1455<br/>(the CLI's own state check validates the delivery)
+    A->>P: POST /oauth/token (code + PKCE verifier)
+    note over P: TLS-intercepted at the configured token endpoint
+    P->>O: exchange forwarded unchanged
+    O-->>P: response: REAL access_token + refresh_token
+    P->>T: store phantom -> real (per field)
+    P-->>A: response rewritten: phantom hsh_... tokens
+    A->>A: CLI stores the phantoms (in the sandbox's ~/.codex)
+    end
+
+    rect rgb(240, 248, 240)
+    note over A,O: API calls
+    A->>P: request with Authorization: Bearer hsh_... (phantom)
+    P->>T: redeem the phantom
+    P->>O: forwarded with Bearer <real access token>
+    O-->>P: response
+    P-->>A: response
+    end
+
+    rect rgb(248, 240, 248)
+    note over A,O: token refresh
+    A->>P: POST /oauth/token grant_type=refresh_token<br/>with the PHANTOM refresh token
+    P->>T: redeem the phantom refresh token
+    P->>O: refresh forwarded with the REAL refresh token
+    O-->>P: new REAL access_token + refresh_token
+    P->>T: store new reals under fresh phantoms
+    P-->>A: new phantom tokens
+    end
+```
+
+The proxy holds the real tokens — access and refresh alike — in the
+host-side store (`$XDG_STATE_HOME/hsh/oauth-tokens.json`), written and
+read by the proxy container only; the workspace never sees the file.
+That is the point of the refresh design: refresh tokens are
+long-lived, so they stay on the host, and the sandbox only ever holds
+short-lived-looking phantoms that are redeemable solely at this
+session's proxy.
+
 ## Design
 
 ### Configuration
