@@ -4,7 +4,11 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"hsh/internal/denieddb"
 )
 
 func captureStdout(t *testing.T, f func()) string {
@@ -53,5 +57,28 @@ func TestGroupUnknownSubcommand(t *testing.T) {
 	captureStdout(t, func() { err = Run([]string{"proxy", "bogus"}) })
 	if err == nil || !strings.Contains(err.Error(), "unknown subcommand") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestProxyDeniedWatchStopsOnInterrupt(t *testing.T) {
+	db := t.TempDir() + "/denied.db"
+	h, err := denieddb.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run([]string{"proxy", "denied", "--db", db, "--watch"})
+	}()
+	time.Sleep(500 * time.Millisecond)
+	syscall.Kill(os.Getpid(), syscall.SIGINT)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("watch returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watch did not stop on SIGINT")
 	}
 }

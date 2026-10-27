@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -159,6 +161,8 @@ func proxyDeniedCommand() *ff.Command {
 		for _, r := range rows {
 			seen[r.Host+"@"+r.Session] = true
 		}
+		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
 		t := time.NewTicker(watchInterval)
 		defer t.Stop()
 		for {
@@ -260,6 +264,8 @@ func proxyAllowCommand() *ff.Command {
 		if !watch {
 			return nil
 		}
+		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
 		t := time.NewTicker(watchInterval)
 		defer t.Stop()
 		for {

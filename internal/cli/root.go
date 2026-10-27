@@ -87,7 +87,7 @@ func Root() *ff.Command {
 
 func Run(args []string) error {
 	root := Root()
-	err := root.ParseAndRun(nil, args)
+	err := root.ParseAndRun(context.Background(), args)
 	switch {
 	case err == nil:
 		return nil
