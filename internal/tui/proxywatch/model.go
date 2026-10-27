@@ -39,6 +39,7 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 	l := list.New(buildItems(pending, ignored, showIgnored, nil), delegate{}, 80, 24)
 	l.Title = title(showIgnored, filter)
 	l.SetStatusBarItemName("denied host", "denied hosts")
+	l.SetShowStatusBar(false)
 	l.AdditionalShortHelpKeys = keys.shortHelp
 	l.AdditionalFullHelpKeys = keys.shortHelp
 	m.list = l
@@ -96,7 +97,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) View() string {
-	status := fmt.Sprintf("%d selected", countSelected(m.list))
+	total := len(m.pendingRows)
+	if m.showIgnored {
+		total += len(m.ignoredRows)
+	}
+	status := fmt.Sprintf("%d denied host(s)", total)
+	if n := countSelected(m.list); n > 0 {
+		status += fmt.Sprintf("  ·  %d selected", n)
+	}
 	if m.status != "" {
 		status += "  ·  " + m.status
 	}
