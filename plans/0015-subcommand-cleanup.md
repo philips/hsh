@@ -31,7 +31,7 @@ https://foobar.example.com
 User can allow all denied requests for a session
 
 ```
-hsh proxy allow-denied --session 3ba5a9ed451f
+hsh proxy allow --all --session 3ba5a9ed451f
 added https://example.com
 added https://foobar.example.com
 ```
@@ -44,6 +44,14 @@ added https://example.com
 ```
 
 All of these commands take a `--watch` flag to continuously output new denied requests or approve them.
+
+## DNS Proxy
+
+The DNS policy for the allowlist mode is that the DNS proxy blocks all lookups
+unless the name is allowed by the https filter. (Which will be expanded to
+other protocols and ports later).
+
+To put it another way the DNS allowlist is never a separate policy but implied by the domain names allowed by the https allowlist.
 
 ## Decisions (recorded)
 
@@ -74,15 +82,4 @@ no-backwards-compatibility stance.
 main.go becomes: argv[0] role dispatch (hsh-proxy, hsh-workspace,
 hsh-workspace-inner) plus the command tree, nothing else.
 
-**DNS policy direction: the DNS proxy blocks all lookups unless the
-name is allowed.** Today only `allowlist` mode gates DNS; `https` mode
-resolves every name. Making DNS allow-gated in all modes strengthens
-the exfiltration story (no resolving names that were never approved)
-at the cost of https mode resolving nothing before the first approval.
-Open question to resolve alongside: what "allowed for the https proxy"
-means in https mode, where TLS to any host on 443 is otherwise
-permitted.
 
-The `--watch` / `allow` UX is deliberately not specified here yet;
-it is being worked separately and this plan will be updated with the
-resolved design.
