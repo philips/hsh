@@ -13,7 +13,7 @@ container label. Published to ghcr.io by two workflows:
 
 | Image | Harness | Installer |
 |---|---|---|
-| `ghcr.io/<owner>/hsh-pi` | [Pi](https://pi.dev) | `https://pi.dev/install.sh` |
+| `ghcr.io/<owner>/hsh-pi` (`hsh run pi`) | [Pi](https://pi.dev) | `https://pi.dev/install.sh` |
 | `ghcr.io/<owner>/hsh-vibe` | Mistral Vibe | `https://mistral.ai/vibe/install.sh` |
 | `ghcr.io/<owner>/hsh-claude-code` | Claude Code | `https://claude.ai/install.sh` |
 | `ghcr.io/<owner>/hsh-codex` | OpenAI Codex | `https://chatgpt.com/codex/install.sh` |

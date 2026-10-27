@@ -20,6 +20,7 @@ import (
 	"hsh/internal/certs"
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
+	"hsh/internal/imageRef"
 	"hsh/internal/netsetup"
 	"hsh/internal/secretstore"
 )
@@ -190,6 +191,13 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		if image == "" && freshImage != "" {
 			image = freshImage
 		}
+		if image != "" {
+			image, err = resolveImage(image)
+			if err != nil {
+				return err
+			}
+			infof("hsh: image %s\n", image)
+		}
 		absSeed, err := filepath.Abs(ro.configPath)
 		if err != nil {
 			return err
@@ -207,7 +215,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			}
 			label, err := imageLabel(image)
 			if err != nil {
-				return err
+				return fmt.Errorf("%w\nhint: image %q does not exist locally; use a fully-qualified reference, a transport (oci://, docker://, docker-archive:, ...), or point a shortname at it in %s", err, image, imageRef.ShortnamesPath())
 			}
 			cfg, err = config.FromImageLabel(label)
 			if err != nil {
@@ -505,6 +513,53 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		os.Exit(code)
 	}
 	return nil
+}
+
+func resolveImage(ref string) (string, error) {
+	r := ref
+	if !imageRef.IsTransport(r) && !imageRef.IsQualified(r) {
+		sn, err := imageRef.LoadShortnames(imageRef.ShortnamesPath())
+		if err != nil {
+			return "", fmt.Errorf("shortnames: %w", err)
+		}
+		r = sn.Resolve(r)
+	}
+	if strings.HasPrefix(r, "docker://") {
+		r = strings.TrimPrefix(r, "docker://")
+	}
+	if _, err := podman("image", "exists", r); err == nil {
+		return r, nil
+	}
+	out, err := podmanStdout("pull", "-q", r)
+	if err != nil {
+		return "", fmt.Errorf("image %q resolved to %q: pull failed (%s); use a transport or fully-qualified reference, or add it to %s", ref, r, strings.TrimSpace(out), imageRef.ShortnamesPath())
+	}
+	if _, err := podman("image", "exists", r); err != nil {
+		id := strings.TrimSpace(strings.Split(out, "\n")[0])
+		names, err := podmanStdout("image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "id="+id)
+		if err != nil {
+			return "", fmt.Errorf("list pulled image %q: %w", r, err)
+		}
+		for _, line := range strings.Split(names, "\n") {
+			if name := strings.TrimSpace(line); name != "" {
+				return name, nil
+			}
+		}
+		return "", fmt.Errorf("image %q pulled but has no local repository tag", r)
+	}
+	return r, nil
+}
+
+func podmanStdout(args ...string) (string, error) {
+	cmd := exec.Command("podman", args...)
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return string(ee.Stderr), err
+		}
+		return "", err
+	}
+	return string(out), nil
 }
 
 func removeSessionState(podName, sessionDir string) {

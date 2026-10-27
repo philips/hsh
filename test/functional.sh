@@ -405,13 +405,13 @@ cat >"$TMP/label.Containerfile" <<EOF
 FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"hsh://fn-label-key","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
 EOF
-podman build -q -t hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
+podman build -q -t localhost/hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
 echo label-secret-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-label-key >/dev/null || fail "secret add for the label test failed"
 if (cd "$TMP/labelws" && "$HSH" run >"$TMP/label-noimg.out" 2>&1); then
 	fail "hsh run without a config file or an image succeeded"
 fi
 grep -q "no config file" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
-(cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" localhost/hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
 cat /workspace/marker.txt
 curl -sS -o /dev/null -w 'allowed=%{http_code}\n' http://host.containers.internal:8899/v1/models
 curl -sS -o /dev/null -w 'denied=%{http_code}\n' --max-time 8 http://example.com/ 2>&1 | tail -1
@@ -491,14 +491,14 @@ cat >"$TMP/tasks.Containerfile" <<'EOF'
 FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"agent":{"command":["/bin/sh","-c","cat <<'TASKEOF'\n{prompt}\nTASKEOF"]}}'
 EOF
-podman build -q -t hsh-tasks-test:latest -f "$TMP/tasks.Containerfile" "$TMP" >/dev/null || fail "could not build the tasks test image"
+podman build -q -t localhost/hsh-tasks-test:latest -f "$TMP/tasks.Containerfile" "$TMP" >/dev/null || fail "could not build the tasks test image"
 cat >"$TMP/setup-tasks.txt" <<'EOF'
 # setup tasks
 Install gh for github access and clone https://github.com/philips/hsh
 
 Setup a Golang environment using the latest stable release
 EOF
-(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-tasks-test:latest >"$TMP/tasks.out" 2>&1)
+(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" localhost/hsh-tasks-test:latest >"$TMP/tasks.out" 2>&1)
 grep -q "1. Install gh for github access and clone https://github.com/philips/hsh" "$TMP/tasks.out" || fail "task 1 was not in the prompt: $(cat "$TMP/tasks.out")"
 grep -q "2. Setup a Golang environment using the latest stable release" "$TMP/tasks.out" || fail "task 2 was not in the prompt"
 grep -q "a comment" "$TMP/tasks.out" && fail "comment lines leaked into the prompt"
@@ -508,13 +508,13 @@ cat >"$TMP/tasks-fail.Containerfile" <<'EOF'
 FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"agent":{"command":["/bin/sh","-c","exit 3"]}}'
 EOF
-podman build -q -t hsh-tasks-fail:latest -f "$TMP/tasks-fail.Containerfile" "$TMP" >/dev/null
+podman build -q -t localhost/hsh-tasks-fail:latest -f "$TMP/tasks-fail.Containerfile" "$TMP" >/dev/null
 rc=0
-(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-tasks-fail:latest >"$TMP/tasks-fail.out" 2>&1) || rc=$?
+(cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" localhost/hsh-tasks-fail:latest >"$TMP/tasks-fail.out" 2>&1) || rc=$?
 [ "$rc" = "3" ] || fail "agent exit code was not propagated (got $rc)"
 pass "headless agent exit codes propagate"
 
-if (cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" hsh-label-test:latest >"$TMP/tasks-noagent.out" 2>&1); then
+if (cd "$TMP/labelws" && "$HSH" run --tasks "$TMP/setup-tasks.txt" localhost/hsh-label-test:latest >"$TMP/tasks-noagent.out" 2>&1); then
 	fail "hsh run --tasks succeeded without an agent command in the image"
 fi
 grep -q "agent command" "$TMP/tasks-noagent.out" || fail "missing-agent error did not explain the problem: $(cat "$TMP/tasks-noagent.out")"
@@ -616,9 +616,9 @@ cat >"$TMP/launch.Containerfile" <<EOF
 FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"mode":"allowlist","allow":["host.containers.internal"]},"agent":{"launch":["bash","-c","echo HARNESS-LAUNCHED; sleep 120"]}}'
 EOF
-podman build -q -t hsh-launch-test:latest -f "$TMP/launch.Containerfile" "$TMP" >/dev/null || fail "could not build the launch test image"
+podman build -q -t localhost/hsh-launch-test:latest -f "$TMP/launch.Containerfile" "$TMP" >/dev/null || fail "could not build the launch test image"
 
-(cd "$TMP/launchws" && "$HSH" run hsh-launch-test:latest) >"$TMP/launch-piped.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/launchws" && "$HSH" run localhost/hsh-launch-test:latest) >"$TMP/launch-piped.out" 2>&1 <<'CMDS' || true
 echo piped-session
 exit
 CMDS
@@ -633,7 +633,7 @@ import os, pty, select, sys, time
 hsh = sys.argv[1]
 pid, fd = pty.fork()
 if pid == 0:
-    os.execv(hsh, [hsh, "run", "hsh-launch-test:latest"])
+    os.execv(hsh, [hsh, "run", "localhost/hsh-launch-test:latest"])
 out = b""
 sent_z = False
 deadline = time.time() + 60
@@ -679,6 +679,33 @@ PYDRIVER
 else
 	echo "SKIP: interactive launch check (no python3 for the pty driver)"
 fi
+
+echo "== step 15: image shortnames and transport references"
+podman tag localhost/hsh-example:latest ghcr.io/philips/hsh-pi:latest
+mkdir -p "$TMP/shortws"
+(cd "$TMP/shortws" && "$HSH" run pi) >"$TMP/short-run.out" 2>&1 <<'CMDS' || true
+echo SHORTNAME-SESSION
+exit
+CMDS
+grep -q '^SHORTNAME-SESSION$' "$TMP/short-run.out" || fail "hsh run pi did not start the ghcr.io/philips/hsh-pi shortname: $(cat "$TMP/short-run.out")"
+SESSION_CFG="$(find "$XDG_STATE_HOME/hsh/sessions" -name config.json | head -1)"
+grep -q '"image": "ghcr.io/philips/hsh-pi"' "$SESSION_CFG" || fail "the session config does not hold the resolved image reference"
+pass "hsh run pi resolves to ghcr.io/philips/hsh-pi and the session stores the resolved reference"
+
+if (cd "$TMP/shortws" && "$HSH" run definitely-not-a-harness) >"$TMP/short-err.out" 2>&1; then
+	fail "hsh run of an unknown shortname unexpectedly succeeded"
+fi
+grep -q "ghcr.io/philips/hsh-definitely-not-a-harness" "$TMP/short-err.out" || fail "the error does not name what the shortname resolved to"
+grep -q "shortnames.conf" "$TMP/short-err.out" || fail "the error does not point at the shortnames config"
+pass "an unknown shortname names what it resolved to and the escape hatches"
+
+podman save -q -o "$TMP/img.tar" localhost/hsh-example:latest
+(cd "$TMP/shortws" && "$HSH" run docker-archive:"$TMP/img.tar") >"$TMP/transport-run.out" 2>&1 <<'CMDS' || true
+echo TRANSPORT-SESSION
+exit
+CMDS
+grep -q '^TRANSPORT-SESSION$' "$TMP/transport-run.out" || fail "hsh run docker-archive:... did not start a session: $(cat "$TMP/transport-run.out")"
+pass "docker-archive: transport references are pulled and run"
 
 echo "== final sweep: every session the test created is removable"
 "$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"

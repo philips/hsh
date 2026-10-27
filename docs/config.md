@@ -174,6 +174,41 @@ running session that file is its config copy in the state directory, so
 `proxy-auto-allow` approvals apply to a live session within ~1s. `image`,
 `shell`, and `mounts` require restarting the sandbox.
 
+## Image shortnames
+
+The `hsh run` positional image is a **shortname** unless it is a
+transport reference (`docker://...`, `oci://...` — anything containing
+`://`) or a registry-qualified reference (first path segment contains
+a `.`, has a port, or is `localhost`, like `ghcr.io/x/y`,
+`localhost/my-dev:latest`, or `registry:5000/x`).
+
+A shortname resolves through
+`$XDG_CONFIG_HOME/hsh/shortnames.conf` (default
+`~/.config/hsh/shortnames.conf`, the same directory as the secret
+store):
+
+```
+# override where shortnames point by default
+shortname-prefix=docker://quay.io/example-corp-agents/
+
+# aliases for specific shortnames
+pi=docker://ghcr.io/philips/hsh-pi
+mydev=docker://registry.example.com/team/pi:dev
+```
+
+- an explicit alias always wins; otherwise a shortname `N` resolves to
+  `shortname-prefix` + `N`
+- the builtin default prefix is `docker://ghcr.io/philips/hsh-`, so
+  `hsh run pi` retrieves `ghcr.io/philips/hsh-pi` with no
+  configuration, and `hsh run vibe`, `hsh run claude-code`, and
+  `hsh run codex` work the same way
+- a resolved reference is pulled into the local store if not already
+  there (hsh reads the image's `org.ifup.hsh` label before the session
+  starts) and the session's config copy stores the *resolved*
+  reference, so resuming is unaffected by later config edits
+- unknown shortnames pull from the prefix and fail with an error that
+  names the reference tried and points at the config file
+
 ## Sessions
 
 Every `hsh run` creates a persistent session: a podman pod plus a state
