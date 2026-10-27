@@ -48,10 +48,8 @@ All of these commands take a `--watch` flag to continuously output new denied re
 ## DNS Proxy
 
 The DNS policy for the allowlist mode is that the DNS proxy blocks all lookups
-unless the name is allowed by the https filter. (Which will be expanded to
-other protocols and ports later).
-
-To put it another way the DNS allowlist is never a separate policy but implied by the domain names allowed by the https allowlist.
+unless the name is in the allowlist. (Which will be expanded to other protocols
+and ports later).
 
 ## Decisions (recorded)
 
