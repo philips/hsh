@@ -1,6 +1,8 @@
 # hsh
 
-`hsh` (pronounced hush) is a developer focused Linux container sandbox to keep the agents under your care from chatting with systems you don't want them to using a MitM proxy HTTPS proxy with secret injection and containerized filesystem access. 
+`hsh` (pronounced hush) is a developer focused Linux container sandbox to keep the agents under your care from chatting with systems you don't want them to using a MitM proxy HTTPS proxy with secret injection and containerized filesystem access.
+
+To use an analogy: `hsh` is the exam proctor keeping the room quiet so your little agents [don't cheat](https://en.wikipedia.org/wiki/OpenAI_rogue_agent_breach_of_Hugging_Face).
 
 <p align="right">
     <img src="docs/hsh-logo.jpg" alt="emoji whisper face in water color and inked lines" width="300">
@@ -11,65 +13,55 @@
 The goals of `hsh` isolation include:
 
 - Single install binary
-- Standard isolation via Linux containers (podman)
-- Dynamic and easy egress network isolation
+- Rootless Linux containers
+- Dynamic egress network isolation
 
-The goal is to make it easy to hack on software with an agent harness like pi,
-codex, claude, etc while protecting you from moderate dangers of agents like
-credential exfiltration to the open internet OR local filesystem damage.
+The goal is to make it easy to hack on software alongside an agent harness like
+`pi`, `codex`, `claude-code`, etc while protecting you from moderate dangers of
+agents like credential exfiltration to the open internet OR local filesystem
+damage.
 
 If you are dealing with a potentially persistent attacker or hostile inference
 provider consider additional protection like a virtual machine (which may be
 supported via libkrun later).
 
-## Getting Started
-
-Build the project:
+Install `hsh`
 
 ```
-git clone https://github.com/philips/hsh
-cd hsh
-CGO_ENABLED=0 go build -o hsh .
+curl -fsSL https://raw.githubusercontent.com/philips/hsh/main/install.sh | sh
 ```
 
-Build the example pi container
+Create a workspace for your agent to work under (will be mounted to /workspace in container)
 
 ```
-podman build -t hsh-example examples/
-cd examples/ 
-../hsh run
+mkdir agent-pen
+cd agent-pen
 ```
 
-This example is designed for use with the [Mistral API](https://console.mistral.ai/api-keys). Grab an API key and export it:
+Setup your mistral credentials (or openai/claude) for the egress proxy to inject the correct Authorization header.
 
 ```
-export MISTRAL_API_KEY=mstrl_12345
+hsh secret add mistral-api-key
 ```
 
-Now run and configure thee `pi` agent harness. 
+Run pi and configure it to use mistral
 
 ```
-pi
+hsh run pi
 /login mistral
+<type foo or anything as the API key>
 ```
 
-And type in `foo` or something. The correct Authorization header will be injected with the request to `api.mistral.ai`. See [config.hsh](https://github.com/philips/hsh/blob/main/examples/config.hsh) for how the proxy was configured.
-
-The container will have access to the examples/ directory on your host via the /workspace folder in the container. 
-
-## Technical Design
-
-- A single Go binary for entire system
-- Assume Podman is installed (do not use docker or docker-engine)
+Start vibing
 
 ## Inspiration
 
-These projects documentation can be used as inpiration:
+These projects inspired some of the ideas behind hsh
 
-- https://github.com/EddyPronk/podman-agent-sandbox
+- https://github.com/agent-substrate/substrate/blob/main/docs/egress-credential-injection.md
 - https://github.com/superhq-ai/shuru
 - https://nono.sh/
-- https://github.com/agent-substrate/substrate/blob/main/docs/egress-credential-injection.md
+- https://github.com/EddyPronk/podman-agent-sandbox
 
 ## TODO
 
