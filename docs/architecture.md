@@ -290,8 +290,11 @@ session; a URL argument allows a single host (the URL is normalized to
 its hostname). `--watch` keeps approving new denials as they appear.
 
 `monitor` is the interactive counterpart (bubbletea/bubbles TUI,
-requires a terminal): a multi-select list of pending denials, most
-recently requested first, refreshed live every 2s. Keys: `space` select,
+requires a terminal, runs full-screen in the alternate screen buffer):
+a multi-select list of pending denials, most recently requested first,
+refreshed live every 2s. `--session`/`--workspace` scope the view (the
+title shows the active scope), the `/` text filter also matches session
+ids and workspaces, and the columns fill the terminal width. Keys: `space` select,
 `a`/`n` select/clear all (ignoring any active filter), `/` filter,
 `enter` approve the selected hosts (added to the session's
 `network.allow`, marked allowed), `i` ignore them (marked handled

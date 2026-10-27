@@ -49,7 +49,7 @@ func monitorCommand() *ff.Command {
 			}
 		}
 		model := proxywatch.New(db, filter, pending, ignored, all)
-		if _, err := tea.NewProgram(model).Run(); err != nil {
+		if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 			return err
 		}
 		return nil

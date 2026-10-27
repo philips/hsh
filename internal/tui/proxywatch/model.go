@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -36,7 +37,7 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 		ignoredRows: ignored,
 	}
 	l := list.New(buildItems(pending, ignored, showIgnored, nil), delegate{}, 80, 24)
-	l.Title = title(showIgnored)
+	l.Title = title(showIgnored, filter)
 	l.SetStatusBarItemName("denied host", "denied hosts")
 	l.AdditionalShortHelpKeys = keys.shortHelp
 	l.AdditionalFullHelpKeys = keys.shortHelp
@@ -51,7 +52,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		h := msg.Height - 6
+		h := msg.Height - 2
 		if h < 1 {
 			h = 1
 		}
@@ -104,11 +105,22 @@ func (m Model) View() string {
 
 var statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 
-func title(showIgnored bool) string {
+func title(showIgnored bool, f denieddb.Filter) string {
+	t := "denied hosts awaiting review"
 	if showIgnored {
-		return "denied hosts — pending and ignored"
+		t = "denied hosts — pending and ignored"
 	}
-	return "denied hosts awaiting review"
+	var scope []string
+	if f.Session != "" {
+		scope = append(scope, "session "+f.Session)
+	}
+	if f.Workspace != "" {
+		scope = append(scope, "workspace "+f.Workspace)
+	}
+	if len(scope) > 0 {
+		t += " — " + strings.Join(scope, ", ")
+	}
+	return t
 }
 
 func buildItems(pending, ignored []denieddb.DeniedHost, showIgnored bool, selected map[string]bool) []list.Item {
@@ -230,7 +242,7 @@ func (m Model) setSelected(selected bool) tea.Cmd {
 
 func (m Model) toggleIgnored() (Model, tea.Cmd) {
 	m.showIgnored = !m.showIgnored
-	m.list.Title = title(m.showIgnored)
+	m.list.Title = title(m.showIgnored, m.filter)
 	return m, m.list.SetItems(buildItems(m.pendingRows, m.ignoredRows, m.showIgnored, currentSelection(m.list)))
 }
 

@@ -81,6 +81,13 @@ func (d delegate) Spacing() int { return 0 }
 
 func (d delegate) Update(_ tea.Msg, _ *list.Model) tea.Cmd { return nil }
 
+func pad(s string, width int) string {
+	if utf8.RuneCountInString(s) > width {
+		s = truncate(s, width)
+	}
+	return fmt.Sprintf("%-*s", width, s)
+}
+
 func (d delegate) Render(w io.Writer, m list.Model, index int, listItem list.Item) {
 	i, ok := listItem.(item)
 	if !ok {
@@ -99,9 +106,18 @@ func (d delegate) Render(w io.Writer, m list.Model, index int, listItem list.Ite
 	default:
 		checkbox = "[ ]"
 	}
-	line := fmt.Sprintf("%s%s %-30s %5s %5dx %-7s %-14s %s",
-		cursor, checkbox, truncate(i.host, 30), i.port, i.count,
-		truncate(i.session, 7), truncate(workspaceName(i.workspace), 14),
+	width := m.Width()
+	fixed := 2 + 4 + 6 + 6 + 13 + 17
+	rest := width - fixed
+	if rest < 24 {
+		rest = 24
+	}
+	hostW := rest * 2 / 3
+	wsW := rest - hostW
+	line := fmt.Sprintf("%s%s %s %5s %5dx %s %s  %s",
+		cursor, checkbox,
+		pad(i.host, hostW), i.port, i.count,
+		pad(i.session, 12), pad(workspaceName(i.workspace), wsW),
 		i.lastSeenDisplay)
 	if i.ignored {
 		line += "  ignored"
