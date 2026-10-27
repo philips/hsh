@@ -1,7 +1,7 @@
 #!/bin/sh
-# hsh installer — https://github.com/philips/hx
+# hsh installer — https://github.com/philips/hsh
 #
-#   curl -fsSL https://raw.githubusercontent.com/philips/hx/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/philips/hsh/main/install.sh | sh
 #
 # Downloads the latest hsh release for your platform from GitHub, verifies
 # its SHA-256 checksum, installs the binary to ~/.local/bin, and makes sure
@@ -14,7 +14,7 @@
 
 set -eu
 
-REPO="philips/hx"
+REPO="philips/hsh"
 BIN="hsh"
 BASE="${HSH_RELEASE_BASE:-https://github.com/$REPO/releases}"
 
@@ -111,5 +111,13 @@ case ":$PATH:" in
     ;;
 esac
 
-info ""
-info "Get started:  hsh run --config examples/config.hsh"
+# --- print README section ----------------------------------------------------
+README_URL="https://raw.githubusercontent.com/philips/hsh/refs/heads/main/README.md"
+if readme="$(curl -fsSL "$README_URL" 2>/dev/null)" && [ -n "$readme" ]; then
+  section="$(printf '%s\n' "$readme" | sed -n '/<!--- install.sh START -->/,/<!--- install.sh END -->/p' \
+    | sed '1d;$d' | sed -e '/./,$!d' -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}')"
+  if [ -n "$section" ]; then
+    info ""
+    printf '%s\n' "$section"
+  fi
+fi

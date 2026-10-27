@@ -31,6 +31,8 @@ Install `hsh`
 curl -fsSL https://raw.githubusercontent.com/philips/hsh/main/install.sh | sh
 ```
 
+<!--- install.sh START -->
+
 Create a workspace for your agent to work under (will be mounted to /workspace in container)
 
 ```
@@ -53,6 +55,8 @@ hsh run pi
 ```
 
 Start vibing
+
+<!--- install.sh END -->
 
 ## Inspiration
 
