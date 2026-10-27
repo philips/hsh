@@ -143,8 +143,11 @@ func (m Model) tableRows(rows []denieddb.DeniedHost) []table.Row {
 
 func (m *Model) rebuildRows(preserveCursor bool) {
 	cursorKey := ""
-	if preserveCursor && len(m.rows) > 0 && m.table.Cursor() < len(m.rows) {
-		cursorKey = rowKey(m.rows[m.table.Cursor()])
+	if preserveCursor && len(m.rows) > 0 {
+		c := m.table.Cursor()
+		if c >= 0 && c < len(m.rows) {
+			cursorKey = rowKey(m.rows[c])
+		}
 	}
 	m.rows = m.visibleRows()
 	m.table.SetRows(m.tableRows(m.rows))

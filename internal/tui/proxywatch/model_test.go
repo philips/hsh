@@ -380,3 +380,45 @@ func TestFilterTabCompletion(t *testing.T) {
 		t.Fatalf("no-match completion status: %q", m.status)
 	}
 }
+
+func TestRefreshEmptyQueueDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	db, err := denieddb.Open(filepath.Join(dir, "denied.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	m := New(db, denieddb.Filter{}, nil, nil, false)
+	msg := runCmd(m.refreshCmd())
+	updated, _ := send(m, msg)
+	if len(updated.rows) != 0 {
+		t.Fatalf("expected no rows, got %d", len(updated.rows))
+	}
+	updated, _ = send(updated, refreshMsg{})
+	if len(updated.rows) != 0 {
+		t.Fatalf("expected no rows after empty refresh, got %d", len(updated.rows))
+	}
+}
+
+func TestRefreshToEmptyPreservesNoCursor(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com")
+	m := env.model
+	msg := refreshMsg{pending: nil, ignored: nil}
+	updated, _ := send(m, msg)
+	if len(updated.rows) != 0 {
+		t.Fatalf("expected no rows, got %d", len(updated.rows))
+	}
+	updated, _ = send(updated, refreshMsg{pending: env.pendingSnapshot()})
+	if len(updated.rows) != 1 {
+		t.Fatalf("expected rows back, got %d", len(updated.rows))
+	}
+}
+
+func (e *testEnv) pendingSnapshot() []denieddb.DeniedHost {
+	pending, err := denieddb.Pending(e.db, denieddb.Filter{})
+	if err != nil {
+		return nil
+	}
+	return pending
+}
