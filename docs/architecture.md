@@ -291,10 +291,16 @@ its hostname). `--watch` keeps approving new denials as they appear.
 
 `monitor` is the interactive counterpart (bubbletea/bubbles TUI,
 requires a terminal, runs full-screen in the alternate screen buffer):
-a multi-select list of pending denials, most recently requested first,
+a multi-select table of pending denials — SESSION, WORKSPACE, URL,
+COUNT, LAST SEEN, in that order — most recently requested first,
 refreshed live every 2s. `--session`/`--workspace` scope the view (the
-title shows the active scope), the `/` text filter also matches session
-ids and workspaces, and the columns fill the terminal width. Keys: `space` select,
+title shows the active scope) and the columns fill the terminal
+width. Keys: `space` select the cursor row, `a`/`n` select/clear all,
+`enter` approve the selected hosts (added to the session's
+`network.allow`, marked allowed), `i` ignore them (marked handled
+without allowing), `t` toggle a view of ignored rows (marked
+"(ignored)", not selectable), `r` refresh, `↑/↓/j/k` navigate, `q`
+quit. Keys: `space` select,
 `a`/`n` select/clear all (ignoring any active filter), `/` filter,
 `enter` approve the selected hosts (added to the session's
 `network.allow`, marked allowed), `i` ignore them (marked handled

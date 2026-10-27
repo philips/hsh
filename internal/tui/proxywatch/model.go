@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -16,16 +16,58 @@ import (
 	"hsh/internal/denieddb"
 )
 
-// Model is the bubbletea model for `hsh proxy-watch`: a multi-select
-// list of proxy denials with approve/ignore actions.
 type Model struct {
-	list        list.Model
 	db          *sql.DB
 	filter      denieddb.Filter
 	showIgnored bool
 	status      string
+
+	table       table.Model
 	pendingRows []denieddb.DeniedHost
 	ignoredRows []denieddb.DeniedHost
+	rows        []denieddb.DeniedHost
+	selected    map[string]bool
+
+	width  int
+	height int
+}
+
+func rowKey(h denieddb.DeniedHost) string {
+	return h.Host + "@" + h.Session
+}
+
+func hostURL(h string) string {
+	return "https://" + h
+}
+
+func defaultColumns(width int) []table.Column {
+	const (
+		selW    = 3
+		sessW   = 13
+		countW  = 6
+		seenW   = 21
+		minimum = 60
+	)
+	if width < minimum {
+		width = minimum
+	}
+	avail := width - selW - sessW - countW - seenW - 12
+	wsW := avail * 2 / 5
+	if wsW < 10 {
+		wsW = 10
+	}
+	urlW := avail - wsW
+	if urlW < 20 {
+		urlW = 20
+	}
+	return []table.Column{
+		{Title: "✓", Width: selW},
+		{Title: "SESSION", Width: sessW},
+		{Title: "WORKSPACE", Width: wsW},
+		{Title: "URL", Width: urlW},
+		{Title: "COUNT", Width: countW},
+		{Title: "LAST SEEN", Width: seenW},
+	}
 }
 
 func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedHost, showIgnored bool) Model {
@@ -35,15 +77,79 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 		showIgnored: showIgnored,
 		pendingRows: pending,
 		ignoredRows: ignored,
+		selected:    map[string]bool{},
+		width:       80,
+		height:      24,
 	}
-	l := list.New(buildItems(pending, ignored, showIgnored, nil), delegate{}, 80, 24)
-	l.Title = title(showIgnored, filter)
-	l.SetStatusBarItemName("denied host", "denied hosts")
-	l.SetShowStatusBar(false)
-	l.AdditionalShortHelpKeys = keys.shortHelp
-	l.AdditionalFullHelpKeys = keys.shortHelp
-	m.list = l
+	m.rows = m.allRows()
+	m.table = table.New(
+		table.WithColumns(defaultColumns(80)),
+		table.WithRows(m.tableRows(m.rows)),
+		table.WithFocused(true),
+	)
+	m.table.KeyMap = table.KeyMap{
+		LineUp:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		LineDown:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		PageUp:       key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
+		PageDown:     key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
+		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "½ page up")),
+		HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "½ page down")),
+		GotoTop:      key.NewBinding(key.WithKeys("home", "g"), key.WithHelp("g/home", "go to start")),
+		GotoBottom:   key.NewBinding(key.WithKeys("end", "G"), key.WithHelp("G/end", "go to end")),
+	}
 	return m
+}
+
+func (m Model) allRows() []denieddb.DeniedHost {
+	var rows []denieddb.DeniedHost
+	rows = append(rows, m.pendingRows...)
+	sort.Slice(rows, func(a, b int) bool {
+		if rows[a].LastSeen != rows[b].LastSeen {
+			return rows[a].LastSeen > rows[b].LastSeen
+		}
+		return rows[a].Host < rows[b].Host
+	})
+	if m.showIgnored {
+		rows = append(rows, m.ignoredRows...)
+	}
+	return rows
+}
+
+func (m Model) tableRows(rows []denieddb.DeniedHost) []table.Row {
+	out := make([]table.Row, 0, len(rows))
+	for _, h := range rows {
+		sel := ""
+		if m.selected[rowKey(h)] {
+			sel = "✓"
+		}
+		ws := h.Workspace
+		if ws == "" {
+			ws = "-"
+		}
+		url := hostURL(h.Host)
+		if h.Ignored {
+			url += "  (ignored)"
+		}
+		out = append(out, table.Row{sel, h.Session, ws, url, fmt.Sprint(h.Count), h.LastSeen})
+	}
+	return out
+}
+
+func (m *Model) rebuildRows(preserveCursor bool) {
+	cursorKey := ""
+	if preserveCursor && len(m.rows) > 0 && m.table.Cursor() < len(m.rows) {
+		cursorKey = rowKey(m.rows[m.table.Cursor()])
+	}
+	m.rows = m.allRows()
+	m.table.SetRows(m.tableRows(m.rows))
+	if cursorKey != "" {
+		for i, h := range m.rows {
+			if rowKey(h) == cursorKey {
+				m.table.SetCursor(i)
+				break
+			}
+		}
+	}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -53,11 +159,15 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		h := msg.Height - 2
+		m.width = msg.Width
+		m.height = msg.Height
+		h := msg.Height - 4
 		if h < 1 {
 			h = 1
 		}
-		m.list.SetSize(msg.Width, h)
+		m.table.SetColumns(defaultColumns(msg.Width))
+		m.table.SetWidth(msg.Width)
+		m.table.SetHeight(h)
 		return m, nil
 
 	case tickMsg:
@@ -70,192 +180,71 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyAction(msg)
 	}
 
-	if msg, ok := msg.(tea.KeyMsg); ok && m.list.FilterState() != list.Filtering {
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch {
+		case key.Matches(msg, keys.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, keys.Refresh):
+			return m, m.refreshCmd()
 		case key.Matches(msg, keys.Select):
-			return m, m.toggleSelect()
+			return m.toggleSelect()
 		case key.Matches(msg, keys.SelectAll):
-			return m, m.setSelected(true)
+			for _, h := range m.pendingRows {
+				m.selected[rowKey(h)] = true
+			}
+			m.rebuildRows(false)
+			return m, nil
 		case key.Matches(msg, keys.SelectNone):
-			return m, m.setSelected(false)
+			m.selected = map[string]bool{}
+			m.rebuildRows(false)
+			return m, nil
 		case key.Matches(msg, keys.Approve):
 			return m.approve()
 		case key.Matches(msg, keys.Ignore):
 			return m.ignore()
 		case key.Matches(msg, keys.ToggleIgnored):
-			return m.toggleIgnored()
-		case key.Matches(msg, keys.Refresh):
-			return m, m.refreshCmd()
-		case msg.String() == "esc" && m.list.FilterState() == list.Unfiltered:
-			return m, tea.Quit
+			m.showIgnored = !m.showIgnored
+			m.rebuildRows(false)
+			return m, nil
 		}
 	}
-
 	var cmd tea.Cmd
-	m.list, cmd = m.list.Update(msg)
+	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 }
 
-func (m Model) View() string {
-	total := len(m.pendingRows)
-	if m.showIgnored {
-		total += len(m.ignoredRows)
-	}
-	status := fmt.Sprintf("%d denied host(s)", total)
-	if n := countSelected(m.list); n > 0 {
-		status += fmt.Sprintf("  ·  %d selected", n)
-	}
-	if m.status != "" {
-		status += "  ·  " + m.status
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.list.View(), statusStyle.Render(status))
-}
-
-var statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-
-func title(showIgnored bool, f denieddb.Filter) string {
-	t := "denied hosts awaiting review"
-	if showIgnored {
-		t = "denied hosts — pending and ignored"
-	}
-	var scope []string
-	if f.Session != "" {
-		scope = append(scope, "session "+f.Session)
-	}
-	if f.Workspace != "" {
-		scope = append(scope, "workspace "+f.Workspace)
-	}
-	if len(scope) > 0 {
-		t += " — " + strings.Join(scope, ", ")
-	}
-	return t
-}
-
-func buildItems(pending, ignored []denieddb.DeniedHost, showIgnored bool, selected map[string]bool) []list.Item {
-	var items []item
-	for _, h := range pending {
-		items = append(items, newItem(h, selected[h.Host+"@"+h.Session]))
-	}
-	if showIgnored {
-		for _, h := range ignored {
-			items = append(items, newItem(h, false))
+func (m Model) selectedRows() []denieddb.DeniedHost {
+	var out []denieddb.DeniedHost
+	for _, h := range m.rows {
+		if !h.Ignored && m.selected[rowKey(h)] {
+			out = append(out, h)
 		}
-	}
-	sort.Slice(items, func(a, b int) bool {
-		if !items[a].lastSeen.Equal(items[b].lastSeen) {
-			return items[a].lastSeen.After(items[b].lastSeen)
-		}
-		if items[a].host != items[b].host {
-			return items[a].host < items[b].host
-		}
-		return items[a].session < items[b].session
-	})
-	out := make([]list.Item, len(items))
-	for i, it := range items {
-		out[i] = it
 	}
 	return out
 }
 
-func currentSelection(l list.Model) map[string]bool {
-	selected := map[string]bool{}
-	for _, it := range l.Items() {
-		if i, ok := it.(item); ok && i.selected && !i.ignored {
-			selected[i.key()] = true
-		}
-	}
-	return selected
-}
-
-func selectedRows(l list.Model) []denieddb.DeniedHost {
-	var rows []denieddb.DeniedHost
-	for _, it := range l.Items() {
-		if i, ok := it.(item); ok && i.selected && !i.ignored {
-			rows = append(rows, denieddb.DeniedHost{Host: i.host, Session: i.session, Workspace: i.workspace})
-		}
-	}
-	return rows
-}
-
-func countSelected(l list.Model) int {
-	return len(selectedRows(l))
-}
-
-func (m Model) applyRefresh(msg refreshMsg) (Model, tea.Cmd) {
-	if msg.err != nil {
-		m.status = "refresh failed: " + msg.err.Error()
+func (m Model) toggleSelect() (tea.Model, tea.Cmd) {
+	if len(m.rows) == 0 || m.table.Cursor() >= len(m.rows) {
+		m.status = "no rows to select"
 		return m, nil
 	}
-	m.pendingRows = msg.pending
-	m.ignoredRows = msg.ignored
-	return m, m.list.SetItems(buildItems(m.pendingRows, m.ignoredRows, m.showIgnored, currentSelection(m.list)))
+	h := m.rows[m.table.Cursor()]
+	if h.Ignored {
+		m.status = "ignored rows cannot be selected"
+		return m, nil
+	}
+	k := rowKey(h)
+	if m.selected[k] {
+		delete(m.selected, k)
+	} else {
+		m.selected[k] = true
+	}
+	m.rebuildRows(false)
+	return m, nil
 }
 
-func (m Model) refreshCmd() tea.Cmd {
-	db := m.db
-	return func() tea.Msg {
-		pending, err := denieddb.Pending(db, m.filter)
-		if err != nil {
-			return refreshMsg{err: err}
-		}
-		ignored, err := denieddb.Ignored(db, m.filter)
-		if err != nil {
-			return refreshMsg{err: err}
-		}
-		return refreshMsg{pending: pending, ignored: ignored}
-	}
-}
-
-func (m Model) toggleSelect() tea.Cmd {
-	sel := m.list.SelectedItem()
-	i, ok := sel.(item)
-	if !ok || i.ignored {
-		return nil
-	}
-	i.selected = !i.selected
-	idx := -1
-	for j, it := range m.list.Items() {
-		if it.(item).host == i.host {
-			idx = j
-			break
-		}
-	}
-	if idx < 0 {
-		return nil
-	}
-	return m.list.SetItem(idx, i)
-}
-
-// setSelected selects or clears every pending item, ignoring any active
-// filter. Ignored rows are never selectable.
-func (m Model) setSelected(selected bool) tea.Cmd {
-	items := m.list.Items()
-	changed := false
-	for idx, it := range items {
-		i, ok := it.(item)
-		if !ok || i.ignored {
-			continue
-		}
-		if i.selected != selected {
-			i.selected = selected
-			items[idx] = i
-			changed = true
-		}
-	}
-	if !changed {
-		return nil
-	}
-	return m.list.SetItems(items)
-}
-
-func (m Model) toggleIgnored() (Model, tea.Cmd) {
-	m.showIgnored = !m.showIgnored
-	m.list.Title = title(m.showIgnored, m.filter)
-	return m, m.list.SetItems(buildItems(m.pendingRows, m.ignoredRows, m.showIgnored, currentSelection(m.list)))
-}
-
-func (m Model) approve() (Model, tea.Cmd) {
-	rows := selectedRows(m.list)
+func (m Model) approve() (tea.Model, tea.Cmd) {
+	rows := m.selectedRows()
 	if len(rows) == 0 {
 		m.status = "select hosts with space"
 		return m, nil
@@ -263,8 +252,8 @@ func (m Model) approve() (Model, tea.Cmd) {
 	return m, m.actionCmd(actionApprove, rows)
 }
 
-func (m Model) ignore() (Model, tea.Cmd) {
-	rows := selectedRows(m.list)
+func (m Model) ignore() (tea.Model, tea.Cmd) {
+	rows := m.selectedRows()
 	if len(rows) == 0 {
 		m.status = "select hosts with space"
 		return m, nil
@@ -300,18 +289,30 @@ func (m Model) actionCmd(kind action, rows []denieddb.DeniedHost) tea.Cmd {
 	}
 }
 
-func (m Model) applyAction(msg actionMsg) (Model, tea.Cmd) {
+func (m Model) applyRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "refresh failed: " + msg.err.Error()
+		return m, nil
+	}
+	m.pendingRows = msg.pending
+	m.ignoredRows = msg.ignored
+	m.rebuildRows(true)
+	return m, nil
+}
+
+func (m Model) applyAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		m.status = "error: " + msg.err.Error()
 		return m, nil
 	}
 	handled := map[string]bool{}
 	for _, r := range msg.rows {
-		handled[r.Host+"@"+r.Session] = true
+		handled[rowKey(r)] = true
+		delete(m.selected, rowKey(r))
 	}
 	var kept []denieddb.DeniedHost
 	for _, h := range m.pendingRows {
-		if handled[h.Host+"@"+h.Session] {
+		if handled[rowKey(h)] {
 			if msg.kind == actionIgnore {
 				h.Allowed = true
 				h.Ignored = true
@@ -323,11 +324,75 @@ func (m Model) applyAction(msg actionMsg) (Model, tea.Cmd) {
 		kept = append(kept, h)
 	}
 	m.pendingRows = kept
+	m.rebuildRows(true)
 	switch msg.kind {
 	case actionApprove:
 		m.status = fmt.Sprintf("approved %d host(s) — proxies reload within ~1s", len(msg.rows))
 	case actionIgnore:
 		m.status = fmt.Sprintf("ignored %d host(s) — press t to review ignored hosts", len(msg.rows))
 	}
-	return m, m.list.SetItems(buildItems(m.pendingRows, m.ignoredRows, m.showIgnored, currentSelection(m.list)))
+	return m, nil
 }
+
+func (m Model) refreshCmd() tea.Cmd {
+	db := m.db
+	filter := m.filter
+	return func() tea.Msg {
+		pending, err := denieddb.Pending(db, filter)
+		if err != nil {
+			return refreshMsg{err: err}
+		}
+		ignored, err := denieddb.Ignored(db, filter)
+		if err != nil {
+			return refreshMsg{err: err}
+		}
+		return refreshMsg{pending: pending, ignored: ignored}
+	}
+}
+
+func title(showIgnored bool, f denieddb.Filter) string {
+	t := "denied hosts awaiting review"
+	if showIgnored {
+		t = "denied hosts — pending and ignored"
+	}
+	var scope []string
+	if f.Session != "" {
+		scope = append(scope, "session "+f.Session)
+	}
+	if f.Workspace != "" {
+		scope = append(scope, "workspace "+f.Workspace)
+	}
+	if len(scope) > 0 {
+		t += " — " + strings.Join(scope, ", ")
+	}
+	return t
+}
+
+func (m Model) View() string {
+	total := len(m.pendingRows)
+	if m.showIgnored {
+		total += len(m.ignoredRows)
+	}
+	var sections []string
+	sections = append(sections, title(m.showIgnored, m.filter))
+	if len(m.rows) == 0 {
+		sections = append(sections, "No denied hosts.")
+	} else {
+		sections = append(sections, m.table.View())
+	}
+	status := fmt.Sprintf("%d denied host(s)", total)
+	if n := len(m.selected); n > 0 {
+		status += fmt.Sprintf("  ·  %d selected", n)
+	}
+	if m.status != "" {
+		status += "  ·  " + m.status
+	}
+	sections = append(sections, statusStyle.Render(status))
+	sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • r refresh • q quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+var (
+	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+)

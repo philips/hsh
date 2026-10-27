@@ -10,6 +10,7 @@ type keyMap struct {
 	Ignore        key.Binding
 	ToggleIgnored key.Binding
 	Refresh       key.Binding
+	Quit          key.Binding
 }
 
 var keys = keyMap{
@@ -20,6 +21,7 @@ var keys = keyMap{
 	Ignore:        key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "ignore")),
 	ToggleIgnored: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "ignored")),
 	Refresh:       key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+	Quit:          key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 func (k keyMap) shortHelp() []key.Binding {

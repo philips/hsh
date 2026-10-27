@@ -115,8 +115,8 @@ func hasHost(hosts []string, host string) bool {
 
 func listHosts(m Model) []string {
 	var hosts []string
-	for _, it := range m.list.Items() {
-		hosts = append(hosts, it.(item).host)
+	for _, r := range m.rows {
+		hosts = append(hosts, r.Host)
 	}
 	return hosts
 }
@@ -191,11 +191,10 @@ func TestShowIgnoredToggle(t *testing.T) {
 
 	m, _ = send(m, keyMsg("t"))
 	idx := -1
-	for j, it := range m.list.Items() {
-		i := it.(item)
-		if i.host == "beta.example.com" {
+	for j, r := range m.rows {
+		if r.Host == "beta.example.com" {
 			idx = j
-			if !i.ignored {
+			if !r.Ignored {
 				t.Error("row shown in the ignored view is not marked ignored")
 			}
 		}
@@ -204,12 +203,13 @@ func TestShowIgnoredToggle(t *testing.T) {
 		t.Fatal("ignored host not shown after toggling show-ignored")
 	}
 
-	m.list.Select(idx)
+	m.table.SetCursor(idx)
 	m, _ = send(m, keyMsg(" "))
-	for _, it := range m.list.Items() {
-		if i := it.(item); i.host == "beta.example.com" && i.selected {
-			t.Error("ignored host became selectable")
-		}
+	if m.selected[rowKey(m.rows[idx])] {
+		t.Error("ignored host became selectable")
+	}
+	if m.status != "ignored rows cannot be selected" {
+		t.Errorf("unexpected status %q", m.status)
 	}
 
 	pending, err := denieddb.Pending(env.db, denieddb.Filter{})
@@ -240,32 +240,15 @@ func TestSortMostRecentFirst(t *testing.T) {
 	}
 }
 
-func TestSelectAllIgnoresFilter(t *testing.T) {
+func TestSelectAllAndNone(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com", "gamma.example.com")
-	m := env.model
-	m.list.SetFilterText("beta")
-	if got := len(m.list.VisibleItems()); got != 1 {
-		t.Fatalf("filter did not narrow the list: %d visible", got)
-	}
-	m, _ = send(m, keyMsg("a"))
-	selected := 0
-	for _, it := range m.list.Items() {
-		if it.(item).selected {
-			selected++
-		}
-	}
-	if selected != 3 {
-		t.Errorf("select-all acted on the filtered view: %d of 3 selected", selected)
+	m, _ := send(env.model, keyMsg("a"))
+	if len(m.selected) != 3 {
+		t.Fatalf("select-all selected %d, want 3", len(m.selected))
 	}
 	m, _ = send(m, keyMsg("n"))
-	selected = 0
-	for _, it := range m.list.Items() {
-		if it.(item).selected {
-			selected++
-		}
-	}
-	if selected != 0 {
-		t.Errorf("select-none acted on the filtered view: %d still selected", selected)
+	if len(m.selected) != 0 {
+		t.Fatalf("select-none left %d selected", len(m.selected))
 	}
 }
 
