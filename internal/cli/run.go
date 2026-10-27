@@ -459,6 +459,12 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			return err
 		}
 		wsArgs = append(wsArgs, "--exec-json", string(execJSON))
+	} else if len(cfg.Agent.Launch) > 0 {
+		launchJSON, err := json.Marshal(cfg.Agent.Launch)
+		if err != nil {
+			return err
+		}
+		wsArgs = append(wsArgs, "--launch-json", string(launchJSON))
 	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	if reattach {

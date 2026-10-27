@@ -23,6 +23,7 @@ import (
 type ParentOptions struct {
 	Shell     string
 	Exec      []string
+	Launch    []string
 	Workspace string
 	Home      string
 	CACert    string
@@ -33,6 +34,7 @@ type ParentOptions struct {
 type InnerOptions struct {
 	Shell     string
 	Exec      []string
+	Launch    []string
 	Workspace string
 	Home      string
 	CACert    string
@@ -77,6 +79,13 @@ func RunParent(opts ParentOptions) error {
 			return err
 		}
 		innerArgs = append(innerArgs, "--exec-json", string(execJSON))
+	}
+	if len(opts.Launch) > 0 {
+		launchJSON, err := json.Marshal(opts.Launch)
+		if err != nil {
+			return err
+		}
+		innerArgs = append(innerArgs, "--launch-json", string(launchJSON))
 	}
 	if opts.InnerExe == "" {
 		innerArgs = append([]string{"workspace-inner"}, innerArgs...)
@@ -192,7 +201,26 @@ func RunInner(opts InnerOptions) error {
 		}
 		return syscall.Exec(argv[0], argv, buildEnv(opts))
 	}
-	return syscall.Exec(opts.Shell, []string{opts.Shell}, buildEnv(opts))
+	shellArgs := []string{opts.Shell}
+	if len(opts.Launch) > 0 && filepath.Base(opts.Shell) == "bash" {
+		rcPath := filepath.Join(opts.Home, ".hsh-launch.bashrc")
+		if err := writeLaunchRC(rcPath, opts.Launch); err != nil {
+			return err
+		}
+		shellArgs = append(shellArgs, "--rcfile", rcPath)
+	}
+	return syscall.Exec(opts.Shell, shellArgs, buildEnv(opts))
+}
+
+func writeLaunchRC(path string, argv []string) error {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", "'\\''") + "'"
+	}
+	rc := "set -m\n"
+	rc += "[ -r \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"\n"
+	rc += strings.Join(quoted, " ") + "\n"
+	return os.WriteFile(path, []byte(rc), 0o644)
 }
 
 func waitForProxy(addr string, timeout time.Duration) error {

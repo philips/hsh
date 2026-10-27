@@ -41,6 +41,9 @@ func TestHarnessImageLabels(t *testing.T) {
 		if len(cfg.Agent.Command) == 0 {
 			t.Errorf("%s: label has no agent command", cf)
 		}
+		if len(cfg.Agent.Launch) == 0 {
+			t.Errorf("%s: label has no agent launch (interactive sessions auto-launch the harness)", cf)
+		}
 		for name, secret := range cfg.Secrets {
 			scheme, _, err := ParseSecretRef(secret.From)
 			if err != nil {

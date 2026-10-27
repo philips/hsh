@@ -29,8 +29,20 @@ provider API hosts in `network.allow`, and the `secrets` that reference
 the [hsh secret store](config.md#the-hsh-secret-store) (`hsh://NAME`)
 for the provider's API key.
 
-It also declares how the image's agent runs headless, which is what
-`hsh run --tasks` uses:
+It also declares the agent argv, in two forms:
+
+```json
+"agent": {"command": ["pi", "-p", "{prompt}"], "launch": ["pi"]}
+```
+
+- `command` is the headless template `hsh run --tasks` substitutes the
+  task prompt into
+- `launch` is the argv an **interactive session auto-launches from the
+  shell**: bash starts, sources its rcfiles, and runs the harness as a
+  normal foreground job — Ctrl-Z suspends it and drops you at the bash
+  prompt (`jobs`, `fg`, `bg` all work), and exiting the harness leaves
+  you in the shell. Piped/non-interactive sessions do not launch
+  anything, so scripted use is unaffected.
 
 ```json
 "agent": {"command": ["pi", "-p", "{prompt}"]}

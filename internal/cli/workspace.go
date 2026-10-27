@@ -17,6 +17,7 @@ func Workspace(args []string) error {
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
 	home := fs.String("home", "/home/hsh", "home directory")
 	innerExe := fs.String("inner-exe", "", "path to the hsh-workspace-inner binary (empty: re-exec self with the workspace-inner subcommand)")
+	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -26,9 +27,16 @@ func Workspace(args []string) error {
 			return err
 		}
 	}
+	var launch []string
+	if *launchJSON != "" {
+		if err := json.Unmarshal([]byte(*launchJSON), &launch); err != nil {
+			return err
+		}
+	}
 	return workspace.RunParent(workspace.ParentOptions{
 		Shell:     *shell,
 		Exec:      exec,
+		Launch:    launch,
 		Workspace: *workspaceDir,
 		Home:      *home,
 		CACert:    *caCert,
@@ -45,6 +53,7 @@ func WorkspaceInner(args []string) error {
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
 	home := fs.String("home", "/home/hsh", "home directory")
+	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,9 +63,16 @@ func WorkspaceInner(args []string) error {
 			return err
 		}
 	}
+	var launch []string
+	if *launchJSON != "" {
+		if err := json.Unmarshal([]byte(*launchJSON), &launch); err != nil {
+			return err
+		}
+	}
 	return workspace.RunInner(workspace.InnerOptions{
 		Shell:     *shell,
 		Exec:      exec,
+		Launch:    launch,
 		Workspace: *workspaceDir,
 		Home:      *home,
 		CACert:    *caCert,

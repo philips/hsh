@@ -150,7 +150,13 @@ The child then:
 - creates the home directory, strips setuid/setgid bits from the container
   filesystem (excluding the workspace mount)
 - drops all capabilities except CAP_DAC_OVERRIDE and sets `PR_SET_NO_NEW_PRIVS`
-- `chdir`s into the workspace and `exec`s the configured shell
+- `chdir`s into the workspace and `exec`s the configured shell. When the
+  config's `agent.launch` is set and the shell is bash, the shell is
+  exec'd with `--rcfile` pointing at a generated rcfile (job control
+  enabled via `set -m`, standard rcfiles sourced, then the launch argv
+  run as a foreground job): interactive sessions auto-launch the agent
+  harness, Ctrl-Z suspends it into the shell, and non-interactive
+  sessions skip it because bash only reads the rcfile when interactive
 
 The shell runs as container uid 0, which rootless podman maps to the invoking
 host user, so files written to mounted directories are owned by the host

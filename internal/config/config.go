@@ -64,6 +64,7 @@ type Config struct {
 
 type Agent struct {
 	Command []string `json:"command"`
+	Launch  []string `json:"launch"`
 }
 
 func ParseTasks(data []byte) []string {

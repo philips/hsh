@@ -609,6 +609,77 @@ fi
 pass "a missing store entry warns and fails open, like an unset env var"
 unset XDG_CONFIG_HOME
 
+echo "== step 14: interactive sessions auto-launch the agent harness (Ctrl-Z suspends to bash)"
+mkdir -p "$TMP/launchws"
+echo launch-mount >"$TMP/launchws/marker.txt"
+cat >"$TMP/launch.Containerfile" <<EOF
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"mode":"allowlist","allow":["host.containers.internal"]},"agent":{"launch":["bash","-c","echo HARNESS-LAUNCHED; sleep 120"]}}'
+EOF
+podman build -q -t hsh-launch-test:latest -f "$TMP/launch.Containerfile" "$TMP" >/dev/null || fail "could not build the launch test image"
+
+(cd "$TMP/launchws" && "$HSH" run hsh-launch-test:latest) >"$TMP/launch-piped.out" 2>&1 <<'CMDS' || true
+echo piped-session
+exit
+CMDS
+if grep -q HARNESS-LAUNCHED "$TMP/launch-piped.out"; then
+	fail "a non-interactive session must not auto-launch the harness"
+fi
+pass "piped sessions do not auto-launch the harness"
+
+if command -v python3 >/dev/null; then
+	LAUNCH_OUT="$(cd "$TMP/launchws" && python3 - "$HSH" <<'PYDRIVER'
+import os, pty, select, sys, time
+hsh = sys.argv[1]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(hsh, [hsh, "run", "hsh-launch-test:latest"])
+out = b""
+sent_z = False
+deadline = time.time() + 60
+while time.time() < deadline:
+    r, _, _ = select.select([fd], [], [], 1)
+    if r:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+        if b"HARNESS-LAUNCHED" in out and not sent_z:
+            sent_z = True
+            time.sleep(1)
+            os.write(fd, b"\x1a")
+            time.sleep(2)
+            os.write(fd, b"echo SUSPENDED-TO-BASH; jobs\r")
+    if b"SUSPENDED-TO-BASH" in out:
+        time.sleep(1)
+        os.write(fd, b"exit\r")
+        break
+time.sleep(2)
+try:
+    while True:
+        r, _, _ = select.select([fd], [], [], 0.5)
+        if not r:
+            break
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        out += chunk
+except OSError:
+    pass
+sys.stdout.write(out.decode(errors="replace"))
+PYDRIVER
+)"
+	echo "$LAUNCH_OUT" | grep -q HARNESS-LAUNCHED || fail "the harness did not auto-launch in the interactive session"
+	echo "$LAUNCH_OUT" | grep -q "SUSPENDED-TO-BASH" || fail "Ctrl-Z did not suspend the harness to the shell"
+	echo "$LAUNCH_OUT" | grep -q "Stopped" || fail "the suspended harness is not listed as a stopped job"
+	pass "interactive sessions auto-launch the harness; Ctrl-Z suspends it into bash"
+else
+	echo "SKIP: interactive launch check (no python3 for the pty driver)"
+fi
+
 echo "== final sweep: every session the test created is removable"
 "$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"
 if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then
