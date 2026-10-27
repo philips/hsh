@@ -105,6 +105,52 @@ inside the workspace.
 - A failed callback URL contains a live authorization code — treat it
   as sensitive and do not share it (it is single-use, but still).
 
+## Why a proxy-side MITM cannot replace the bridge
+
+The egress proxy only ever sees the sandbox's own outbound traffic.
+The two legs that hurt are browser legs, and they happen on the
+user's laptop:
+
+- **the authorize request** (browser → provider) — never traverses
+  the sandbox's egress; the CLI only prints the URL, it does not
+  fetch it
+- **the redirect** (provider → browser → `127.0.0.1:1455`) — again
+  laptop-side; and the `redirect_uri` is pinned by the provider to
+  the CLI's loopback (RFC 8252; providers do not allow registering a
+  proxy-hosted redirect URI), so the proxy cannot host the callback
+  endpoint itself
+
+Three MITM-shaped alternatives and why they lose to the bridge:
+
+1. **Route the user's browser through the hsh proxy** (publish the
+   proxy, `ssh -L` it, point the laptop browser at it): the proxy
+   would then see the redirect and could absorb the code — but it
+   requires installing hsh's MITM CA into the user's personal browser
+   and routing their browsing through the sandbox's policy engine.
+   Strictly worse than forwarding one loopback port, and it widens
+   the blast radius of the MITM CA from "this sandbox" to "my
+   laptop's browser". Rejected.
+2. **Proxy-hosted login broker**: the CLI prints the provider's
+   authorize URL directly; hsh cannot change that URL, and providers
+   pin `redirect_uri`. There is nothing for the proxy to host.
+   Rejected — structurally impossible.
+3. **MITM the token exchange** — the one leg the proxy does see, and
+   it is already implemented (plan 0011): the exchange POST carries
+   the code and PKCE verifier through the egress proxy, which
+   captures the real tokens and returns phantoms. This is why the
+   bridge is the *only* missing piece: once the callback delivers the
+   code to the CLI, the rest of the login is already sandbox-safe.
+
+A **paste variant** of the bridge is worth recording: the user's
+browser lands on the failed callback URL (which contains
+`code`+`state`), and a host-side command replays it into the sandbox —
+`hsh oauth callback '<url>'`. It reuses exactly the same relay parts
+(pod-netns relay + workspace forwarder) without the published port,
+trades automation for not opening a listener, and works when the
+code/state are still valid (they are single-use but short-lived, so
+this is time-sensitive). It shares the bridge's security properties
+because the delivery path is the same.
+
 ## Implementation sketch
 
 - `internal/cli/run.go`: parse `--forward` (repeatable), pass to the
