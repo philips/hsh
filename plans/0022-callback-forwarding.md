@@ -151,6 +151,19 @@ code/state are still valid (they are single-use but short-lived, so
 this is time-sensitive). It shares the bridge's security properties
 because the delivery path is the same.
 
+The paste command resolves its target session the same way
+`hsh run --resume` does: run from the workspace directory, the
+`hsh.workspace` pod label identifies the session — the only one is
+used, several produce resume's list-the-ids error, and `--session`
+picks explicitly. The target port comes from the callback URL itself
+(`127.0.0.1:1455`). Mis-delivery fails safe: the OAuth `state` in the
+pasted URL does not match the state the target session's CLI
+generated, so a wrong-session delivery is rejected by the CLI — the
+state parameter is the protection. If no login is in progress, the
+connection to the replayed loopback port simply refuses. Contrast
+`--forward`, which is unambiguous by construction: the flag is on
+`hsh run`, so the published port belongs to that session.
+
 ## Implementation sketch
 
 - `internal/cli/run.go`: parse `--forward` (repeatable), pass to the
