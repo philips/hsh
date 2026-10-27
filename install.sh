@@ -112,7 +112,7 @@ case ":$PATH:" in
 esac
 
 # --- print README section ----------------------------------------------------
-README_URL="https://raw.githubusercontent.com/philips/hsh/refs/heads/main/README.md"
+README_URL="${HSH_README_URL:-https://raw.githubusercontent.com/philips/hsh/refs/heads/main/README.md}"
 if readme="$(curl -fsSL "$README_URL" 2>/dev/null)" && [ -n "$readme" ]; then
   section="$(printf '%s\n' "$readme" | sed -n '/<!--- install.sh START -->/,/<!--- install.sh END -->/p' \
     | sed '1d;$d' | sed -e '/./,$!d' -e ':a' -e '/^[[:space:]]*$/{$d;N;ba' -e '}')"
@@ -121,3 +121,6 @@ if readme="$(curl -fsSL "$README_URL" 2>/dev/null)" && [ -n "$readme" ]; then
     printf '%s\n' "$section"
   fi
 fi
+
+info ""
+info "Get started:  hsh run --config examples/config.hsh"

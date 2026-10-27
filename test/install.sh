@@ -132,6 +132,55 @@ sh "$REPO/install.sh" >"$TMP/install4.out" 2>&1 || { cat "$TMP/install4.out"; fa
 [ ! -f "$HOME/.bashrc" ] || fail "rc file was edited even though the dir is on PATH"
 pass "leaves the rc file alone when the dir is already on PATH"
 
+echo "== README section is printed"
+cat > "$TMP/www/README.md" <<'EOF'
+# hsh
+intro
+
+<!--- install.sh START -->
+
+Quick start:
+
+```
+hsh run pi
+```
+
+<!--- install.sh END -->
+
+trailing text
+EOF
+cp "$REPO/README.md" "$TMP/readme-repo-copy"
+HSH_README_URL="http://127.0.0.1:$PORT/README.md" sh "$REPO/install.sh" >"$TMP/install5.out" 2>&1 \
+	|| { cat "$TMP/install5.out"; fail "install with HSH_README_URL failed"; }
+grep -qF "Quick start:" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "README section missing from output"; }
+grep -qF "hsh run pi" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "README code block missing from output"; }
+! grep -qF "intro" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "text before the START marker was printed"; }
+! grep -qF "trailing text" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "text after the END marker was printed"; }
+! grep -qF "install.sh START" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "marker lines were printed"; }
+grep -qF "Get started:" "$TMP/install5.out" || { cat "$TMP/install5.out"; fail "post-README output missing"; }
+pass "prints the README section between the markers"
+
+sin1=$(grep -nF "<!--- install.sh START -->" "$REPO/README.md" | head -1 | cut -d: -f1)
+sin2=$(grep -nF "<!--- install.sh END -->" "$REPO/README.md" | head -1 | cut -d: -f1)
+[ -n "$sin1" ] && [ -n "$sin2" ] && [ "$sin1" -lt "$sin2" ] \
+	|| fail "README.md must contain START and END markers in order"
+pass "README.md contains well-formed markers"
+
+echo "== README fetch failure is non-fatal"
+mv "$TMP/www/README.md" "$TMP/www/README.bak"
+cat > "$TMP/www/README.md" <<'EOF'
+no markers here
+EOF
+HSH_README_URL="http://127.0.0.1:$PORT/README.md" sh "$REPO/install.sh" >"$TMP/install6.out" 2>&1 \
+	|| { cat "$TMP/install6.out"; fail "install failed when README had no markers"; }
+! grep -qF "no markers here" "$TMP/install6.out" || { cat "$TMP/install6.out"; fail "printed README content despite missing markers"; }
+grep -qF "Get started:" "$TMP/install6.out" || { cat "$TMP/install6.out"; fail "missing tail output with no markers"; }
+rm "$TMP/www/README.md"
+HSH_README_URL="http://127.0.0.1:$PORT/README.md" sh "$REPO/install.sh" >"$TMP/install7.out" 2>&1 \
+	|| { cat "$TMP/install7.out"; fail "install failed when README fetch 404'd"; }
+grep -qF "Get started:" "$TMP/install7.out" || { cat "$TMP/install7.out"; fail "missing tail output on 404"; }
+pass "a missing or marker-less README does not break the install"
+
 echo
 echo "ALL INSTALLER TESTS PASSED"
 PASSED=1
