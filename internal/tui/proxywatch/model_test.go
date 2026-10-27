@@ -314,3 +314,69 @@ func TestQuitKeys(t *testing.T) {
 		t.Errorf("esc did not produce a quit message: %T", runCmd(cmd))
 	}
 }
+
+func typeRunes(m Model, s string) Model {
+	for _, r := range s {
+		m, _ = send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return m
+}
+
+func TestFilterLiveAndAccept(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
+	m, _ := send(env.model, keyMsg("/"))
+	if !m.filtering {
+		t.Fatal("pressing / did not start filtering")
+	}
+	m = typeRunes(m, "beta")
+	if got := listHosts(m); len(got) != 1 || got[0] != "beta.example.com" {
+		t.Fatalf("live filter did not narrow to beta: %v", got)
+	}
+	m, _ = send(m, keyMsg("enter"))
+	if m.filtering {
+		t.Fatal("enter did not accept the filter")
+	}
+	if got := listHosts(m); len(got) != 1 {
+		t.Fatalf("accepted filter not applied: %v", got)
+	}
+	m, _ = send(m, keyMsg("/"))
+	m, _ = send(m, keyMsg("esc"))
+	if m.filterText() != "" {
+		t.Fatal("esc did not clear the filter")
+	}
+	if got := listHosts(m); len(got) != 2 {
+		t.Fatalf("cleared filter did not restore all rows: %v", got)
+	}
+}
+
+func TestFilterTabCompletion(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
+	m, _ := send(env.model, keyMsg("/"))
+	m = typeRunes(m, "al")
+	m, _ = send(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.filterInput.Value(); got != "alpha.example.com" {
+		t.Fatalf("tab did not complete the unique prefix: %q", got)
+	}
+	if got := listHosts(m); len(got) != 1 || got[0] != "alpha.example.com" {
+		t.Fatalf("completed filter not applied: %v", got)
+	}
+
+	m, _ = send(m, keyMsg("esc"))
+	m, _ = send(m, keyMsg("/"))
+	m = typeRunes(m, "example")
+	m, _ = send(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := m.filterInput.Value(); got != "example" {
+		t.Fatalf("ambiguous completion should keep the common prefix: %q", got)
+	}
+	if !strings.Contains(m.status, "completions:") {
+		t.Fatalf("ambiguous completion should list candidates: %q", m.status)
+	}
+
+	m, _ = send(m, keyMsg("esc"))
+	m, _ = send(m, keyMsg("/"))
+	m = typeRunes(m, "zzz")
+	m, _ = send(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !strings.Contains(m.status, "no completion") {
+		t.Fatalf("no-match completion status: %q", m.status)
+	}
+}

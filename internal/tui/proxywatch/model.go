@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -27,6 +28,9 @@ type Model struct {
 	ignoredRows []denieddb.DeniedHost
 	rows        []denieddb.DeniedHost
 	selected    map[string]bool
+
+	filtering   bool
+	filterInput textinput.Model
 
 	width  int
 	height int
@@ -81,7 +85,9 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 		width:       80,
 		height:      24,
 	}
-	m.rows = m.allRows()
+	m.filterInput = textinput.New()
+	m.filterInput.Prompt = "/"
+	m.rows = m.visibleRows()
 	m.table = table.New(
 		table.WithColumns(defaultColumns(80)),
 		table.WithRows(m.tableRows(m.rows)),
@@ -140,7 +146,7 @@ func (m *Model) rebuildRows(preserveCursor bool) {
 	if preserveCursor && len(m.rows) > 0 && m.table.Cursor() < len(m.rows) {
 		cursorKey = rowKey(m.rows[m.table.Cursor()])
 	}
-	m.rows = m.allRows()
+	m.rows = m.visibleRows()
 	m.table.SetRows(m.tableRows(m.rows))
 	if cursorKey != "" {
 		for i, h := range m.rows {
@@ -150,6 +156,103 @@ func (m *Model) rebuildRows(preserveCursor bool) {
 			}
 		}
 	}
+}
+
+func (m Model) filterText() string {
+	return strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+}
+
+func (m Model) visibleRows() []denieddb.DeniedHost {
+	all := m.allRows()
+	f := m.filterText()
+	if f == "" {
+		return all
+	}
+	var rows []denieddb.DeniedHost
+	for _, h := range all {
+		if strings.Contains(strings.ToLower(h.Session), f) ||
+			strings.Contains(strings.ToLower(h.Workspace), f) ||
+			strings.Contains(strings.ToLower(h.Host), f) {
+			rows = append(rows, h)
+		}
+	}
+	return rows
+}
+
+func (m Model) completionCandidates() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, h := range m.allRows() {
+		for _, c := range []string{h.Session, h.Workspace, h.Host} {
+			if c != "" && !seen[c] {
+				seen[c] = true
+				out = append(out, c)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (m *Model) completeFilter() {
+	input := m.filterInput.Value()
+	if input == "" {
+		m.status = "type a session, workspace, or host to complete"
+		return
+	}
+	lower := strings.ToLower(input)
+	var prefixMatches []string
+	var substrMatches []string
+	for _, c := range m.completionCandidates() {
+		cl := strings.ToLower(c)
+		if strings.HasPrefix(cl, lower) {
+			prefixMatches = append(prefixMatches, c)
+		} else if strings.Contains(cl, lower) {
+			substrMatches = append(substrMatches, c)
+		}
+	}
+	switch {
+	case len(prefixMatches) == 1:
+		m.filterInput.SetValue(prefixMatches[0])
+		m.status = ""
+	case len(prefixMatches) > 1:
+		m.filterInput.SetValue(commonPrefix(prefixMatches))
+		m.status = "completions: " + strings.Join(prefixMatches[:min(len(prefixMatches), 5)], "  ")
+	case len(substrMatches) == 1:
+		m.filterInput.SetValue(substrMatches[0])
+		m.status = ""
+	case len(substrMatches) > 1:
+		m.status = "completions: " + strings.Join(substrMatches[:min(len(substrMatches), 5)], "  ")
+	default:
+		m.status = "no completion for " + input
+	}
+	m.rebuildRows(false)
+}
+
+func commonPrefix(values []string) string {
+	p := values[0]
+	for _, v := range values[1:] {
+		for !strings.HasPrefix(v, p) && p != "" {
+			p = p[:len(p)-1]
+		}
+	}
+	return p
+}
+
+func (m *Model) startFiltering() {
+	m.filtering = true
+	m.status = ""
+	m.filterInput.Focus()
+	m.filterInput.SetValue("")
+}
+
+func (m *Model) stopFiltering(clear bool) {
+	m.filtering = false
+	m.filterInput.Blur()
+	if clear {
+		m.filterInput.SetValue("")
+	}
+	m.rebuildRows(false)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -181,9 +284,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg, ok := msg.(tea.KeyMsg); ok {
+		if m.filtering {
+			switch {
+			case msg.Type == tea.KeyCtrlC:
+				return m, tea.Quit
+			case key.Matches(msg, keys.FilterAccept):
+				m.stopFiltering(false)
+				return m, nil
+			case key.Matches(msg, keys.FilterCancel):
+				m.stopFiltering(true)
+				return m, nil
+			case key.Matches(msg, keys.FilterComplete):
+				m.completeFilter()
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.rebuildRows(false)
+			return m, cmd
+		}
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, keys.Filter):
+			m.startFiltering()
+			return m, nil
 		case key.Matches(msg, keys.Refresh):
 			return m, m.refreshCmd()
 		case key.Matches(msg, keys.Select):
@@ -376,11 +501,18 @@ func (m Model) View() string {
 	var sections []string
 	sections = append(sections, title(m.showIgnored, m.filter))
 	if len(m.rows) == 0 {
-		sections = append(sections, "No denied hosts.")
+		if m.filterText() != "" {
+			sections = append(sections, "Nothing matches the filter.")
+		} else {
+			sections = append(sections, "No denied hosts.")
+		}
 	} else {
 		sections = append(sections, m.table.View())
 	}
 	status := fmt.Sprintf("%d denied host(s)", total)
+	if len(m.rows) < total {
+		status += fmt.Sprintf("  ·  %d shown", len(m.rows))
+	}
 	if n := len(m.selected); n > 0 {
 		status += fmt.Sprintf("  ·  %d selected", n)
 	}
@@ -388,7 +520,12 @@ func (m Model) View() string {
 		status += "  ·  " + m.status
 	}
 	sections = append(sections, statusStyle.Render(status))
-	sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • r refresh • q quit"))
+	if m.filtering {
+		sections = append(sections, "  filter: "+m.filterInput.View())
+		sections = append(sections, helpStyle.Render("  type to filter (session, workspace, url) • tab complete • enter apply • esc clear"))
+	} else {
+		sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • / filter • r refresh • q quit"))
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 

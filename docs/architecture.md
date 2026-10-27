@@ -299,8 +299,12 @@ width. Keys: `space` select the cursor row, `a`/`n` select/clear all,
 `enter` approve the selected hosts (added to the session's
 `network.allow`, marked allowed), `i` ignore them (marked handled
 without allowing), `t` toggle a view of ignored rows (marked
-"(ignored)", not selectable), `r` refresh, `↑/↓/j/k` navigate, `q`
-quit. Keys: `space` select,
+"(ignored)", not selectable), `/` filter the table live while typing
+(matches session ids, workspaces, and hosts; `tab` completes the input
+against sessions, workspaces, and hostnames — unique matches fill in,
+ambiguous ones extend to the common prefix and list the candidates in
+the status line; `enter` keeps the filter, `esc` clears it), `r`
+refresh, `↑/↓/j/k` navigate, `q` quit. Keys: `space` select,
 `a`/`n` select/clear all (ignoring any active filter), `/` filter,
 `enter` approve the selected hosts (added to the session's
 `network.allow`, marked allowed), `i` ignore them (marked handled
