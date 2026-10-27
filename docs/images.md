@@ -17,6 +17,7 @@ container label. Published to ghcr.io by two workflows:
 | `ghcr.io/<owner>/hsh-vibe` | Mistral Vibe | `https://mistral.ai/vibe/install.sh` |
 | `ghcr.io/<owner>/hsh-claude-code` | Claude Code | `https://claude.ai/install.sh` |
 | `ghcr.io/<owner>/hsh-codex` | OpenAI Codex | `https://chatgpt.com/codex/install.sh` |
+| `ghcr.io/<owner>/hsh-muse-code` | Meta Muse Code | `https://dev.meta.ai/install.sh` |
 
 Build one locally with `podman build -t hsh-vibe images/vibe/`.
 
@@ -49,8 +50,8 @@ It also declares the agent argv, in two forms:
 ```
 
 `command` is an argv template; `{prompt}` is replaced by the composed
-task prompt. `pi -p`, `vibe -p`, `claude -p`, and `codex exec` are the
-headless invocations of the four harness images.
+task prompt. `pi -p`, `vibe -p`, `claude -p`, `codex exec`, and `muse exec`
+are the headless invocations of the five harness images.
 
 `hsh run IMAGE` in a directory without a `config.hsh` uses the
 image's label as its config:
@@ -107,6 +108,16 @@ sandbox. `--tasks -` reads the task list from stdin.
   `raw.githubusercontent.com`.
 - **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
   allows `auth.openai.com` and `chatgpt.com` (account login flows).
+- **muse-code** — `hsh://meta-api-key` (Bearer) to `api.meta.ai`; also
+  allows `auth.meta.com`, `accountscenter.meta.com`, and `dev.meta.ai`
+  (device-flow login and the installer). Muse Code refuses to start without
+  a local credential, so the image bakes a placeholder `META_API_KEY`
+  (muse sends it; the proxy replaces the header with the store's key —
+  the [placeholder key pattern](config.md#secrets)).
+  Set `MUSE_NO_AUTO_UPDATE=1` so the launcher's hourly self-update stays out
+  of the allowlist (the weekly image rebuild keeps the binary current).
+  For a Meta subscription login instead: `unset META_API_KEY`, then
+  `muse login` (device flow through `auth.meta.com`).
 
 Secrets are resolved from the host-side hsh secret store at launch
 time, so before the first run store the provider key under the image's

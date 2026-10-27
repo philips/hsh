@@ -69,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [pi, vibe, claude-code, codex]
+        name: [pi, vibe, claude-code, codex, muse-code]
     steps:
       - uses: actions/checkout@v4
 
