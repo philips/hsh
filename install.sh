@@ -121,6 +121,3 @@ if readme="$(curl -fsSL "$README_URL" 2>/dev/null)" && [ -n "$readme" ]; then
     printf '%s\n' "$section"
   fi
 fi
-
-info ""
-info "Get started:  hsh run --config examples/config.hsh"
