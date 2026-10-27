@@ -708,8 +708,10 @@ echo SHORTNAME-SESSION
 exit
 CMDS
 grep -q '^SHORTNAME-SESSION$' "$TMP/short-run.out" || fail "hsh run pi did not start the ghcr.io/philips/hsh-pi shortname: $(cat "$TMP/short-run.out")"
-SESSION_CFG="$(find "$XDG_STATE_HOME/hsh/sessions" -name config.json | head -1)"
-grep -q '"image": "ghcr.io/philips/hsh-pi"' "$SESSION_CFG" || fail "the session config does not hold the resolved image reference"
+SN_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/shortws" --format '{{.Name}}' | head -1)"
+[ -n "$SN_SESSION" ] || fail "the shortname run left no session pod"
+SESSION_CFG="$XDG_STATE_HOME/hsh/sessions/${SN_SESSION#hsh-}/config.json"
+grep -q '"image": "ghcr.io/philips/hsh-pi"' "$SESSION_CFG" || fail "the session config does not hold the resolved image reference: $(cat "$SESSION_CFG" 2>/dev/null)"
 pass "hsh run pi resolves to ghcr.io/philips/hsh-pi and the session stores the resolved reference"
 
 if (cd "$TMP/shortws" && "$HSH" run definitely-not-a-harness) >"$TMP/short-err.out" 2>&1; then
