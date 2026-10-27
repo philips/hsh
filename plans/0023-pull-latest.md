@@ -1,6 +1,6 @@
 # hsh run --pull: podman's pull policy, defaulting to latest
 
-> **Status: proposed.** Changes `resolveImage` and its call sites in
+> **Status: implemented.** Changes `resolveImage` and its call sites in
 > internal/cli/run.go; touches functional step 15 and the shortnames
 > section of docs/config.md.
 

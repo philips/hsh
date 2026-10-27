@@ -700,19 +700,25 @@ else
 	echo "SKIP: interactive launch check (no python3 for the pty driver)"
 fi
 
-echo "== step 15: image shortnames and transport references"
+echo "== step 15: image shortnames, transport references, and the pull policy"
 podman tag localhost/hsh-example:latest ghcr.io/philips/hsh-pi:latest
 mkdir -p "$TMP/shortws"
-(cd "$TMP/shortws" && "$HSH" run pi) >"$TMP/short-run.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/shortws" && "$HSH" run --pull=never pi) >"$TMP/short-run.out" 2>&1 <<'CMDS' || true
 echo SHORTNAME-SESSION
 exit
 CMDS
-grep -q '^SHORTNAME-SESSION$' "$TMP/short-run.out" || fail "hsh run pi did not start the ghcr.io/philips/hsh-pi shortname: $(cat "$TMP/short-run.out")"
+grep -q '^SHORTNAME-SESSION$' "$TMP/short-run.out" || fail "hsh run --pull=never pi did not start the ghcr.io/philips/hsh-pi shortname: $(cat "$TMP/short-run.out")"
 SN_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/shortws" --format '{{.Name}}' | head -1)"
 [ -n "$SN_SESSION" ] || fail "the shortname run left no session pod"
 SESSION_CFG="$XDG_STATE_HOME/hsh/sessions/${SN_SESSION#hsh-}/config.json"
 grep -q '"image": "ghcr.io/philips/hsh-pi"' "$SESSION_CFG" || fail "the session config does not hold the resolved image reference: $(cat "$SESSION_CFG" 2>/dev/null)"
 pass "hsh run pi resolves to ghcr.io/philips/hsh-pi and the session stores the resolved reference"
+
+if (cd "$TMP/shortws" && "$HSH" run --pull=never definitely-not-a-harness) >"$TMP/pull-never.out" 2>&1; then
+	fail "--pull=never with no local image unexpectedly succeeded"
+fi
+grep -q "not in the local storage" "$TMP/pull-never.out" || fail "--pull=never did not explain the missing local image: $(cat "$TMP/pull-never.out")"
+pass "--pull=never errors clearly when the image is not in the local storage"
 
 if (cd "$TMP/shortws" && "$HSH" run definitely-not-a-harness) >"$TMP/short-err.out" 2>&1; then
 	fail "hsh run of an unknown shortname unexpectedly succeeded"
@@ -721,6 +727,21 @@ grep -q "ghcr.io/philips/hsh-definitely-not-a-harness" "$TMP/short-err.out" || f
 grep -q "shortnames.conf" "$TMP/short-err.out" || fail "the error does not point at the shortnames config"
 pass "an unknown shortname names what it resolved to and the escape hatches"
 
+mkdir -p "$TMP/pullws"
+(cd "$TMP/pullws" && "$HSH" run localhost/hsh-example:latest) >"$TMP/pull-newer.out" 2>&1 <<'CMDS' || true
+echo NEWER-FALLBACK
+exit
+CMDS
+grep -q '^NEWER-FALLBACK$' "$TMP/pull-newer.out" || fail "the default --pull=newer run did not start a session: $(cat "$TMP/pull-newer.out")"
+grep -q "using the local image" "$TMP/pull-newer.out" || fail "the default --pull=newer did not warn about the failed pull of the unpullable image: $(cat "$TMP/pull-newer.out")"
+pass "the default --pull=newer falls back to the local image with a warning"
+
+if (cd "$TMP/pullws" && "$HSH" run --pull=always localhost/hsh-example:latest) >"$TMP/pull-always.out" 2>&1; then
+	fail "--pull=always with an unpullable image unexpectedly succeeded"
+fi
+grep -q "pull failed" "$TMP/pull-always.out" || fail "--pull=always did not report the pull failure: $(cat "$TMP/pull-always.out")"
+pass "--pull=always errors when the pull fails instead of falling back"
+
 podman save -q -o "$TMP/img.tar" localhost/hsh-example:latest
 (cd "$TMP/shortws" && "$HSH" run docker-archive:"$TMP/img.tar") >"$TMP/transport-run.out" 2>&1 <<'CMDS' || true
 echo TRANSPORT-SESSION
@@ -728,6 +749,47 @@ exit
 CMDS
 grep -q '^TRANSPORT-SESSION$' "$TMP/transport-run.out" || fail "hsh run docker-archive:... did not start a session: $(cat "$TMP/transport-run.out")"
 pass "docker-archive: transport references are pulled and run"
+
+cat >"$TMP/arch.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+ENV HSH_ARCH_MARKER=arch-v1
+EOF
+podman build -q -t localhost/hsh-arch:latest -f "$TMP/arch.Containerfile" "$TMP" >/dev/null || fail "could not build the archive test image"
+podman save -q -o "$TMP/arch.tar" localhost/hsh-arch:latest
+(cd "$TMP/pullws" && "$HSH" run docker-archive:"$TMP/arch.tar") >"$TMP/arch-run1.out" 2>&1 <<'CMDS' || true
+echo marker=$HSH_ARCH_MARKER
+exit
+CMDS
+grep -q '^marker=arch-v1$' "$TMP/arch-run1.out" || fail "the first docker-archive run did not see the v1 marker: $(cat "$TMP/arch-run1.out")"
+cat >"$TMP/arch.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+ENV HSH_ARCH_MARKER=arch-v2
+EOF
+podman build -q -t localhost/hsh-arch:latest -f "$TMP/arch.Containerfile" "$TMP" >/dev/null || fail "could not rebuild the archive test image"
+podman save -q -o "$TMP/arch.tar" localhost/hsh-arch:latest
+(cd "$TMP/pullws" && "$HSH" run docker-archive:"$TMP/arch.tar") >"$TMP/arch-run2.out" 2>&1 <<'CMDS' || true
+echo marker=$HSH_ARCH_MARKER
+exit
+CMDS
+grep -q '^marker=arch-v2$' "$TMP/arch-run2.out" || fail "the second docker-archive run did not pick up the re-saved archive (the pull did not refresh the local copy): $(cat "$TMP/arch-run2.out")"
+pass "the default --pull=newer re-pulls and picks up new content for the same reference"
+
+mkdir -p "$TMP/archcfgws"
+cat >"$TMP/archcfgws/pull-config.hsh" <<EOF
+{
+  "image": "docker-archive:$TMP/arch.tar",
+  "shell": "/bin/bash"
+}
+EOF
+(cd "$TMP/archcfgws" && "$HSH" run --config pull-config.hsh) >"$TMP/arch-cfg.out" 2>&1 <<'CMDS' || true
+echo marker=$HSH_ARCH_MARKER
+exit
+CMDS
+grep -q '^marker=arch-v2$' "$TMP/arch-cfg.out" || fail "the config file's image field did not go through the pull policy: $(cat "$TMP/arch-cfg.out")"
+CFG_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/archcfgws" --format '{{.Name}}' | head -1)"
+[ -n "$CFG_SESSION" ] || fail "the config-file archive run left no session pod"
+grep -q '"image": "localhost/hsh-arch:latest"' "$XDG_STATE_HOME/hsh/sessions/${CFG_SESSION#hsh-}/config.json" || fail "the session config does not hold the normalized local image: $(cat "$XDG_STATE_HOME/hsh/sessions/${CFG_SESSION#hsh-}/config.json" 2>/dev/null)"
+pass "a config file's image field goes through the pull policy and is normalized"
 
 echo "== step 16: hsh oauth callback replays a loopback OAuth callback into the session"
 mkdir -p "$TMP/oauthws"

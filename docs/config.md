@@ -3,14 +3,14 @@
 hsh reads a JSON config file (default: `./config.hsh`, override
 with `hsh run --config PATH`). The config file is a seed: every run
 copies it into the session's state directory
-(`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the copy —
-not the seed — is the live config, hot-reloaded and edited by the
+(`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the copy -
+not the seed - is the live config, hot-reloaded and edited by the
 review commands. The seed file is never modified in place. Relative
 mount sources are resolved against the seed config's directory and
 stored as absolute paths in the session copy.
 
 Without a config file, `hsh run IMAGE` falls back to the
-image's `org.ifup.hsh` label as the config — see
+image's `org.ifup.hsh` label as the config - see
 [pre-built harness images](images.md).
 
 ```json
@@ -39,10 +39,10 @@ image's `org.ifup.hsh` label as the config — see
 | `image` | `docker.io/library/alpine:latest` | container image for both the proxy and workspace containers |
 | `shell` | `/bin/sh` | shell to exec in the workspace |
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
-| `secrets` | `{}` | map of secret name → secret definition (below) |
+| `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
-| `oauth` | `{}` | map of provider name → OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
+| `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session |
 
 The workspace starts in the first mount's target directory
@@ -54,11 +54,11 @@ The workspace starts in the first mount's target directory
 |---|---|---|
 | `from` | yes | secret reference: `env://VAR`, `hsh://NAME`, or a bare `VAR` (treated as `env://VAR`) |
 | `hosts` | yes | hosts the secret is injected for (same matching as `network.allow`) |
-| `header` | no | header to set; defaults to the secret name with `_` → `-` |
+| `header` | no | header to set; defaults to the secret name with `_` -> `-` |
 | `prefix` | no | string prepended to the value, e.g. `"Bearer "` |
 
 The scheme of `from` decides where the value comes from. The design
-follows nono.sh's credential injection — pluggable secret backends with
+follows nono.sh's credential injection - pluggable secret backends with
 host-scoped routes and proxy-side injection instead of environment
 injection:
 https://nono.sh/docs/cli/features/credential-injection
@@ -72,9 +72,9 @@ Injection happens for every request to a matching host, **replacing** any
 value the workspace sent for that header. Hosts with a secret are
 TLS-intercepted; hosts without one are tunneled.
 
-The common case is a bearer token for an LLM API — name the header and
+The common case is a bearer token for an LLM API - name the header and
 prefix explicitly, because the default header name (the secret name with
-`_` → `-`, e.g. `Api-Key`) is not what APIs read:
+`_` -> `-`, e.g. `Api-Key`) is not what APIs read:
 
 ```json
 "secrets": {
@@ -122,7 +122,7 @@ hsh secret ls [--db PATH]
   (default `~/.config/hsh/secrets.db`, `--db` overrides; used by
   `hsh run` via `--secret-db`)
 - the directory is created `0700` and the database `0600`; values are
-  stored **unencrypted**, readable only by your user — the same trust
+  stored **unencrypted**, readable only by your user - the same trust
   level as `~/.netrc` or `~/.aws/credentials` (a first-use note says so)
 - `secret ls` prints names and timestamps, never values
 - `secret rm` deletes the entry and warns if the config still references
@@ -146,14 +146,14 @@ A config entry referencing the store:
 
 `network.mode` selects the egress policy:
 
-- `https` (default) — any host may be reached over TLS on port 443
+- `https` (default) - any host may be reached over TLS on port 443
   (tunneled blind; interception stays limited to hosts with configured
   secrets or OAuth endpoints). Plaintext HTTP and non-443 ports are
   denied unless the host is in `network.allow`. DNS resolves every
   name.
-- `allowlist` — only hosts in `network.allow`, any port; DNS is gated
+- `allowlist` - only hosts in `network.allow`, any port; DNS is gated
   by the same list. The pre-built harness images use this mode.
-- `none` — no egress; DNS is refused.
+- `none` - no egress; DNS is refused.
 
 `hsh run --network MODE` overrides the mode from the command line.
 In `https` mode a compromised agent can exfiltrate data to any TLS
@@ -169,7 +169,7 @@ endpoint; for untrusted code use `--network allowlist`.
 ## Hot reload
 
 `network.allow` and everything under `secrets` are reloaded automatically
-when the config file changes (the proxy polls once per second) — for a
+when the config file changes (the proxy polls once per second) - for a
 running session that file is its config copy in the state directory, so
 `hsh proxy allow` approvals apply to a live session within ~1s. `image`,
 `shell`, and `mounts` require restarting the sandbox.
@@ -177,7 +177,7 @@ running session that file is its config copy in the state directory, so
 ## Image shortnames
 
 The `hsh run` positional image is a **shortname** unless it is a
-transport reference (`docker://...`, `oci://...` — anything containing
+transport reference (`docker://...`, `oci://...` - anything containing
 `://`) or a registry-qualified reference (first path segment contains
 a `.`, has a port, or is `localhost`, like `ghcr.io/x/y`,
 `localhost/my-dev:latest`, or `registry:5000/x`).
@@ -202,12 +202,24 @@ mydev=docker://registry.example.com/team/pi:dev
   `hsh run pi` retrieves `ghcr.io/philips/hsh-pi` with no
   configuration, and `hsh run vibe`, `hsh run claude-code`, and
   `hsh run codex` work the same way
-- a resolved reference is pulled into the local store if not already
-  there (hsh reads the image's `org.ifup.hsh` label before the session
-  starts) and the session's config copy stores the *resolved*
-  reference, so resuming is unaffected by later config edits
-- unknown shortnames pull from the prefix and fail with an error that
-  names the reference tried and points at the config file
+- unknown shortnames resolve from the prefix and fail with an error
+  that names the reference tried and points at the config file
+
+The image is fetched for every new session according to `hsh run`'s
+`--pull` policy (same names and meanings as podman's pull policies):
+
+- `newer` (default) - pull every run, so the session gets the latest
+  image for the tag; if the pull fails and a local image exists, hsh
+  warns and uses the local image (offline use, locally built images)
+- `always` - pull every run; a failed pull is an error
+- `missing` - pull only when the image is not in the local store
+- `never` - use the local image; an error if it is not local
+
+The pull happens before hsh reads the image's `org.ifup.hsh` label,
+so a label-based config always comes from the latest image. The
+session's config copy stores the *resolved* reference (a transport
+reference normalized to its local repository name), so resuming is
+unaffected by later config edits.
 
 ## Sessions
 
@@ -216,7 +228,7 @@ directory at `$XDG_STATE_HOME/hsh/sessions/<session-id>/` (the session
 id is the pod name suffix):
 
 ```
-config.json   the session's config copy — the only writable config
+config.json   the session's config copy - the only writable config
 ca.crt ca.key the session's MITM CA (stable across re-entries)
 workspace     file with the absolute path of the workspace
 ```
@@ -226,7 +238,7 @@ workspace     file with the absolute path of the workspace
   session holds no key material; re-entry re-resolves secrets from the
   session config
 - `hsh run --rm` makes a run temporary: pod and state are removed at exit
-- `hsh run --resume` re-enters the current workspace's session — the only
+- `hsh run --resume` re-enters the current workspace's session - the only
   one directly, or lists the ids when there are several
   (`hsh run --resume <id>` picks one; the full pod name also works)
 - sessions do not share approved proxy configuration on purpose: one
@@ -262,8 +274,8 @@ packages. Pi (the coding agent), for example, downloads `fd` and `ripgrep`
 from GitHub when they are not already on `PATH`. Inside the sandbox those
 downloads are denied unless the hosts are allowlisted:
 
-- `github.com` — release version lookup and download URLs
-- `release-assets.githubusercontent.com` — where GitHub release assets redirect
+- `github.com` - release version lookup and download URLs
+- `release-assets.githubusercontent.com` - where GitHub release assets redirect
   to (the legacy target is `objects.githubusercontent.com`; allowlist both)
 
 The example image avoids this entirely by pre-installing `fd-find` and
