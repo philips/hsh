@@ -318,13 +318,31 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		}
 		return nil
 	}
+	warnedMissing := map[string]bool{}
+	missingSet := func(missing []string) map[string]bool {
+		out := map[string]bool{}
+		for _, m := range missing {
+			out[m] = true
+		}
+		return out
+	}
 	resolve := func(c *config.Config) error {
 		rs, missing, err := config.ResolveSecrets(c, storeFor(c))
 		if err != nil {
 			return err
 		}
+		current := missingSet(missing)
 		for _, m := range missing {
+			if warnedMissing[m] {
+				continue
+			}
+			warnedMissing[m] = true
 			fmt.Fprintf(os.Stderr, "hsh: warning: secret %s is not set (env variable or hsh secret); it will not be injected\n", m)
+		}
+		for m := range warnedMissing {
+			if !current[m] {
+				delete(warnedMissing, m)
+			}
 		}
 		if err := config.WriteSecretsFile(secretsPath, rs); err != nil {
 			return err
