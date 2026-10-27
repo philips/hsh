@@ -157,6 +157,21 @@ func RunInner(opts InnerOptions) error {
 		return err
 	}
 	stripSetuid(opts.Workspace)
+
+	// Its owner is the parent-namespace UID selected by the mapping, which
+	// is 1000 in this example. Access still depends on Linux permission
+	// checks, and capabilities take part in those. Namespace root holds
+	// CAP_DAC_OVERRIDE in its own user namespace, which lets it override
+	// the ordinary permission checks on files whose owner and group are
+	// both mapped into that namespace. When I made a 1000:1000 directory
+	// read-only with mode 0555, my host shell could not create a file in
+	// it, but namespace root could, and the new file was still owned by
+	// 1000:1000 on disk. That override stops at the mapping: namespace
+	// root gains nothing over host files owned by unmapped IDs, such as
+	// root’s files.
+	//
+	// see
+	// https://thomasvanlaere.com/posts/2026/10/exploring-containers-part-4/
 	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
 		return err
 	}
