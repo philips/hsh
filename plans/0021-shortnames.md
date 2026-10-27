@@ -37,23 +37,34 @@ $ hsh run docker://registry.example.com/team/pi:dev   # transport: untouched
 
 ## Design
 
-### Argument classification (in this order)
+### Argument classification (in this order; no transport list in hsh)
 
-1. **Transport reference** — matches a known transport prefix from
-   containers-transports.5: `docker://`, `oci:`, `oci-archive:`,
-   `docker-archive:`, `dir:`, `containers-storage:`, `docker-daemon:`,
-   `sif:`. Pulled with `podman pull` if not already present, then used
-   verbatim for the session's containers.
-2. **Fully-qualified registry reference** — first path segment contains
-   a `.` or `:` or is `localhost` (e.g. `ghcr.io/x/y`, `localhost/foo`).
-   Used verbatim.
-3. **Bare shortname** — no transport, no registry-looking first segment
-   (e.g. `pi`, `mydev`). Resolved by the shortname map (below), and the
-   result may itself be any of the three forms (a shortname may point
-   at a transport reference).
+There is no allowable-transport list shipped in hsh: classification is
+by shape only, and **podman is the source of truth** for which
+transports exist. A transport-shaped reference is passed to `podman
+pull`; an unknown transport surfaces podman's own error ("invalid
+image name ... must be a valid transport", naming the valid ones), so
+new transports in containers/image work without shipping a new hsh —
+upgrading podman on the host is the expansion mechanism.
+
+1. **Transport reference** — the first path segment contains a `:`
+   whose prefix has no `.` and is not `localhost` (e.g. `docker://x`,
+   `dir:/p`, `oci:layout:tag`, any future `something:...`). Pulled
+   with `podman pull` if not already present, then used verbatim for
+   the session's containers.
+2. **Fully-qualified registry reference** — first path segment
+   contains a `.`, has a `:` whose prefix does (registry with port), or
+   is `localhost` (e.g. `ghcr.io/x/y`, `registry.example.com:5000/x`,
+   `localhost/foo`). Used verbatim.
+3. **Bare shortname** — a single segment with no `.` or `:` (e.g. `pi`,
+   `mydev`). Resolved by the shortname map (below); the result may
+   itself be any of the three forms (a shortname entry may point at a
+   transport reference).
 
 The `--resume` positional is a session id, never an image; resolution
-only applies to new sessions.
+only applies to new sessions. Shortname keys therefore cannot be
+transport-shaped or contain dots — the map is only consulted for
+references that fell through classification.
 
 ### The shortname map
 
@@ -96,10 +107,10 @@ The session's config copy stores the **resolved** reference, so
 ## Implementation sketch
 
 - `internal/config/config.go` (or a new `internal/imageRef` package):
-  `Classify(ref string) (kind, normalized)` — transport prefixes per
-  containers-transports.5, the fully-qualified heuristic, shortname;
-  `LoadShortnames(path)` with builtin defaults; `Resolve(ref string)
-  (resolved string, err error)`.
+  `Classify(ref string) (kind, normalized)` — the shape rules above
+  (transport-shaped / fully-qualified / shortname; **no transport name
+  list**), `LoadShortnames(path)` with builtin defaults, and
+  `Resolve(ref string) (resolved string, err error)`.
 - `internal/cli/run.go`: resolve the positional image after the
   `--resume` split, before the label lookup; for transport references
   run `podman pull` (skipping when the local store already has it via
@@ -150,8 +161,9 @@ The session's config copy stores the **resolved** reference, so
 - The fully-qualified heuristic (first path segment with `.`/`:`) can
   misfire on single-segment registries — none are in practical use;
   the escape hatch is an explicit transport or a shortnames.json entry.
-- New transports in containers/image (e.g. a future `sif:` variant)
-  need the prefix list extended; unknown-but-transport-shaped
-  references should still be passed through (classification treats
-  `^[a-z0-9-]+:` conservatively and falls back to podman's own error).
-- Shortname resolution must never apply to the `--resume` positional.
+- A transport-shaped reference that is not a real transport (e.g.
+  `weird:x/y`) surfaces podman's pull error naming the valid
+  transports — acceptable, and the same shape rule is what future
+  transports ride on (no hsh change needed).
+- Shortname resolution must never apply to the `--resume` positional;
+  shortname keys cannot be transport-shaped or contain dots.
