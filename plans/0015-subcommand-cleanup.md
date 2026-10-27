@@ -8,7 +8,7 @@ Replace `proxy-watch` with `monitor`- the idea is that the user will be using th
 
 ## Proxy
 
-Replace `proxy-denied` and `proxy-auto-allow` with subcommands under `proxy` like `secrets`.
+Replace `proxy-denied` and `proxy-auto-allow` with subcommands under `proxy` like `secrets`. The old subcommands will be removed with no backwards compat.
 
 User can list all denied requests
 
@@ -36,6 +36,8 @@ added https://example.com
 added https://foobar.example.com
 ```
 
+(All of these commands take a `--watch` flag to continuously output new denied requests or approve them.)
+
 User can add a single URL to a single session
 
 ```
@@ -43,7 +45,6 @@ hsh proxy allow --session 3ba5a9ed451f https://example.com
 added https://example.com
 ```
 
-All of these commands take a `--watch` flag to continuously output new denied requests or approve them.
 
 ## DNS Proxy
 
