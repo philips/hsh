@@ -6,10 +6,6 @@
 
 version config schema so that `hsh` doesn't try to use container schema it doesn't understand
 
-## version subcommand
-
-include git commit and tag
-
 ## Investigate using libghostty
 
 Investigate using libghostty and a custom escape sequence so that sessions can be attached/detached and the monitor can pop-over the session for firewall approvals. Essentially an application specific tmux.

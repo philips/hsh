@@ -11,6 +11,7 @@ import (
 
 	"hsh/internal/denieddb"
 	"hsh/internal/secretstore"
+	"hsh/internal/version"
 )
 
 func newCommand(name, usage, shortHelp string, define func(*ff.FlagSet), run func(context.Context, []string) error) *ff.Command {
@@ -79,6 +80,7 @@ func Root() *ff.Command {
 			lsCommand(),
 			rmCommand(),
 			gcCommand(),
+			versionCommand(),
 		},
 	}
 	root.Subcommands = append(root.Subcommands, helpCommand(root))
@@ -111,6 +113,16 @@ func groupExec(self **ff.Command) func(context.Context, []string) error {
 		fmt.Fprint(os.Stderr, ffhelp.Command(*self))
 		return fmt.Errorf("%s: unknown subcommand %q", (*self).Name, args[0])
 	}
+}
+
+func versionCommand() *ff.Command {
+	return newCommand("version", "hsh version", "print the hsh version, git commit, and build platform", nil, func(ctx context.Context, args []string) error {
+		if len(args) > 0 {
+			return fmt.Errorf("version takes no arguments")
+		}
+		fmt.Println(version.Get())
+		return nil
+	})
 }
 
 func helpCommand(root *ff.Command) *ff.Command {

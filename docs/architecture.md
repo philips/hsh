@@ -12,6 +12,10 @@ controlled egress. It is a single static Go binary that plays three roles:
 Host-side subcommands manage state around the sandbox: `hsh secret`
 (the secret store below), `hsh proxy` (denial review) and `hsh monitor`
 (the review TUI), and `hsh ls`/`hsh rm` (sandbox lifecycle).
+`hsh version` prints the release tag, git commit, and platform. The tag
+is stamped by the release workflow with
+`-ldflags "-X hsh/internal/version.Tag=$GITHUB_REF_NAME"`; local builds
+report `dev` plus the VCS commit (`-dirty` with uncommitted changes).
 
 The same binary is bind-mounted read-only under role-named paths in the
 containers (`/hsh-proxy` in the proxy, `/hsh-workspace` and
