@@ -122,6 +122,10 @@ curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
 echo "--- workspace mount:"
 cat /workspace/test.md
+echo "--- capabilities of the shell:"
+grep Cap /proc/self/status | grep -E "CapEff|CapPrm"
+echo "--- new entries in image directories (overlayfs copy-up needs CAP_DAC_OVERRIDE):"
+ln -s /etc/passwd /usr/lib64/hsh-test-symlink && echo new-entry-ok && rm -f /usr/lib64/hsh-test-symlink
 echo "--- configuring pi for the dummy endpoint:"
 mkdir -p "$HOME/.pi/agent"
 cat >"$HOME/.pi/agent/models.json" <<'JSON'
@@ -167,6 +171,11 @@ pass "proxy allows the endpoint after auto-allow (real upstream response, interc
 
 grep -qx 'meow' "$TMP/session2.out" || fail "workspace mount not visible"
 pass "workspace mount works"
+
+grep -q "CapEff:.*0000000000000002" "$TMP/session2.out" || fail "the shell must hold exactly CAP_DAC_OVERRIDE after the capability drop"
+pass "the shell runs with only CAP_DAC_OVERRIDE"
+grep -q '^new-entry-ok$' "$TMP/session2.out" || fail "creating new entries in image-layer directories failed (overlayfs copy-up): $(grep -A2 'new entries' "$TMP/session2.out")"
+pass "new entries in /usr/lib64 work (rpm/dnf installs can unpack)"
 
 grep -q 'hello world' "$TMP/session2.out" || fail "pi did not return the dummy endpoint's response"
 grep -q '^pi-rc=0$' "$TMP/session2.out" || fail "pi exited with an error"

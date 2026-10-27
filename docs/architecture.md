@@ -108,8 +108,11 @@ Reading notes:
 - **User namespace**: rootless podman — container uid 0 maps to the
   invoking host user (subuid mapping). The parent process briefly holds
   NET_ADMIN/SYS_ADMIN to wire the veth pair, then drops all
-  capabilities; the inner process starts with none, sets
-  NO_NEW_PRIVS, and setuid binaries are stripped from the workspace.
+  capabilities; the inner process keeps only CAP_DAC_OVERRIDE (overlayfs
+  needs it to create new entries — whiteouts and directory copy-up — in
+  image-layer directories; without it `dnf`/`rpm` unpacks fail with
+  "cpio: symlink failed - Permission denied"), sets NO_NEW_PRIVS, and
+  setuid binaries are stripped from the workspace.
 - **Filesystem**: solid edges are network/data flow, dashed edges are
   bind mounts. The session directory is mounted read-only into the
   proxy only (config copy, resolved secrets, CA); the workspace sees
@@ -146,13 +149,17 @@ The child then:
 - installs the proxy CA into `/etc/ssl/certs/ca-certificates.crt`
 - creates the home directory, strips setuid/setgid bits from the container
   filesystem (excluding the workspace mount)
-- drops all capabilities (`capset` to zero) and sets `PR_SET_NO_NEW_PRIVS`
+- drops all capabilities except CAP_DAC_OVERRIDE and sets `PR_SET_NO_NEW_PRIVS`
 - `chdir`s into the workspace and `exec`s the configured shell
 
 The shell runs as container uid 0, which rootless podman maps to the invoking
 host user, so files written to mounted directories are owned by the host
-user. With zero effective capabilities and `NO_NEW_PRIVS` it cannot modify
-routes, create namespaces, or regain privileges through setuid binaries.
+user. With only CAP_DAC_OVERRIDE effective and `NO_NEW_PRIVS` it cannot
+modify routes, create namespaces, or regain privileges through setuid
+binaries; CAP_DAC_OVERRIDE only bypasses file-permission checks inside the
+sandbox's own filesystem (the kernel requires it for overlayfs copy-up when
+creating files in image-layer directories — package installation needs it,
+an ordinary `podman run --cap-drop=ALL` fails the same way).
 
 The workspace parent process (container PID 1) also drops its capabilities
 after moving the veth, so it cannot be ptraced for privileges either.

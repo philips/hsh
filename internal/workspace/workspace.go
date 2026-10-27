@@ -157,7 +157,7 @@ func RunInner(opts InnerOptions) error {
 		return err
 	}
 	stripSetuid(opts.Workspace)
-	if err := dropCaps(); err != nil {
+	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
 		return err
 	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
@@ -312,15 +312,27 @@ func stripSetuid(skip string) {
 }
 
 func dropCaps() error {
+	return dropCapsKeep()
+}
+
+func dropCapsKeep(keep ...int) error {
 	hdr := &unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
 	data := make([]unix.CapUserData, 2)
 	if err := unix.Capget(hdr, &data[0]); err != nil {
 		return err
 	}
+	old := [2]uint32{data[0].Permitted, data[1].Permitted}
 	for i := range data {
 		data[i].Effective = 0
 		data[i].Permitted = 0
 		data[i].Inheritable = 0
+	}
+	for _, c := range keep {
+		i, bit := c/32, uint(c%32)
+		if old[i]&(1<<bit) != 0 {
+			data[i].Effective |= 1 << bit
+			data[i].Permitted |= 1 << bit
+		}
 	}
 	return unix.Capset(hdr, &data[0])
 }
