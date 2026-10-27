@@ -13,7 +13,7 @@ proxy, the denial database, and the example image:
   denied with 407 and recorded in a throwaway denial database, attributed
   with the session id and workspace; the session state directory holds
   the config copy and workspace file
-- **step 2**: `hsh proxy-auto-allow --session ID` adds the denied host to
+- **step 2**: `hsh proxy allow --all --session ID` adds the denied host to
   the session's config copy (trust on first use; the seed config is
   never modified)
 - **step 3**: resuming that session, the endpoint is allowed (real
@@ -31,7 +31,8 @@ proxy, the denial database, and the example image:
   session makes bare `--resume` list the ids; `--resume <id>` picks one;
   `hsh gc` collects orphaned session state
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
-- **step 7**: `proxy-watch` refuses to run without a terminal
+- **step 7**: `hsh monitor` refuses to run without a terminal, and the
+  old subcommand names are gone
 - **step 8**: `hsh run IMAGE` uses the image's `org.ifup.hsh` label
   config (mount, allowlist, and an `hsh://` secret resolved from the
   store, matching the harness images' labels)
@@ -62,7 +63,8 @@ Run it with:
 
 `internal/proxy/oauth_test.go` covers the OAuth capture over both the
 plain-HTTP and the TLS MITM path as Go unit tests.
-`internal/secretstore` covers the store CRUD, overwrite semantics, and
+`internal/denieddb` covers the single-table record lifecycle and the
+`dns_denied` merge migration; `internal/secretstore` covers the store CRUD, overwrite semantics, and
 file/directory permissions; `internal/config` covers secret reference
 parsing (`env://`, `hsh://`, bare, unknown schemes), resolution through
 a fake store, and the config rewrite for `secret add`; `internal/cli`

@@ -73,9 +73,8 @@ func Root() *ff.Command {
 		Subcommands: []*ff.Command{
 			runCommand(),
 			secretCommand(),
-			proxyDeniedCommand(),
-			proxyAutoAllowCommand(),
-			proxyWatchCommand(),
+			proxyCommand(),
+			monitorCommand(),
 			lsCommand(),
 			rmCommand(),
 			gcCommand(),

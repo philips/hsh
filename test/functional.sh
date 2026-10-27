@@ -98,16 +98,20 @@ grep -q '"mounts"' "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json" || fai
 [ "$(cat "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/workspace")" = "$TMP/workspace" ] || fail "the session workspace file is wrong"
 pass "session created with a config copy and workspace file"
 
-DENIED="$("$HSH" proxy-denied --db "$DB")"
+DENIED="$("$HSH" proxy denied --db "$DB")"
 echo "$DENIED" | grep -q "api.mistral.ai" || fail "denial was not recorded in the database"
 echo "$DENIED" | grep -q "$DB_SESSION" || fail "denial row is not attributed to the session"
 echo "$DENIED" | grep -q "$TMP/workspace" || fail "denial row is not attributed to the workspace"
 pass "denial recorded in the sqlite database with session + workspace attribution"
 
-echo "== step 2: proxy-auto-allow adds the denied host to the session's config (TOFU)"
-OUT="$("$HSH" proxy-auto-allow --session "$DB_SESSION" --db "$DB")"
+echo "== step 2: proxy allow adds the denied host to the session's config (TOFU)"
+FILTERED="$("$HSH" proxy denied --session "$DB_SESSION" --db "$DB")"
+echo "$FILTERED" | grep -qx "https://api.mistral.ai" || fail "session-filtered denied list must show bare URLs: $FILTERED"
+if echo "$FILTERED" | grep -q "$DB_SESSION"; then fail "session-filtered denied list must not repeat the session column"; fi
+pass "proxy denied --session filters to bare URLs"
+OUT="$("$HSH" proxy allow --all --session "$DB_SESSION" --db "$DB")"
 echo "$OUT"
-echo "$OUT" | grep -q "added api.mistral.ai" || fail "proxy-auto-allow did not report adding api.mistral.ai"
+echo "$OUT" | grep -q "added https://api.mistral.ai" || fail "proxy allow did not report adding api.mistral.ai"
 SESSION_CONFIG="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json"
 grep -q '"api.mistral.ai"' "$SESSION_CONFIG" || fail "the session's config copy was not updated"
 if sed -n '/"allow"/,/]$/p' "$TMP/config.hsh" | grep -q 'api.mistral.ai'; then
@@ -184,9 +188,12 @@ pass "echo hi | pi returns hello world through the proxy"
 grep -q 'POST /v1/chat/completions' "$TMP/requests.log" || fail "the dummy endpoint never received pi's request"
 pass "pi's request reached the dummy endpoint through the proxy"
 
-REMAINING="$("$HSH" proxy-denied --db "$DB")"
-echo "$REMAINING" | grep -q "no denied hosts awaiting review" || fail "review list was not cleared after auto-allow"
-pass "denial review list cleared"
+REMAINING="$("$HSH" proxy denied --db "$DB")"
+echo "$REMAINING" | grep -q "https://api.mistral.ai" && fail "approved host must leave the review queue"
+if echo "$REMAINING" | grep -q "no denied hosts awaiting review"; then
+	fail "expected the refused DNS lookup to be pending in the single queue"
+fi
+pass "approved hosts leave the single review queue"
 
 grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+api\.mistral\.ai' "$TMP/session2.out" || fail "DNS resolution of the allowlisted host failed"
 pass "DNS resolves the allowlisted host through the proxy forwarder"
@@ -198,12 +205,13 @@ if grep -q 'Could not resolve host' "$TMP/session2.out"; then
 fi
 pass "non-allowlisted names are refused; allowed names resolve but stay unreachable directly"
 
-DNSDENIED="$("$HSH" proxy-denied --db "$DB" --dns)"
-echo "$DNSDENIED" | grep -q "dns-denied.example.net" || fail "DNS denial was not recorded in the dns_denied table"
-if echo "$REMAINING" | grep -q "dns-denied.example.net"; then
-	fail "DNS denial leaked into the HTTP review list (tables must be separate)"
+echo "$REMAINING" | grep -q "https://dns-denied.example.net" || fail "DNS denial is not in the single review queue"
+pass "DNS denials share the single review queue with egress denials"
+
+if "$HSH" proxy denied --db "$DB" --dns >/dev/null 2>&1; then
+	fail "the --dns flag must be gone with the separate table"
 fi
-pass "DNS denials recorded in a separate table, not in the HTTP review list"
+pass "the --dns flag is gone"
 
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
@@ -213,7 +221,8 @@ EOF
 cat >"$TMP/proxy-secrets.json" <<'EOF'
 { "secrets": [ { "name": "API_KEY", "value": "test-secret-value-123", "header": "Authorization", "prefix": "Bearer ", "hosts": ["localhost"] } ] }
 EOF
-"$HSH" proxy --listen 127.0.0.1:18080 --config "$TMP/proxy-config.hsh" --secrets "$TMP/proxy-secrets.json" --ca-cert "$TMP/ca.crt" --ca-key "$TMP/ca.key" >"$TMP/proxy.out" 2>&1 &
+cp "$HSH" "$TMP/hsh-proxy"
+"$TMP/hsh-proxy" --listen 127.0.0.1:18080 --config "$TMP/proxy-config.hsh" --secrets "$TMP/proxy-secrets.json" --ca-cert "$TMP/ca.crt" --ca-key "$TMP/ca.key" >"$TMP/proxy.out" 2>&1 &
 PROXY_PID=$!
 for _ in $(seq 1 50); do
 	if curl -s -o /dev/null -x http://127.0.0.1:18080 http://localhost:8899/v1/models; then
@@ -393,10 +402,21 @@ else
 	pass "hsh rm --all removes every sandbox and sweeps session state"
 fi
 
-echo "== step 7: proxy-watch requires a terminal"
-"$HSH" proxy-watch --db "$DB" >"$TMP/watch.out" 2>&1 && fail "proxy-watch succeeded without a terminal"
-grep -q "requires a terminal" "$TMP/watch.out" || fail "proxy-watch did not explain the missing terminal"
-pass "proxy-watch refuses to run without a terminal"
+echo "== step 7: monitor requires a terminal"
+"$HSH" monitor --db "$DB" >"$TMP/watch.out" 2>&1 && fail "monitor succeeded without a terminal"
+grep -q "requires a terminal" "$TMP/watch.out" || fail "monitor did not explain the missing terminal"
+pass "monitor refuses to run without a terminal"
+
+if "$HSH" proxy-watch --db "$DB" >/dev/null 2>&1; then
+	fail "the old proxy-watch command must be gone"
+fi
+if "$HSH" proxy-denied --db "$DB" >/dev/null 2>&1; then
+	fail "the old proxy-denied command must be gone"
+fi
+if "$HSH" proxy-auto-allow --db "$DB" >/dev/null 2>&1; then
+	fail "the old proxy-auto-allow command must be gone"
+fi
+pass "the old subcommand names are gone"
 
 echo "== step 8: image label default config (--image without a config file)"
 mkdir -p "$TMP/labelws"

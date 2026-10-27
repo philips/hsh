@@ -1,5 +1,9 @@
 # Subcommand Cleanup
 
+> **Status: implemented.** `hsh proxy` (denied/allow) and `hsh monitor`
+> replace the old subcommands; the egress-proxy role is argv[0]-only;
+> DNS denials share the single `denied` table.
+
 Some of the subcommands on `hsh` need some cleanup.
 
 ## Monitor

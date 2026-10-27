@@ -171,7 +171,7 @@ endpoint; for untrusted code use `--network allowlist`.
 `network.allow` and everything under `secrets` are reloaded automatically
 when the config file changes (the proxy polls once per second) — for a
 running session that file is its config copy in the state directory, so
-`proxy-auto-allow` approvals apply to a live session within ~1s. `image`,
+`hsh proxy allow` approvals apply to a live session within ~1s. `image`,
 `shell`, and `mounts` require restarting the sandbox.
 
 ## Image shortnames
@@ -241,16 +241,18 @@ database (`$XDG_STATE_HOME/hsh/denied.db`, default
 `~/.local/state/hsh/denied.db`). Two subcommands manage it:
 
 ```
-hsh proxy-denied [--all]              # list hosts awaiting review
-hsh proxy-auto-allow --session ID   # add a session's denied hosts to its config copy
+hsh proxy denied [--session ID] [--watch]   # list the review queue
+hsh proxy allow --all --session ID          # allow a session's pending hosts
+hsh proxy allow --session ID https://h      # allow one host
+hsh monitor                                 # interactive review (TUI)
 ```
 
-`proxy-auto-allow` rewrites the session's config copy as canonical JSON (keys
+`hsh proxy allow` rewrites the session's config copy as canonical JSON (keys
 sorted, 2-space indent); only `network.allow` changes.
 
 `network.allow` also gates DNS: the workspace resolves names through a
 forwarder in the proxy that refuses any name not on the allowlist. DNS
-denials are recorded separately (`hsh proxy-denied --dns`) and are
+DNS denials share the single review queue and are
 never auto-allowed.
 
 ## Tools that self-download

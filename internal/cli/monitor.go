@@ -13,20 +13,20 @@ import (
 	"hsh/internal/tui/proxywatch"
 )
 
-func proxyWatchCommand() *ff.Command {
+func monitorCommand() *ff.Command {
 	var dbPath string
 	var all bool
 	var filter denieddb.Filter
-	return newCommand("proxy-watch", "hsh proxy-watch [FLAGS]", "interactively review denied hosts (TUI)", func(fs *ff.FlagSet) {
+	return newCommand("monitor", "hsh monitor [FLAGS]", "interactively review denied hosts (TUI)", func(fs *ff.FlagSet) {
 		fs.StringVar(&dbPath, 0, "db", denieddb.DefaultPath(), "denial database path")
 		fs.BoolVar(&all, 0, "all", "show ignored hosts")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
 		if len(args) > 0 {
-			return fmt.Errorf("proxy-watch takes no positional arguments")
+			return fmt.Errorf("monitor takes no positional arguments")
 		}
 		if fi, err := os.Stdout.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-			return errors.New("proxy-watch requires a terminal; use 'hsh proxy-denied' for a plain list")
+			return errors.New("monitor requires a terminal; use 'hsh proxy denied' for a plain list")
 		}
 		if !denieddb.Exists(dbPath) {
 			fmt.Println("no denied hosts recorded")

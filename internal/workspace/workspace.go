@@ -58,13 +58,8 @@ func RunParent(opts ParentOptions) error {
 		return err
 	}
 	defer goR.Close()
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	innerExe := self
-	if opts.InnerExe != "" {
-		innerExe = opts.InnerExe
+	if opts.InnerExe == "" {
+		return fmt.Errorf("the inner executable path is required: mount the hsh binary as /hsh-workspace-inner and pass --inner-exe")
 	}
 	innerArgs := []string{
 		"--shell", opts.Shell,
@@ -87,10 +82,7 @@ func RunParent(opts ParentOptions) error {
 		}
 		innerArgs = append(innerArgs, "--launch-json", string(launchJSON))
 	}
-	if opts.InnerExe == "" {
-		innerArgs = append([]string{"workspace-inner"}, innerArgs...)
-	}
-	cmd := exec.Command(innerExe, innerArgs...)
+	cmd := exec.Command(opts.InnerExe, innerArgs...)
 	cmd.ExtraFiles = []*os.File{readyW, goR}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

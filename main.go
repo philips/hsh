@@ -34,17 +34,6 @@ func main() {
 }
 
 func hostCommand(args []string) error {
-	if len(args) > 0 {
-		rest := args[1:]
-		switch args[0] {
-		case "proxy":
-			return cli.Proxy(rest)
-		case "workspace":
-			return cli.Workspace(rest)
-		case "workspace-inner":
-			return cli.WorkspaceInner(rest)
-		}
-	}
 	root := cli.Root()
 	if err := root.ParseAndRun(nil, args); err != nil {
 		if cli.IsUnknownCommand(err) {

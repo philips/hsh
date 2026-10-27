@@ -75,7 +75,7 @@ func (p *Proxy) serveDNS(w dns.ResponseWriter, r *dns.Msg, upstream []string) {
 	if mode == "allowlist" && !p.allowListed(name) {
 		log.Printf("dns: denied %s (not in network.allow)", name)
 		if p.deniedDB != nil {
-			if err := denieddb.RecordDNS(p.deniedDB, p.opts.Workspace, p.opts.Session, name, name+":53"); err != nil {
+			if err := denieddb.Record(p.deniedDB, p.opts.Workspace, p.opts.Session, name, name+":53"); err != nil {
 				log.Printf("recording dns denial of %s: %v", name, err)
 			}
 		}

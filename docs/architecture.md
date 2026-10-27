@@ -10,8 +10,8 @@ controlled egress. It is a single static Go binary that plays three roles:
 | `/hsh-workspace` / `/hsh-workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
 
 Host-side subcommands manage state around the sandbox: `hsh secret`
-(the secret store below), `hsh proxy-denied`/`proxy-auto-allow`/`proxy-watch`
-(denial review), and `hsh ls`/`hsh rm` (sandbox lifecycle).
+(the secret store below), `hsh proxy` (denial review) and `hsh monitor`
+(the review TUI), and `hsh ls`/`hsh rm` (sandbox lifecycle).
 
 The same binary is bind-mounted read-only under role-named paths in the
 containers (`/hsh-proxy` in the proxy, `/hsh-workspace` and
@@ -214,12 +214,16 @@ policy matters: an unrestricted resolver would let the workspace exfiltrate
 data via DNS tunneling without ever opening a TCP connection the proxy
 could check.
 
-DNS denials are recorded in a separate `dns_denied` table in the same
-denial database. They do not appear in the default `hsh proxy-denied`
-listing and are not auto-allowed, so noisy lookups (telemetry domains, PTR
-queries) cannot pollute the HTTP review flow; `hsh proxy-denied --dns`
-lists them. When `proxy-auto-allow` allows a host, matching `dns_denied`
-rows are marked allowed as well.
+DNS denials are recorded in the same `denied` table as egress denials —
+there is no separate DNS ledger and no separate DNS policy: a refused
+lookup and a refused CONNECT are both "the agent tried to reach X", one
+review queue, one approval per host (approving a host fixes the lookup
+and the egress together). A merged row is keyed by host + session, so
+`count` aggregates denial events of either kind and `target` keeps the
+first-seen form (`host:443` from a CONNECT, `name:53` from a lookup).
+Databases from before the merge are migrated on open: `dns_denied` rows
+fold into `denied` (counts bumped on collision) and the table is
+dropped.
 
 ### Denial database
 
@@ -233,64 +237,67 @@ it concurrently, including across simultaneous sessions.
 The database is global: rows from every session and workspace land in one
 review queue, attributed per row — `hsh run` passes the session id and the
 workspace path to the proxy container (`--session`/`--workspace` on
-`hsh-proxy`), and both are stored on each row of `denied` and `dns_denied`
-(keyed by host + session). `proxy-denied`, `proxy-watch`, and
-`proxy-auto-allow` filter on `--session`/`--workspace`; `proxy-auto-allow`
-takes a `--session` and writes that session's config copy, so one
-session's approvals never leak into another session's policy.
+`hsh-proxy`), and both are stored on each row of the single `denied` table
+(keyed by host + session). `hsh proxy denied` and `hsh monitor` filter
+on `--session`/`--workspace`; `hsh proxy allow` takes a `--session` and
+writes that session's config copy, so one session's approvals never
+leak into another session's policy.
 
 ```sql
 CREATE TABLE IF NOT EXISTS denied (
-    host       TEXT PRIMARY KEY,
+    host       TEXT NOT NULL,
+    session    TEXT NOT NULL DEFAULT '',
+    workspace  TEXT NOT NULL DEFAULT '',
     target     TEXT NOT NULL,   -- host:port as requested
     count      INTEGER NOT NULL,
     first_seen TEXT NOT NULL,   -- RFC 3339, UTC
     last_seen  TEXT NOT NULL,
     allowed    INTEGER NOT NULL DEFAULT 0,
-    allowed_at TEXT
+    allowed_at TEXT,
+    ignored    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (host, session)
 );
 ```
 
-Recording is an upsert on `host` (count incremented, `last_seen` bumped);
-`allowed` marks hosts already handled. There are two tables: `denied` for
-HTTP egress denials (the review list behind `proxy-denied` and
-`proxy-auto-allow`) and `dns_denied` for DNS query denials (audit only, see
-the DNS section above). The state directory is bind-mounted read-write into
-the proxy container only — the workspace never sees it, so the agent
-cannot erase or forge its own denial record. Database errors are logged
-and never change the response: a denial is a denial with or without the
-log.
+Recording is an upsert on host + session (count incremented,
+`last_seen` bumped); `allowed` marks rows already handled. Egress
+denials (a refused CONNECT) and DNS denials (a refused lookup) share the
+table — see the DNS section above. The state directory is bind-mounted
+read-write into the proxy container only — the workspace never sees it,
+so the agent cannot erase or forge its own denial record. Database
+errors are logged and never change the response: a denial is a denial
+with or without the log.
 
-Three host-side subcommands work with the database:
+The host-side commands work with the database:
 
 ```
-hsh proxy-denied [--db PATH] [--all]          list hosts awaiting review
-hsh proxy-auto-allow [--config PATH] [--db PATH]
-hsh proxy-watch [--config PATH] [--db PATH] [--all]
+hsh proxy denied [--session ID] [--workspace PATH] [--watch]   list the queue
+hsh proxy allow --all --session ID [--watch]                   allow every pending host
+hsh proxy allow --session ID https://example.com [--watch]    allow one host
+hsh monitor [--session ID] [--workspace PATH] [--all]         interactive review (TUI)
 ```
 
-`proxy-denied` prints pending rows (`allowed = 0`) as a table (host,
-target, count, first/last seen, sorted by count); `--all` includes
-already-allowed hosts. `proxy-auto-allow` adds every pending host to the
-config file's `network.allow`, prints `added <host>` for each, prints
-`already allowed <host>` for hosts already present, marks the rows allowed
-so they leave the review list, and prints a summary — trust on first use:
-the first attempt is denied and recorded, review allows it. The config
-file is rewritten as canonical JSON (2-space indent, keys sorted); only
-`network.allow` changes semantically.
+`proxy denied` prints pending rows (`allowed = 0`) as a table (session
+id, workspace, URL, count, last seen, sorted by count); a
+`--session`/`--workspace` filter narrows the output to bare URLs;
+`--watch` continuously prints new denials. `proxy allow` writes hosts
+into the session's config copy (`network.allow`), prints
+`added https://<host>` (or `already allowed`), and marks the rows
+allowed so they leave the queue — trust on first use: the first attempt
+is denied and recorded, review allows it, running proxies hot-reload
+the config within ~1s. `--all` approves everything pending for the
+session; a URL argument allows a single host (the URL is normalized to
+its hostname). `--watch` keeps approving new denials as they appear.
 
-`proxy-watch` is the interactive counterpart (bubbletea/bubbles TUI,
+`monitor` is the interactive counterpart (bubbletea/bubbles TUI,
 requires a terminal): a multi-select list of pending denials, most
 recently requested first, refreshed live every 2s. Keys: `space` select,
 `a`/`n` select/clear all (ignoring any active filter), `/` filter,
-`enter` approve the selected hosts (added to `network.allow`, marked
-allowed — running proxies hot-reload the config within ~1s), `i` ignore
-them (marked handled without allowing: they leave the review list
-permanently), `t` toggle a view of ignored hosts (dimmed,
-non-selectable), `r` refresh, `?` help, `q`/`esc`/`ctrl+c` quit. To tell
-ignored rows apart from approved ones the schema has an `ignored` column
-(migrated in on open for older databases). DNS denials stay audit-only
-with `proxy-denied --dns`.
+`enter` approve the selected hosts (added to the session's
+`network.allow`, marked allowed), `i` ignore them (marked handled
+without allowing: they leave the review list permanently), `t` toggle a
+view of ignored hosts (dimmed, non-selectable), `r` refresh, `?` help,
+`q`/`esc`/`ctrl+c` quit.
 
 ## Secret injection
 
@@ -332,7 +339,7 @@ hand-editing configs or exporting keys into their shell environment:
   the command line leak into shell history and the process list
 - `secret add --host/--header/--prefix` also writes the
   `secrets.<NAME>` config entry with `from: "hsh://NAME"`
-  (RawMessage-preserving rewrite, like `proxy-auto-allow`)
+  (RawMessage-preserving rewrite, like `hsh proxy allow`)
 - `secret rm` warns when the config still references the entry but never
   edits the config; `secret ls` prints names and timestamps, never values
 - only the host-side `hsh run` process and the `secret` subcommands touch
