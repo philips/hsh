@@ -102,8 +102,9 @@ sandbox. `--tasks -` reads the task list from stdin.
   `api.openai.com`.
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
-  `api.anthropic.com`; also allows `claude.ai` and
-  `statsig.anthropic.com`.
+  `api.anthropic.com`; also allows `claude.ai`,
+  `statsig.anthropic.com`, `platform.claude.com`, and
+  `raw.githubusercontent.com`.
 - **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
   allows `auth.openai.com` and `chatgpt.com` (account login flows).
 
