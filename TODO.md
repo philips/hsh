@@ -20,13 +20,6 @@ Another way to have the pop-over firewall and usage approvals would be that the 
 
 We would need to protect the agent process from reading the unix socket- maybe using landlock LSM or something else???
 
-## All subcommands must have --help and usage
-
-```
-$ hsh proxy --help
-hsh: proxy: parse args: flag: help requested
-```
-
 ## Session listings
 
 `hsh ls` doesn't have a session id header that can be copied and pasted into other tools. SESSION should come first and POD ID and INFRA ID are probably not necessary on the default output

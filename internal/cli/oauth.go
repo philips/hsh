@@ -14,7 +14,8 @@ import (
 )
 
 func oauthCommand() *ff.Command {
-	return &ff.Command{
+	var cmd *ff.Command
+	cmd = &ff.Command{
 		Name:      "oauth",
 		Usage:     "hsh oauth SUBCOMMAND",
 		ShortHelp: "help browser-redirect OAuth logins reach the sandbox",
@@ -23,6 +24,8 @@ func oauthCommand() *ff.Command {
 			oauthCallbackCommand(),
 		},
 	}
+	cmd.Exec = groupExec(&cmd)
+	return cmd
 }
 
 func oauthCallbackCommand() *ff.Command {

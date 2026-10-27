@@ -23,7 +23,8 @@ import (
 const watchInterval = 2 * time.Second
 
 func proxyCommand() *ff.Command {
-	return &ff.Command{
+	var cmd *ff.Command
+	cmd = &ff.Command{
 		Name:      "proxy",
 		Usage:     "hsh proxy SUBCOMMAND",
 		ShortHelp: "review and manage the egress proxy's denial records",
@@ -33,6 +34,8 @@ func proxyCommand() *ff.Command {
 			proxyAllowCommand(),
 		},
 	}
+	cmd.Exec = groupExec(&cmd)
+	return cmd
 }
 
 func hostURL(h string) string {

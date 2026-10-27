@@ -30,7 +30,8 @@ const firstUseWarning = `hsh: note: secrets are stored unencrypted in %s
 (readable only by your user — the same trust level as ~/.netrc or ~/.aws/credentials)`
 
 func secretCommand() *ff.Command {
-	return &ff.Command{
+	var cmd *ff.Command
+	cmd = &ff.Command{
 		Name:      "secret",
 		Usage:     "hsh secret SUBCOMMAND",
 		ShortHelp: "manage the hsh secret store (add/rm/ls)",
@@ -41,6 +42,8 @@ func secretCommand() *ff.Command {
 			secretLsCommand(),
 		},
 	}
+	cmd.Exec = groupExec(&cmd)
+	return cmd
 }
 
 func openStore(dbPath string) (*secretstore.DB, error) {

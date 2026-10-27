@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/peterbourgon/ff/v4/ffhelp"
-
 	"hsh/internal/cli"
 )
 
@@ -34,12 +32,5 @@ func main() {
 }
 
 func hostCommand(args []string) error {
-	root := cli.Root()
-	if err := root.ParseAndRun(nil, args); err != nil {
-		if cli.IsUnknownCommand(err) {
-			fmt.Fprint(os.Stderr, ffhelp.Command(root))
-		}
-		return err
-	}
-	return nil
+	return cli.Run(args)
 }

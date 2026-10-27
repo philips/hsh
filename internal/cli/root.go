@@ -85,6 +85,34 @@ func Root() *ff.Command {
 	return root
 }
 
+func Run(args []string) error {
+	root := Root()
+	err := root.ParseAndRun(nil, args)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, ff.ErrHelp):
+		if sel := root.GetSelected(); sel != nil {
+			fmt.Print(ffhelp.Command(sel))
+			return nil
+		}
+	case IsUnknownCommand(err):
+		fmt.Fprint(os.Stderr, ffhelp.Command(root))
+	}
+	return err
+}
+
+func groupExec(self **ff.Command) func(context.Context, []string) error {
+	return func(ctx context.Context, args []string) error {
+		if len(args) == 0 {
+			fmt.Print(ffhelp.Command(*self))
+			return nil
+		}
+		fmt.Fprint(os.Stderr, ffhelp.Command(*self))
+		return fmt.Errorf("%s: unknown subcommand %q", (*self).Name, args[0])
+	}
+}
+
 func helpCommand(root *ff.Command) *ff.Command {
 	return newCommand("help", "hsh help [COMMAND]", "show help for a command", nil, func(ctx context.Context, args []string) error {
 		if len(args) == 0 {
