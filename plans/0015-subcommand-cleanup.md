@@ -52,6 +52,21 @@ The DNS policy for the allowlist mode is that the DNS proxy blocks all lookups
 unless the name is in the allowlist. (Which will be expanded to other protocols
 and ports later).
 
+DNS denials are recorded in the same `denied` table as egress denials —
+there is no separate `dns_denied` table and no separate DNS policy: a
+refused lookup and a refused CONNECT are both "the agent tried to reach
+X". One review queue, one approval per host (approving a host fixes the
+lookup and the egress together). A merged row is keyed by host+session,
+so `count` aggregates denial events of either kind and `target` keeps
+the first-seen form (`host:443` from a CONNECT, `name:53` from a
+lookup); if the event-kind distinction is ever needed, a kind bit can
+be added to the row later.
+
+Migration: merge existing `dns_denied` rows into `denied` (bumping
+counts on collision) and drop the table. `proxy denied --dns` and the
+separate-table behavior go away; the TUI and `allow --all` operate on
+the single queue.
+
 ## Decisions (recorded)
 
 **The egress-proxy role is argv[0]-only; the `proxy` subcommand alias is
