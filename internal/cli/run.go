@@ -32,6 +32,7 @@ type runOptions struct {
 	secretDB     string
 	tasksPath    string
 	networkMode  string
+	pull         string
 	verbose      bool
 	resume       bool
 	fresh        bool
@@ -43,6 +44,7 @@ func runCommand() *ff.Command {
 		configPath: "config.hsh",
 		deniedDB:   denieddb.DefaultPath(),
 		secretDB:   secretstore.DefaultPath(),
+		pull:       "newer",
 	}
 	fs := ff.NewFlagSet("run")
 	fs.StringVar(&ro.configPath, 0, "config", "config.hsh", "config file that seeds the session's config copy")
@@ -51,6 +53,7 @@ func runCommand() *ff.Command {
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
 	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
+	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.resume, 0, "resume", "re-enter a session for this workspace (positional: session id)")
 	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
@@ -81,6 +84,11 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	case "", "https", "allowlist", "none":
 	default:
 		return fmt.Errorf("invalid --network value %q (want https, allowlist, or none)", ro.networkMode)
+	}
+	switch ro.pull {
+	case "always", "missing", "newer", "never":
+	default:
+		return fmt.Errorf("invalid --pull value %q (want always, missing, newer, or never)", ro.pull)
 	}
 	if ro.rm && ro.resume {
 		return fmt.Errorf("--rm and --resume are mutually exclusive: --rm sessions are removed at exit, --resume re-enters a persistent one")
@@ -192,7 +200,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			image = freshImage
 		}
 		if image != "" {
-			image, err = resolveImage(image)
+			image, err = resolveImage(image, ro.pull)
 			if err != nil {
 				return err
 			}
@@ -224,9 +232,17 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			mountBase = cwd
 			infof("hsh: using config from the org.ifup.hsh label of %s\n", image)
 		}
-		if image != "" {
-			cfg.Image = image
+		if image == "" {
+			if cfg.Image == "" {
+				return fmt.Errorf("no image: the config file has no \"image\" field and no image was given")
+			}
+			image, err = resolveImage(cfg.Image, ro.pull)
+			if err != nil {
+				return err
+			}
+			infof("hsh: image %s\n", image)
 		}
+		cfg.Image = image
 		mounts, err = cfg.ParsedMounts(mountBase)
 		if err != nil {
 			return err
@@ -533,7 +549,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	return nil
 }
 
-func resolveImage(ref string) (string, error) {
+func resolveImage(ref string, pull string) (string, error) {
 	r := ref
 	if !imageRef.IsTransport(r) && !imageRef.IsQualified(r) {
 		sn, err := imageRef.LoadShortnames(imageRef.ShortnamesPath())
@@ -545,27 +561,66 @@ func resolveImage(ref string) (string, error) {
 	if strings.HasPrefix(r, "docker://") {
 		r = strings.TrimPrefix(r, "docker://")
 	}
+	local := func() bool {
+		_, err := podman("image", "exists", r)
+		return err == nil
+	}
+	switch pull {
+	case "never":
+		if imageRef.IsTransport(r) {
+			return "", fmt.Errorf("--pull=never: %q is a transport reference and cannot come from the local storage; use --pull=missing, newer, or always", r)
+		}
+		if local() {
+			return r, nil
+		}
+		return "", fmt.Errorf("image %q is not in the local storage; build or pull it first, or use --pull=missing or --pull=newer", r)
+	case "missing":
+		if local() {
+			return r, nil
+		}
+		return pullImage(ref, r)
+	case "always", "newer":
+		out, err := podmanStdout("pull", "-q", r)
+		if err == nil {
+			return pulledImage(r, out)
+		}
+		if pull == "newer" && local() {
+			fmt.Fprintf(os.Stderr, "hsh: warning: pull of %s failed (%s); using the local image\n", r, strings.TrimSpace(out))
+			return r, nil
+		}
+		return "", pullFailed(ref, r, out)
+	default:
+		return "", fmt.Errorf("invalid --pull value %q (want always, missing, newer, or never)", pull)
+	}
+}
+
+func pullImage(ref, r string) (string, error) {
+	out, err := podmanStdout("pull", "-q", r)
+	if err != nil {
+		return "", pullFailed(ref, r, out)
+	}
+	return pulledImage(r, out)
+}
+
+func pullFailed(ref, r, out string) error {
+	return fmt.Errorf("image %q resolved to %q: pull failed (%s); use a transport or fully-qualified reference, or add it to %s", ref, r, strings.TrimSpace(out), imageRef.ShortnamesPath())
+}
+
+func pulledImage(r, out string) (string, error) {
 	if _, err := podman("image", "exists", r); err == nil {
 		return r, nil
 	}
-	out, err := podmanStdout("pull", "-q", r)
+	id := strings.TrimSpace(strings.Split(out, "\n")[0])
+	names, err := podmanStdout("image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "id="+id)
 	if err != nil {
-		return "", fmt.Errorf("image %q resolved to %q: pull failed (%s); use a transport or fully-qualified reference, or add it to %s", ref, r, strings.TrimSpace(out), imageRef.ShortnamesPath())
+		return "", fmt.Errorf("list pulled image %q: %w", r, err)
 	}
-	if _, err := podman("image", "exists", r); err != nil {
-		id := strings.TrimSpace(strings.Split(out, "\n")[0])
-		names, err := podmanStdout("image", "ls", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "id="+id)
-		if err != nil {
-			return "", fmt.Errorf("list pulled image %q: %w", r, err)
+	for _, line := range strings.Split(names, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			return name, nil
 		}
-		for _, line := range strings.Split(names, "\n") {
-			if name := strings.TrimSpace(line); name != "" {
-				return name, nil
-			}
-		}
-		return "", fmt.Errorf("image %q pulled but has no local repository tag", r)
 	}
-	return r, nil
+	return "", fmt.Errorf("image %q pulled but has no local repository tag", r)
 }
 
 func podmanStdout(args ...string) (string, error) {
