@@ -33,14 +33,17 @@ curl -fsSL https://raw.githubusercontent.com/philips/hsh/main/install.sh | sh
 
 <!--- install.sh START -->
 
-Create a workspace for your agent to work under (will be mounted to /workspace in container)
+Create a workspace for your agent to work under.
+This will be mounted to `/workspace` in container.
 
 ```
 mkdir agent-pen
 cd agent-pen
 ```
 
-Setup your mistral credentials (or openai/claude) for the egress proxy to inject the correct Authorization header.
+Setup your mistral credentials (or openai/claude/etc).
+
+The egress proxy will inject the correct Authorization header.
 
 ```
 hsh secret add mistral-api-key
@@ -52,6 +55,17 @@ Run pi and configure it to use mistral
 hsh run pi
 /login mistral
 <type foo or anything as the API key>
+```
+
+By default `hsh run pi` will have an allowlist egress network policy.
+
+In a separate window run `hsh monitor`. This TUI enables you to filter and
+approve domain names quickly without editing JSON.
+
+`monitor` views all hsh sessions on the host. Type `/` to filter.
+
+```
+hsh monitor
 ```
 
 Start vibing
