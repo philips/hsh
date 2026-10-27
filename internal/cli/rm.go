@@ -131,7 +131,7 @@ func matchPods(arg string, pods []podInfo) ([]podInfo, error) {
 	}
 	var matched []podInfo
 	for _, p := range pods {
-		if p.Name == arg || strings.HasPrefix(p.ID, arg) {
+		if p.Name == arg || p.Session() == arg || strings.HasPrefix(p.ID, arg) {
 			matched = append(matched, p)
 		}
 	}

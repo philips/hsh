@@ -422,10 +422,10 @@ operate on pods whose name contains `hsh-` and follow the flags and
 semantics of `podman pod ls` / `podman pod rm`:
 
 ```
-hsh ls                                    # table with an extra WORKSPACE column
+hsh ls                                    # SESSION first (usable with --session, --resume, rm), then status and WORKSPACE
 hsh ls -q --sort name                     # quiet, sorted
 hsh ls --workspace ~/repo                 # the sandbox for one workspace
-hsh rm hsh-53bd3fc7e5ba                   # remove a leftover (refuses if running)
+hsh rm 53bd3fc7e5ba                       # remove a leftover by session id (refuses if running)
 hsh rm -f hsh-53bd3fc7e5ba                # stop running containers, then remove
 hsh rm ~/repo                             # remove via the workspace path
 hsh rm --all -f                           # full cleanup

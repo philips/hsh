@@ -114,17 +114,9 @@ func lsCommand() *ff.Command {
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		if !noHeading {
-			fmt.Fprintln(w, "POD ID\tNAME\tSTATUS\tCREATED\tINFRA ID\t# OF CONTAINERS\tWORKSPACE")
+			fmt.Fprintln(w, "SESSION\tSTATUS\tCREATED\t# OF CONTAINERS\tWORKSPACE")
 		}
 		for _, p := range pods {
-			id := p.ID
-			if !noTrunc && len(id) > 12 {
-				id = id[:12]
-			}
-			infra := p.InfraID
-			if !noTrunc && len(infra) > 12 {
-				infra = infra[:12]
-			}
 			ws := p.Workspace()
 			if ws == "" {
 				ws = "-"
@@ -133,7 +125,7 @@ func lsCommand() *ff.Command {
 			if t := p.CreatedTime(); !t.IsZero() {
 				created = humanize.Time(t)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%s\n", id, p.Name, p.Status, created, infra, p.NumContainers(), ws)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", p.Session(), p.Status, created, p.NumContainers(), ws)
 		}
 		return w.Flush()
 	})

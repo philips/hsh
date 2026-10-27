@@ -336,18 +336,21 @@ echo "== step 6: hsh ls / hsh rm"
 OTHER_HSH_PODS="$(podman pod ls --format '{{.Name}}' | grep '^hsh-' || true)"
 POD_A="hsh-fn-a-$$"
 POD_B="hsh-fn-b-$$"
+SESS_A="${POD_A#hsh-}"
+SESS_B="${POD_B#hsh-}"
 TEST_PODS="$POD_A $POD_B"
 podman pod create --name "$POD_A" --label "hsh.workspace=$TMP/workspace" >/dev/null
 podman pod create --name "$POD_B" >/dev/null
 podman run --pod "$POD_B" -d localhost/hsh-example:latest sleep 300 >/dev/null
 
 OUT="$("$HSH" ls)"
-echo "$OUT" | grep -q '^POD ID' || fail "hsh ls did not print a header"
+echo "$OUT" | grep -q '^SESSION ' || fail "hsh ls did not start its header with SESSION"
 echo "$OUT" | grep -q WORKSPACE || fail "hsh ls header has no WORKSPACE column"
-echo "$OUT" | grep -q "$POD_A" || fail "hsh ls did not list the stopped sandbox"
-echo "$OUT" | grep -q "$POD_B" || fail "hsh ls did not list the running sandbox"
+echo "$OUT" | grep -q '^POD ID\|INFRA ID' && fail "hsh ls header still shows pod and infra IDs"
+echo "$OUT" | grep -q "^$SESS_A " || fail "hsh ls did not list the stopped sandbox by session id"
+echo "$OUT" | grep -q "^$SESS_B " || fail "hsh ls did not list the running sandbox by session id"
 echo "$OUT" | grep -q "$TMP/workspace" || fail "hsh ls did not show the workspace label"
-pass "hsh ls lists sandboxes with name, status, and workspace"
+pass "hsh ls lists sandboxes with session id first, then status and workspace"
 
 POD_A_ID="$(podman pod inspect "$POD_A" --format '{{.Id}}')"
 "$HSH" ls -q | grep -q "^$POD_A_ID$" || fail "hsh ls -q did not print pod IDs"
@@ -355,8 +358,8 @@ POD_A_ID="$(podman pod inspect "$POD_A" --format '{{.Id}}')"
 pass "hsh ls -q and --no-trunc -q print pod IDs"
 
 OUT="$("$HSH" ls --workspace "$TMP/workspace")"
-echo "$OUT" | grep -q "$POD_A" || fail "hsh ls --workspace did not list the workspace's sandbox"
-echo "$OUT" | grep -q "$POD_B" && fail "hsh ls --workspace listed a sandbox of another workspace"
+echo "$OUT" | grep -q "^$SESS_A " || fail "hsh ls --workspace did not list the workspace's sandbox"
+echo "$OUT" | grep -q "^$SESS_B " && fail "hsh ls --workspace listed a sandbox of another workspace"
 pass "hsh ls --workspace filters by the hsh.workspace label"
 
 if "$HSH" rm "$POD_B" >"$TMP/rm-running.out" 2>&1; then
@@ -379,9 +382,9 @@ podman pod ls --format '{{.Name}}' | grep -qx "$POD_A" && fail "hsh rm reported 
 [ ! -d "$SESSION_DIR" ] || fail "hsh rm did not remove the sandbox's session state directory"
 pass "hsh rm removes a stopped sandbox and its session state"
 
-"$HSH" rm -f -t 1 "$POD_B" >/dev/null || fail "hsh rm -f could not remove the running sandbox"
+"$HSH" rm -f -t 1 "$SESS_B" >/dev/null || fail "hsh rm -f could not remove the running sandbox"
 podman pod ls --format '{{.Name}}' | grep -qx "$POD_B" && fail "hsh rm -f reported success but the pod is still there"
-pass "hsh rm -f stops and removes a running sandbox"
+pass "hsh rm -f stops and removes a running sandbox, addressed by session id"
 
 if [ -n "$OTHER_HSH_PODS" ]; then
 	echo "SKIP: hsh rm --all check (other hsh sandboxes exist on this host)"

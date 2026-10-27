@@ -37,6 +37,8 @@ func (p podInfo) CreatedTime() time.Time {
 	return t
 }
 
+func (p podInfo) Session() string { return strings.TrimPrefix(p.Name, "hsh-") }
+
 func (p podInfo) isSandbox() bool { return strings.HasPrefix(p.Name, "hsh-") }
 
 type stringArray []string

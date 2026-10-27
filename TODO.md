@@ -19,12 +19,3 @@ Investigate using libghostty and a custom escape sequence so that sessions can b
 Another way to have the pop-over firewall and usage approvals would be that the container has access to a unix domain socket to the proxy process. This unix domain socket is only ever given access to the agents controlling shell. The proxy would then send a SIGPAUSE (like ctrl+z) to the agent dropping the user to the admin terminal where they could run a command to approve/deny requests. 
 
 We would need to protect the agent process from reading the unix socket- maybe using landlock LSM or something else???
-
-## Session listings
-
-`hsh ls` doesn't have a session id header that can be copied and pasted into other tools. SESSION should come first and POD ID and INFRA ID are probably not necessary on the default output
-```
-POD ID        NAME              STATUS   CREATED       INFRA ID      # OF CONTAINERS  WORKSPACE
-b75203c46672  hsh-29aff84d4f2e  Running  2 hours ago   e71a1beb37f4  3                /home/philips/roost/roost
-6a73045df01b  hsh-91a75a47a298  Running  13 hours ago  6cd28dc88eaa  3                /home/philips/hsh
-```
