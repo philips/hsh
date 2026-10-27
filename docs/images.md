@@ -119,3 +119,14 @@ A missing store entry is a warning and the request is forwarded without
 the header (the same fail-open behavior as an unset environment
 variable). The container never sees the raw secret, only the injected
 header on matching hosts.
+
+## Nested sandboxes
+
+hsh containers block nested user namespaces, so an agent's own
+sandbox that needs them cannot run inside. The codex image therefore
+ships `sandbox_mode = "danger-full-access"` in
+`/home/hsh/.codex/config.toml`: codex's bwrap sandbox would fail with
+`bwrap: setting up uid map: Operation not permitted`. This is safe
+because the hsh sandbox already provides the isolation — network
+allowlist, namespace confinement — that the nested sandbox would
+attempt to add.
