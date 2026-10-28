@@ -34,6 +34,7 @@ func proxyCommand() *ff.Command {
 		Subcommands: []*ff.Command{
 			proxyDeniedCommand(),
 			proxyAllowCommand(),
+			proxyHoldCommand(),
 		},
 	}
 	cmd.Exec = groupExec(&cmd)
@@ -226,6 +227,9 @@ func proxyAllowCommand() *ff.Command {
 			return err
 		}
 		defer db.Close()
+		if watch {
+			defer watchSessions(denieddb.Filter{Session: session})()
+		}
 		if !all {
 			host := hostFromRef(args[0])
 			if host == "" {

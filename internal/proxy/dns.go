@@ -1,13 +1,12 @@
 package proxy
 
 import (
+	"context"
 	"log"
 	"net"
 	"os"
 	"strings"
 	"time"
-
-	"hsh/internal/denieddb"
 
 	"github.com/miekg/dns"
 )
@@ -73,16 +72,20 @@ func (p *Proxy) serveDNS(w dns.ResponseWriter, r *dns.Msg, upstream []string) {
 		return
 	}
 	if mode == "allowlist" && !p.allowListed(name) {
-		log.Printf("dns: denied %s (not in network.allow)", name)
-		if p.deniedDB != nil {
-			if err := denieddb.Record(p.deniedDB, p.opts.Workspace, p.opts.Session, name, name+":53"); err != nil {
-				log.Printf("recording dns denial of %s: %v", name, err)
-			}
+		approved := false
+		if p.holdsEnabled() {
+			wait := min(p.approvalWait(), dnsHoldLimit)
+			approved = p.awaitApproval(context.Background(), name, name+":53", "dns", func() bool { return p.allowListed(name) }, wait)
+		} else {
+			log.Printf("dns: denied %s (not in network.allow)", name)
+			p.recordDenial(name, name+":53")
 		}
-		m := new(dns.Msg)
-		m.SetRcode(r, dns.RcodeRefused)
-		_ = w.WriteMsg(m)
-		return
+		if !approved {
+			m := new(dns.Msg)
+			m.SetRcode(r, dns.RcodeRefused)
+			_ = w.WriteMsg(m)
+			return
+		}
 	}
 	var lastErr error
 	for _, server := range upstream {

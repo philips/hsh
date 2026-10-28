@@ -194,3 +194,10 @@ help.
   the allowlist is the per-host control.
 - **Desktop notifications** when a request is first held, so approval does
   not depend on watching the status line. Separate feature.
+
+## Decisions
+
+- **Unattended sessions.** Yes, implement a liveness file for the proxy to read to know if someone might be watching as a next step.
+- **Per-host overrides** No, do not do this.
+- **30 s as the default.** OK
+- **Desktop notifications** Yes, hold on this

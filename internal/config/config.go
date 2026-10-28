@@ -20,8 +20,42 @@ type Secret struct {
 }
 
 type Network struct {
-	Mode  string   `json:"mode"`
-	Allow []string `json:"allow"`
+	Mode         string   `json:"mode"`
+	Allow        []string `json:"allow"`
+	ApprovalWait string   `json:"approval_wait,omitempty"`
+}
+
+const (
+	DefaultApprovalWait = 30 * time.Second
+	MaxApprovalWait     = 5 * time.Minute
+)
+
+func ParseApprovalWait(v string) (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return DefaultApprovalWait, nil
+	case "off", "0", "0s":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil {
+		return 0, fmt.Errorf("invalid network.approval_wait %q (want a duration such as \"30s\", or \"off\")", v)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid network.approval_wait %q: negative", v)
+	}
+	if d > MaxApprovalWait {
+		return 0, fmt.Errorf("invalid network.approval_wait %q: more than %s", v, MaxApprovalWait)
+	}
+	return d, nil
+}
+
+func (n Network) ApprovalWaitDuration() time.Duration {
+	d, err := ParseApprovalWait(n.ApprovalWait)
+	if err != nil {
+		return DefaultApprovalWait
+	}
+	return d
 }
 
 func (n Network) ModeOrDefault() string {
@@ -29,6 +63,19 @@ func (n Network) ModeOrDefault() string {
 		return "https"
 	}
 	return n.Mode
+}
+
+func (n Network) HoldSummary() string {
+	d := n.ApprovalWaitDuration()
+	if d == 0 {
+		return "holding: off"
+	}
+	return "holding: " + d.String()
+}
+
+func (n Network) ValidateApprovalWait() error {
+	_, err := ParseApprovalWait(n.ApprovalWait)
+	return err
 }
 
 func (n Network) ValidateMode() error {
@@ -190,6 +237,9 @@ func Load(path string) (*Config, error) {
 	if err := cfg.Network.ValidateMode(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := cfg.Network.ValidateApprovalWait(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	if err := cfg.validateSecretRefs(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -205,6 +255,9 @@ func FromImageLabel(label string) (*Config, error) {
 		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
 	}
 	if err := cfg.Network.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	}
+	if err := cfg.Network.ValidateApprovalWait(); err != nil {
 		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
 	}
 	if err := cfg.validateSecretRefs(); err != nil {
@@ -339,6 +392,52 @@ func AddAllowedHosts(path string, hosts []string) ([]string, error) {
 		return nil, err
 	}
 	return added, os.Rename(tmp, path)
+}
+
+func SetApprovalWait(path, value string) error {
+	if value != "" {
+		if _, err := ParseApprovalWait(value); err != nil {
+			return err
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	netDoc := map[string]json.RawMessage{}
+	if raw, ok := doc["network"]; ok {
+		if err := json.Unmarshal(raw, &netDoc); err != nil {
+			return fmt.Errorf("%s: network: %w", path, err)
+		}
+	}
+	if value == "" {
+		delete(netDoc, "approval_wait")
+	} else {
+		v, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		netDoc["approval_wait"] = v
+	}
+	netJSON, err := json.Marshal(netDoc)
+	if err != nil {
+		return err
+	}
+	doc["network"] = netJSON
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	out = append(out, '\n')
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func AddSecret(path, name string, secret Secret) error {

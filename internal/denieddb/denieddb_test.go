@@ -237,3 +237,35 @@ func TestMigrateMergesLegacyDNSTable(t *testing.T) {
 		t.Fatal("dns-only rows must land in the single review queue")
 	}
 }
+
+func TestLookupDecision(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "denied.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if d, err := LookupDecision(db, "s1", "a.example"); err != nil || d.Found {
+		t.Fatalf("unknown host: %+v %v", d, err)
+	}
+	if err := Record(db, "/ws", "s1", "a.example", "a.example:443"); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := LookupDecision(db, "s1", "a.example"); !d.Found || d.Allowed || d.Ignored {
+		t.Fatalf("pending: %+v", d)
+	}
+	if err := MarkIgnored(db, "s1", []string{"a.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := LookupDecision(db, "s1", "a.example"); !d.Ignored || !d.Allowed {
+		t.Fatalf("ignored: %+v", d)
+	}
+	if d, _ := LookupDecision(db, "s2", "a.example"); d.Found {
+		t.Fatalf("another session's row leaked: %+v", d)
+	}
+	if err := MarkAllowed(db, "s1", []string{"a.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := LookupDecision(db, "s1", "a.example"); !d.Allowed || d.Ignored {
+		t.Fatalf("approved: %+v", d)
+	}
+}

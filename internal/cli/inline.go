@@ -15,6 +15,7 @@ import (
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
+	"hsh/internal/attend"
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
 	"hsh/internal/relay"
@@ -202,7 +203,15 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	if running {
 		r.Nudge()
 	}
+	stopAttend := make(chan struct{})
+	attendDone := make(chan struct{})
+	go func() {
+		attend.Run(attend.Path(denieddb.SessionDir(im.session)), stopAttend)
+		close(attendDone)
+	}()
 	_ = r.Run()
+	close(stopAttend)
+	<-attendDone
 	waitErr := cmd.Wait()
 	restore()
 	return containerExitCode(name, waitErr)

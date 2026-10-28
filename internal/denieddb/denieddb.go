@@ -279,6 +279,24 @@ func Ignored(db *sql.DB, f Filter) ([]DeniedHost, error) {
 	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY last_seen DESC, host ASC`, args...)
 }
 
+type Decision struct {
+	Found   bool
+	Allowed bool
+	Ignored bool
+}
+
+func LookupDecision(db *sql.DB, session, host string) (Decision, error) {
+	var allowed, ignored int
+	err := db.QueryRow(`SELECT allowed, ignored FROM denied WHERE host = ? AND session = ?`, host, session).Scan(&allowed, &ignored)
+	if err == sql.ErrNoRows {
+		return Decision{}, nil
+	}
+	if err != nil {
+		return Decision{}, err
+	}
+	return Decision{Found: true, Allowed: allowed != 0, Ignored: ignored != 0}, nil
+}
+
 func MarkAllowed(db *sql.DB, session string, hosts []string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, host := range hosts {

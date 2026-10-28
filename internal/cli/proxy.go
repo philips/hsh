@@ -21,6 +21,7 @@ func Proxy(args []string) error {
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	session := fs.String("session", "", "session id recorded with each denial")
 	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
+	attended := fs.String("attended", "", "marker file whose recent modification time means someone can approve denied requests (enables holding them)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -29,17 +30,18 @@ func Proxy(args []string) error {
 		storePath = filepath.Join(filepath.Dir(*deniedDB), "oauth-tokens.json")
 	}
 	p, err := proxy.New(proxy.Options{
-		ListenAddr:  *listen,
-		ConfigPath:  *configPath,
-		SecretsPath: *secretsPath,
-		CACertPath:  *caCert,
-		CAKeyPath:   *caKey,
-		RootsPath:   *roots,
-		DeniedDB:    *deniedDB,
-		OAuthStore:  storePath,
-		NetworkMode: *networkMode,
-		Session:     *session,
-		Workspace:   *workspace,
+		ListenAddr:   *listen,
+		ConfigPath:   *configPath,
+		SecretsPath:  *secretsPath,
+		CACertPath:   *caCert,
+		CAKeyPath:    *caKey,
+		RootsPath:    *roots,
+		DeniedDB:     *deniedDB,
+		OAuthStore:   storePath,
+		NetworkMode:  *networkMode,
+		Session:      *session,
+		Workspace:    *workspace,
+		AttendedPath: *attended,
 	})
 	if err != nil {
 		return err

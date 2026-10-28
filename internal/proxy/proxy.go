@@ -24,24 +24,26 @@ import (
 )
 
 type Options struct {
-	ListenAddr  string
-	ConfigPath  string
-	SecretsPath string
-	CACertPath  string
-	CAKeyPath   string
-	RootsPath   string
-	DeniedDB    string
-	OAuthStore  string
-	NetworkMode string
-	Session     string
-	Workspace   string
+	ListenAddr   string
+	ConfigPath   string
+	SecretsPath  string
+	CACertPath   string
+	CAKeyPath    string
+	RootsPath    string
+	DeniedDB     string
+	OAuthStore   string
+	NetworkMode  string
+	Session      string
+	Workspace    string
+	AttendedPath string
 }
 
 type state struct {
-	allow   []string
-	mode    string
-	secrets []config.ResolvedSecret
-	oauth   []oauthProvider
+	allow        []string
+	approvalWait time.Duration
+	mode         string
+	secrets      []config.ResolvedSecret
+	oauth        []oauthProvider
 }
 
 type Proxy struct {
@@ -51,6 +53,7 @@ type Proxy struct {
 	transport *http.Transport
 	deniedDB  *sql.DB
 	store     *tokenStore
+	holds     holdState
 
 	mu sync.RWMutex
 	st state
@@ -143,6 +146,7 @@ func (p *Proxy) reload() error {
 	}
 	p.mu.Lock()
 	p.st.allow = cfg.Network.Allow
+	p.st.approvalWait = cfg.Network.ApprovalWaitDuration()
 	p.st.mode = p.opts.NetworkMode
 	if p.st.mode == "" {
 		p.st.mode = cfg.Network.ModeOrDefault()
@@ -245,8 +249,7 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := r.URL.Hostname()
-	if !p.plaintextAllowed(host) {
-		p.deny(w, host, r.URL.Host)
+	if !p.gate(w, r.Context(), host, r.URL.Host, r.Method, func() bool { return p.plaintextAllowed(host) }) {
 		return
 	}
 	if prov := p.oauthTokenEndpoint(host, r.URL.Path); prov != nil && r.Method == http.MethodPost {
@@ -263,20 +266,6 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.forwardHTTP(w, r)
 }
 
-func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
-	log.Printf("denied %s (not in network.allow)", host)
-	if p.deniedDB != nil {
-		if err := denieddb.Record(p.deniedDB, p.opts.Workspace, p.opts.Session, host, target); err != nil {
-			log.Printf("recording denial of %s: %v", host, err)
-		}
-	}
-	w.Header().Set("Proxy-Authenticate", `Hsh realm="egress-allowlist"`)
-	http.Error(w,
-		fmt.Sprintf("hsh: egress to %s is not allowed (not in network.allow)\nreview denied hosts with: hsh proxy-denied\n", host),
-		http.StatusProxyAuthRequired,
-	)
-}
-
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	port := "443"
@@ -286,8 +275,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 			port = p2
 		}
 	}
-	if !p.connectAllowed(host, port) {
-		p.deny(w, host, r.Host)
+	if !p.gate(w, r.Context(), host, r.Host, "CONNECT", func() bool { return p.connectAllowed(host, port) }) {
 		return
 	}
 	hj, ok := w.(http.Hijacker)

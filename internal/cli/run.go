@@ -415,6 +415,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		"--denied-db", "/hsh-state/"+filepath.Base(ro.deniedDB),
 		"--session", sessionID,
 		"--workspace", workspaceSource,
+		"--attended", "/hsh-session/attended",
 	)
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "--roots", "/hsh-roots.pem")

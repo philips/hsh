@@ -48,6 +48,7 @@ func monitorCommand() *ff.Command {
 				return err
 			}
 		}
+		defer watchSessions(filter)()
 		model := proxywatch.New(db, filter, pending, ignored, all)
 		if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 			return err

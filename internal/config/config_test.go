@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseSecretRef(t *testing.T) {
@@ -237,5 +238,84 @@ func TestFindSecretRefs(t *testing.T) {
 	refs, err = FindSecretRefs(missingPath, "hsh://my-key")
 	if err != nil || refs != nil {
 		t.Fatalf("missing config should yield no refs, got %v, %v", refs, err)
+	}
+}
+
+func TestParseApprovalWait(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", DefaultApprovalWait, false},
+		{"30s", 30 * time.Second, false},
+		{"90s", 90 * time.Second, false},
+		{"2m", 2 * time.Minute, false},
+		{"5m", 5 * time.Minute, false},
+		{"off", 0, false},
+		{"OFF", 0, false},
+		{"0", 0, false},
+		{"0s", 0, false},
+		{"6m", 0, true},
+		{"-5s", 0, true},
+		{"soon", 0, true},
+		{"30", 0, true},
+	}
+	for _, c := range cases {
+		got, err := ParseApprovalWait(c.in)
+		if (err != nil) != c.wantErr || (err == nil && got != c.want) {
+			t.Errorf("%q: got %v, %v", c.in, got, err)
+		}
+	}
+}
+
+func TestApprovalWaitLoadsValidatesAndRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "c.json")
+	write := func(doc string) {
+		if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"network":{"mode":"allowlist"}}`)
+	cfg, err := Load(path)
+	if err != nil || cfg.Network.ApprovalWaitDuration() != DefaultApprovalWait {
+		t.Fatalf("default: %v %v", cfg, err)
+	}
+	write(`{"network":{"approval_wait":"off"}}`)
+	if cfg, err = Load(path); err != nil || cfg.Network.ApprovalWaitDuration() != 0 {
+		t.Fatalf("off: %v %v", cfg, err)
+	}
+	write(`{"network":{"approval_wait":"10m"}}`)
+	if _, err = Load(path); err == nil {
+		t.Fatal("an over-limit wait was accepted")
+	}
+	if _, err = FromImageLabel(`{"network":{"approval_wait":"nope"}}`); err == nil {
+		t.Fatal("a bad wait in an image label was accepted")
+	}
+
+	write(`{"image":"x","network":{"mode":"allowlist","allow":["a.example"]},"secrets":{}}`)
+	if err := SetApprovalWait(path, "45s"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(path)
+	if err != nil || cfg.Network.ApprovalWaitDuration() != 45*time.Second || len(cfg.Network.Allow) != 1 || cfg.Network.Mode != "allowlist" {
+		t.Fatalf("after setting 45s: %+v %v", cfg.Network, err)
+	}
+	if err := SetApprovalWait(path, "off"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ = Load(path); cfg.Network.ApprovalWaitDuration() != 0 {
+		t.Fatal("off did not stick")
+	}
+	if err := SetApprovalWait(path, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "approval_wait") {
+		t.Fatalf("clearing the override left the key behind: %s", data)
+	}
+	if err := SetApprovalWait(path, "forever"); err == nil {
+		t.Fatal("an invalid value was written")
 	}
 }
