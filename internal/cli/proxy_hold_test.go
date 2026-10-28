@@ -34,17 +34,20 @@ func TestProxyHoldCommand(t *testing.T) {
 	}
 
 	out, err := run()
-	if err != nil || !strings.Contains(out, "held for up to 30s") || !strings.Contains(out, "(default)") {
+	if err != nil || !strings.Contains(out, "holding is off, the default") || wait() != "holding: off" {
 		t.Fatalf("status: %q %v", out, err)
-	}
-	if out, err = run("off"); err != nil || !strings.Contains(out, "holding is off") || wait() != "holding: off" {
-		t.Fatalf("off: %q %v %s", out, err, wait())
 	}
 	if out, err = run("45s"); err != nil || !strings.Contains(out, "45s") || wait() != "holding: 45s" {
 		t.Fatalf("45s: %q %v %s", out, err, wait())
 	}
-	if out, err = run("on"); err != nil || !strings.Contains(out, "(default)") || wait() != "holding: 30s" {
+	if out, err = run("off"); err != nil || !strings.Contains(out, "holding is off") || strings.Contains(out, "default") || wait() != "holding: off" {
+		t.Fatalf("off: %q %v %s", out, err, wait())
+	}
+	if out, err = run("on"); err != nil || !strings.Contains(out, "30s") || wait() != "holding: 30s" {
 		t.Fatalf("on: %q %v %s", out, err, wait())
+	}
+	if out, err = run("default"); err != nil || !strings.Contains(out, "the default") || wait() != "holding: off" {
+		t.Fatalf("default: %q %v %s", out, err, wait())
 	}
 	if _, err = run("forever"); err == nil {
 		t.Fatal("an invalid duration was accepted")

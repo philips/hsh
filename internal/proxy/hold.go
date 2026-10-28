@@ -17,8 +17,8 @@ const (
 
 	dnsHoldLimit  = 9 * time.Second
 	denialMessage = "hsh: egress to %s is blocked by the sandbox policy and needs the user's approval.\n" +
-		"The user can approve it with `hsh monitor`. Do not look for workarounds or alternative hosts;\n" +
-		"retry this request later, or tell the user which host is needed.\n"
+		"The user can approve it with `hsh monitor`. Do not look for workarounds or alternative hosts.\n" +
+		"Wait a minute or two and retry the same request, or tell the user which host you need.\n"
 )
 
 var maxHolds int64 = 64

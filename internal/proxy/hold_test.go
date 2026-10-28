@@ -471,3 +471,16 @@ func TestProxyStartClearsStaleHoldingCounts(t *testing.T) {
 		t.Fatalf("stale counts survived the proxy start: %+v", rows)
 	}
 }
+
+
+func TestHoldingIsOffUnlessTheConfigAsksForIt(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "", true)
+	start := time.Now()
+	line, done := e.send(connectTo("blocked.test:443")).within(t, 2*time.Second)
+	if !done || !strings.Contains(line, "407") || time.Since(start) > time.Second {
+		t.Fatalf("with no approval_wait in the config the request was held: %q after %s", line, time.Since(start))
+	}
+	if e.activeHolds() != 0 {
+		t.Fatalf("active holds = %d", e.activeHolds())
+	}
+}

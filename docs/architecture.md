@@ -189,8 +189,8 @@ Every request is checked against `network.allow`:
   `CONNECT` this surfaces in curl as `CONNECT tunnel failed, response 407`.
   The body is written for an agent: the host is blocked pending the user's
   approval (`hsh monitor`), and the agent should not look for workarounds
-  but retry later or tell the user which host is needed. Before answering,
-  the proxy may hold the request (below).
+  but wait a minute or two and retry, or tell the user which host is needed.
+  Optionally the proxy holds the request first (below).
 - **Allowed, no secret configured for the host**: the proxy tunnels the
   connection (`CONNECT` → `200 Connection Established`, then a raw TCP
   splice). TLS is end-to-end between the workspace and the upstream; any
@@ -206,10 +206,13 @@ injection applied when the host matches a secret.
 
 ### Holding denied requests
 
-An agent that is refused starts working around the refusal, which costs
-tokens and usually ends worse than the approval would have. So a request
-the policy would deny is first **held** until the user decides, for up to
-`network.approval_wait` (default `30s`; `off`/`0s` disables; at most `5m`):
+An agent that is refused can start working around the refusal, which costs
+tokens. The 407 body therefore tells it to wait and ask (above). hsh can
+also **hold** a request the policy would deny until the user decides. Holding
+is **off by default** (a held request looks like a hung network, which is
+often a worse experience than a fast failure with instructions) and is
+enabled per session with `network.approval_wait` (for example `"30s"`; at most
+`5m`; `off`/`0s` disables):
 
 - The denial is recorded first, so the host shows up in `hsh monitor` and
   the inline status line at once, and `denied.db`'s `holding` column counts
@@ -236,19 +239,16 @@ the policy would deny is first **held** until the user decides, for up to
   the last 20 seconds. `hsh run` keeps it fresh while an inline-review relay
   is attached, and `hsh monitor` (unscoped, or for its `--session`/
   `--workspace` filter) and `hsh proxy allow --watch` do the same for the
-  sessions they cover. Without it requests are denied at once, as before,
-  so an unattended session never makes an agent wait for nothing. A proxy
+  sessions they cover. Without it requests are denied at once. A proxy
   started without `--attended` never holds.
 - Holding does not widen policy: allow decisions still come only from the
   allowlist in the session config, and a hold ends in the same denial as
   without holding.
-- Per session: `hsh proxy hold [--session ID] [on|off|DURATION]` rewrites
-  `network.approval_wait` in the session config, and `w` in `hsh monitor`
-  (and the inline review screen, which is the same model) toggles it for the
-  selected row's session; the title shows `holding: 30s` or `holding: off`.
-
-Host matching is case-insensitive, ignores a trailing dot, and supports
-`*.example.com` wildcards (matching one or more leading labels).
+- Per session: `hsh proxy hold [--session ID] [on|off|default|DURATION]`
+  rewrites `network.approval_wait` in the session config (`on` is 30 s), and
+  `w` in `hsh monitor` (and the inline review screen, which is the same
+  model) toggles it for the selected row's session; the title shows
+  `holding: 30s` or `holding: off`.
 
 ### DNS
 

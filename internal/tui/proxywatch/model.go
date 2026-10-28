@@ -541,7 +541,7 @@ func (m Model) toggleHold() (tea.Model, tea.Cmd) {
 		}
 		value := "off"
 		if cfg.Network.ApprovalWaitDuration() == 0 {
-			value = ""
+			value = config.SuggestedApprovalWait.String()
 		}
 		if err := config.SetApprovalWait(path, value); err != nil {
 			return holdMsg{session: session, err: err}

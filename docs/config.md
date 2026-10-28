@@ -41,7 +41,7 @@ image's `org.ifup.hsh` label as the config - see
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
-| `network.approval_wait` | `30s` | how long a denied request is held for the user's approval before it fails; `off` (or `0s`) fails it at once; at most `5m` (see [holding denied requests](#holding-denied-requests)) |
+| `network.approval_wait` | `off` | opt-in: how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)) |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
@@ -164,14 +164,16 @@ endpoint; for untrusted code use `--network allowlist`.
 
 ## Holding denied requests
 
-A refused request makes an agent hunt for workarounds, which burns tokens. By
-default hsh therefore *holds* a request the policy would deny (a CONNECT, a
-plaintext HTTP request, or a DNS lookup in `allowlist` mode) for up to
-`network.approval_wait` (30 s) while you decide. If you approve the host in
-that time the request simply succeeds and the agent only saw a slow network;
-if you ignore the host it fails at once; if nobody decides it fails with the
-same 407 as before, whose message tells the agent to ask you rather than look
-for workarounds.
+By default a denied request fails at once with a 407 whose message tells the
+agent that the host needs the user's approval, not to look for workarounds,
+and to wait a minute or two and retry (or tell you which host it needs).
+
+If you would rather the request wait for you, set `network.approval_wait` (for
+example `"30s"`, at most `5m`). Then a request the policy would deny (a CONNECT,
+a plaintext HTTP request, or a DNS lookup in `allowlist` mode) is *held* for
+that long while you decide: if you approve the host in time the request just
+succeeds, if you ignore the host it fails at once, and if nobody decides it
+fails with the same 407.
 
 - It only holds while someone can approve: an inline-review relay is
   attached, or `hsh monitor` / `hsh proxy allow --watch` is covering the
@@ -180,15 +182,14 @@ for workarounds.
   denied (plaintext HTTP and non-443 ports).
 - DNS lookups are held for at most 9 s (resolvers give up after about 10 s).
 - Clients with short connect timeouts (Node's fetch gives up after 10 s) will
-  see a timeout before 30 s; that still reads as a transient failure.
-- Opt out per session: `"network": {"approval_wait": "off"}` in the seed
-  config, an image label, or the session's `config.json`;
-  `hsh proxy hold [--session ID] off|on|45s` changes a running session (the
-  proxy reloads within a second and releases requests already held); in
-  `hsh monitor` and the inline review screen press `w` to toggle the session
-  of the selected row.
+  see a timeout before a long wait ends.
+- Turn it on in the seed config, an image label, or the session's
+  `config.json`; `hsh proxy hold [--session ID] on|off|default|45s` changes a
+  running session (`on` means 30 s; the proxy reloads within a second and
+  releases requests already held when it goes off); in `hsh monitor` and the
+  inline review screen press `w` to toggle the session of the selected row.
 - Held hosts are listed first in the monitor (`HELD x2`) and the inline
-  status line shows `(N held)`.
+  status line shows `(M held)`.
 
 ## Allowlist matching
 

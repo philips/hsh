@@ -26,8 +26,9 @@ type Network struct {
 }
 
 const (
-	DefaultApprovalWait = 30 * time.Second
-	MaxApprovalWait     = 5 * time.Minute
+	DefaultApprovalWait   time.Duration = 0
+	SuggestedApprovalWait               = 30 * time.Second
+	MaxApprovalWait                     = 5 * time.Minute
 )
 
 func ParseApprovalWait(v string) (time.Duration, error) {

@@ -877,7 +877,7 @@ cat >"$TMP/hold.config.hsh" <<EOF
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "mounts": ["$HOLD_WS:/workspace"],
-  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "30s" }
 }
 EOF
 cat >"$TMP/hold-off.config.hsh" <<EOF
@@ -885,7 +885,7 @@ cat >"$TMP/hold-off.config.hsh" <<EOF
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "mounts": ["$HOLD_WS:/workspace"],
-  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "off" }
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
 }
 EOF
 
@@ -930,7 +930,7 @@ done
 "$HSH" proxy denied --db "$DB" --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" || fail "the held request was never recorded as a denial: $(cat "$TMP/hold-run.out")"
 sleep 3
 grep -q "held-result" "$TMP/hold-run.out" && fail "the denied request was answered instead of held: $(cat "$TMP/hold-run.out")"
-pass "a denied CONNECT stays pending (held) while someone is watching"
+pass "with approval_wait set, a denied CONNECT stays pending (held) while someone is watching"
 
 "$HSH" proxy allow --db "$DB" --session "$HOLD_SESSION" https://api.mistral.ai >/dev/null || fail "hsh proxy allow failed"
 wait "$HOLD_PID" || true
@@ -954,10 +954,10 @@ OFF_TIME="$(sed -n 's/.*optout-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/ho
 [ -n "$OFF_TIME" ] || fail "an opted-out session did not answer 407: $(cat "$TMP/hold-off.out")"
 awk -v t="$OFF_TIME" 'BEGIN { exit !(t < 10) }' || fail "an opted-out session still waited ($OFF_TIME s)"
 grep -q "needs the user's approval" "$TMP/hold-off.out" || fail "the denial text does not tell the agent what to do: $(cat "$TMP/hold-off.out")"
-pass "network.approval_wait: off denies at once, with a message aimed at the agent"
+pass "holding is off by default: a denied request fails at once, with a message aimed at the agent"
 
 OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
-"$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off" || fail "hsh proxy hold did not report the opt-out"
+"$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off, the default" || fail "hsh proxy hold did not report that holding is off by default"
 "$HSH" proxy hold --session "$OFF_SESSION" 4s | grep -q "up to 4s" || fail "hsh proxy hold 4s did not apply"
 (cd "$HOLD_WS" && "$HSH" run --denied-db "$DB" --resume "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
 sleep 3
@@ -971,7 +971,7 @@ kill "$ATTENDED_PID" 2>/dev/null || true
 FOUR_TIME="$(sed -n 's/.*fourgs-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/hold-4s.out" | head -1)"
 [ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 407: $(cat "$TMP/hold-4s.out")"
 awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
-pass "hsh proxy hold 4s turns holding back on live; an unapproved request is held about 4s, then denied"
+pass "hsh proxy hold 4s turns holding on live; an unapproved request is held about 4s, then denied"
 
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions

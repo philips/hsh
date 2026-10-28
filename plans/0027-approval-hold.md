@@ -31,7 +31,8 @@ allowed), so holds matter where denials happen:
 
 ### Config
 
-`network.approval_wait`: a duration string, **default `"30s"`**. `"0s"`,
+`network.approval_wait`: a duration string, default off (originally planned
+as `"30s"`; see the last Decision). `"0s"`,
 `"0"`, or `"off"` disable holding. Values above `"5m"` are rejected at load
 time. `config.Load` validates it; `Network.ApprovalWait()` returns the
 parsed duration. It is a per-session setting like the rest of the session
@@ -195,3 +196,9 @@ All resolved; see Decisions below.
   relay creates it before the container starts so the first requests of a
   session are held. A proxy started without `--attended` never holds, which
   keeps the existing proxy tests and standalone `hsh proxy` immediate.
+- **Default flipped to off (after trying it).** Holding looks like a hung
+  network to the agent, and failing fast with instructions in the response
+  was a better experience. `network.approval_wait` now defaults to off;
+  `hsh proxy hold on` (and `w` in the monitor) enables it with 30 s. The
+  denial message was reworded to tell the agent to wait a minute or two and
+  retry the same request. This supersedes the "on by default" decision above.

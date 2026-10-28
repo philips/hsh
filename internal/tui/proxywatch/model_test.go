@@ -443,8 +443,8 @@ func approvalWaitInConfig(t *testing.T, path string) string {
 func TestToggleHoldWritesTheSessionConfigAndUpdatesTheTitle(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
 	m, _ := send(env.model, tea.WindowSizeMsg{Width: 140, Height: 30})
-	if view := m.View(); !strings.Contains(view, "holding: 30s (session testsess)") {
-		t.Fatalf("the title does not show the hold state:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "holding: off (session testsess)") {
+		t.Fatalf("the title does not show that holding is off by default:\n%s", view)
 	}
 
 	m, cmd := send(m, keyMsg("w"))
@@ -453,24 +453,24 @@ func TestToggleHoldWritesTheSessionConfigAndUpdatesTheTitle(t *testing.T) {
 		t.Fatal("w returned no command")
 	}
 	m, _ = send(m, msg)
-	if got := approvalWaitInConfig(t, env.configPath); got != "off" {
-		t.Fatalf("approval_wait = %q after turning holding off", got)
+	if got := approvalWaitInConfig(t, env.configPath); got != "30s" {
+		t.Fatalf("approval_wait = %q after turning holding on", got)
 	}
 	if !hasHost(allowlist(t, env.configPath), "already.example.com") {
 		t.Fatal("toggling holding lost the allowlist")
 	}
 	view := m.View()
-	if !strings.Contains(view, "holding: off (session testsess)") || !strings.Contains(view, "holding off — denied requests fail immediately") {
-		t.Fatalf("view after turning holding off:\n%s", view)
+	if !strings.Contains(view, "holding: 30s (session testsess)") || !strings.Contains(view, "denied requests wait for approval") {
+		t.Fatalf("view after turning holding on:\n%s", view)
 	}
 
 	m, cmd = send(m, keyMsg("w"))
 	m, _ = send(m, runCmd(cmd))
-	if got := approvalWaitInConfig(t, env.configPath); got != "" {
-		t.Fatalf("approval_wait = %q after turning holding back on (the default should apply)", got)
+	if got := approvalWaitInConfig(t, env.configPath); got != "off" {
+		t.Fatalf("approval_wait = %q after turning holding off", got)
 	}
-	if !strings.Contains(m.View(), "holding: 30s") {
-		t.Fatalf("view after turning holding on:\n%s", m.View())
+	if !strings.Contains(m.View(), "holding: off") || !strings.Contains(m.View(), "holding off — denied requests fail immediately") {
+		t.Fatalf("view after turning holding off:\n%s", m.View())
 	}
 }
 
@@ -503,7 +503,7 @@ func TestToggleHoldActsOnTheSelectedRowsSession(t *testing.T) {
 	}
 	m, cmd := send(m, keyMsg("w"))
 	m, _ = send(m, runCmd(cmd))
-	if approvalWaitInConfig(t, otherCfg) != "off" {
+	if approvalWaitInConfig(t, otherCfg) != "30s" {
 		t.Fatal("the selected row's session was not changed")
 	}
 	if approvalWaitInConfig(t, env.configPath) != "" {
