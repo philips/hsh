@@ -262,8 +262,9 @@ if status() != "mode=normal color=green pending=0":
     fail("passthrough did not return to normal: %r" % status())
 print("PASS: while the dialog is up the pty is not read; closing it delivers the held output in order")
 
+mark = len(transcript)
 os.write(fd, b"\x00")
-expect(fd, "nothing to review", len(transcript) - 1)
+expect(fd, "Proxy requests awaiting review", mark)
 pm("send", "--sock", SOCK, "seq 1 400\n")
 time.sleep(0.5)
 mark = len(transcript)
