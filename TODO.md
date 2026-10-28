@@ -1,19 +1,11 @@
-## Integrated update command
-
-`hsh update` download latest release
-
 ## config versioning
 
 version config schema so that `hsh` doesn't try to use container schema it doesn't understand
 
-## Session attach/detach and approval popovers
+## flicker of status bar
 
-See plans/0026-detach-attach.md (podman-native detach/attach, in-process relay, inline monitor) and plans/0025-libghostty.md (emulator and passthrough decisions).
+the status bar flickers with dns install and other commands with a spinner. annoying. two paths:
 
-## Process-control approvals
+- do the full emulator with libghostty (gah!)
+- only pop-up the status bar when there is an approval needed
 
-See plans/0024-process-approval.md: implement the hold-the-request option first, then host-owned approval.
-
-## Hold denied requests for approval
-
-See plans/0027-approval-hold.md (plan, awaiting review).
