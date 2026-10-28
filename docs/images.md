@@ -100,9 +100,13 @@ sandbox. `--tasks -` reads the task list from stdin.
 - **pi** — multi-provider: `hsh://mistral-api-key` (Bearer) to
   `api.mistral.ai`, `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`, `hsh://openai-api-key` (Bearer) to
-  `api.openai.com`; also allows `auth.openai.com` (Sign in with
-  ChatGPT login; deliver the browser callback with
-  [`hsh oauth callback`](oauth.md#browser-redirect-logins)).
+  `api.openai.com`; also allows `auth.openai.com` and ships an
+  `openai` [OAuth capture provider](oauth.md#configuration)
+  (token endpoint `auth.openai.com/api/accounts/oauth/token`, api host
+  `api.openai.com`), so `Sign in with ChatGPT` logins are sandboxed:
+  deliver the browser callback with
+  [`hsh oauth callback`](oauth.md#browser-redirect-logins) and the
+  subscription credential never enters the workspace.
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai`,
