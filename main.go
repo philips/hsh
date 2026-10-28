@@ -15,6 +15,8 @@ func main() {
 	switch strings.TrimSuffix(filepath.Base(os.Args[0]), ".exe") {
 	case "hsh-proxy":
 		err = cli.Proxy(args)
+	case "hsh-reaper":
+		err = cli.Reaper(args)
 	case "hsh-workspace":
 		err = cli.Workspace(args)
 	case "hsh-workspace-inner":

@@ -16,11 +16,23 @@ func gcCommand() *ff.Command {
 		if len(args) > 0 {
 			return fmt.Errorf("gc takes no positional arguments")
 		}
+		stopped := 0
+		if pods, err := listSandboxes(); err == nil {
+			for _, p := range sandboxPods(pods) {
+				if sessionStatus(p) == "Shell exited" {
+					stopSessionPod(p.Name, sessionDirFor(p.Name))
+					fmt.Printf("stopped session %s (its shell exited)\n", p.Session())
+					stopped++
+				}
+			}
+		}
 		base := denieddb.SessionsDir()
 		entries, err := os.ReadDir(base)
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Println("no session state to collect")
+				if stopped == 0 {
+					fmt.Println("no session state to collect")
+				}
 				return nil
 			}
 			return err
@@ -41,7 +53,9 @@ func gcCommand() *ff.Command {
 			removed++
 		}
 		if removed == 0 {
-			fmt.Println("no orphaned session state")
+			if stopped == 0 {
+				fmt.Println("no orphaned session state")
+			}
 		} else {
 			fmt.Printf("removed %d session state director%s\n", removed, pluralY(removed))
 		}

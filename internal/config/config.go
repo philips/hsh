@@ -60,7 +60,11 @@ type Config struct {
 	Network Network                  `json:"network"`
 	OAuth   map[string]OAuthProvider `json:"oauth"`
 	Agent   Agent                    `json:"agent"`
+
+	DetachKeys string `json:"detach_keys"`
 }
+
+const DefaultDetachKeys = "ctrl-]"
 
 type Agent struct {
 	Command []string `json:"command"`
@@ -99,6 +103,8 @@ func Default() *Config {
 		Image:  "docker.io/library/alpine:latest",
 		Shell:  "/bin/sh",
 		Mounts: []string{".:/workspace"},
+
+		DetachKeys: DefaultDetachKeys,
 	}
 }
 

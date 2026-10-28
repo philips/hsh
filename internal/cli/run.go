@@ -447,12 +447,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	}
 	failureCleanup = false
 
-	stopSession := func() {
-		_ = os.Remove(secretsPath)
-		if out, err := podman("pod", "stop", "--time", "2", podName); err != nil {
-			fmt.Fprintf(os.Stderr, "hsh: stopping session pod: %v\n%s", err, out)
-		}
-	}
+	stopSession := func() { stopSessionPod(podName, sessionDir) }
 	cleanup := stopSession
 	if ro.rm {
 		cleanup = func() { removeSessionState(podName, sessionDir) }
@@ -474,7 +469,8 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		"-v", exe + ":/hsh-workspace-inner:ro",
 		"-v", caCertPath + ":/hsh-run/ca.crt:ro",
 	}
-	if isTerminal(os.Stdin) {
+	interactive := isTerminal(os.Stdin)
+	if interactive {
 		wsArgs = append(wsArgs, "-i", "-t")
 	} else {
 		wsArgs = append(wsArgs, "-i")
@@ -509,8 +505,24 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		wsArgs = append(wsArgs, "--launch-json", string(launchJSON))
 	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
+	detachable := interactive && len(agentExec) == 0 && !ro.rm
+	flags := attachFlags(interactive, detachable, cfg.DetachKeys)
+	exitWith := func(code int) error {
+		if code != 0 {
+			os.Exit(code)
+		}
+		return nil
+	}
+	detached := func() bool {
+		if !detachable || !containerRunning(wsName) {
+			return false
+		}
+		fmt.Fprintf(os.Stderr, "hsh: detached from session %s; re-enter with: hsh run --resume %s\n", sessionID, sessionID)
+		return true
+	}
 	if reattach {
-		if containerRunning(wsName) {
+		running := containerRunning(wsName)
+		if running && !detachable {
 			return fmt.Errorf("session %s is already running; exit it first or pick another session", sessionID)
 		}
 		if !containerExists(wsName) {
@@ -518,18 +530,42 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 				return fmt.Errorf("create workspace container: %w\n%s", err, out)
 			}
 		}
-		code, err := attachContainer(wsName)
+		if detachable {
+			if err := spawnReaper(exe, podName, wsName, sessionDir); err != nil {
+				fmt.Fprintf(os.Stderr, "hsh: warning: starting the session reaper: %v\n", err)
+			}
+			defer markAttached(sessionDir)()
+		}
+		code, err := attachContainer(wsName, flags, running)
+		if detached() {
+			return nil
+		}
 		cleanup()
 		if err != nil {
 			return err
 		}
-		if code != 0 {
-			os.Exit(code)
-		}
-		return nil
+		return exitWith(code)
 	}
-	wsArgs[0] = "run"
-	cmd := exec.Command("podman", wsArgs...)
+	if detachable {
+		if out, err := podman(wsArgs...); err != nil {
+			return fmt.Errorf("create workspace container: %w\n%s", err, out)
+		}
+		if err := spawnReaper(exe, podName, wsName, sessionDir); err != nil {
+			fmt.Fprintf(os.Stderr, "hsh: warning: starting the session reaper: %v\n", err)
+		}
+		unmark := markAttached(sessionDir)
+		code, err := attachContainer(wsName, flags, false)
+		unmark()
+		if detached() {
+			return nil
+		}
+		cleanup()
+		if err != nil {
+			return err
+		}
+		return exitWith(code)
+	}
+	cmd := exec.Command("podman", withRunFlags(wsArgs, flags)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -543,10 +579,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			return runErr
 		}
 	}
-	if code != 0 {
-		os.Exit(code)
-	}
-	return nil
+	return exitWith(code)
 }
 
 func resolveImage(ref string, pull string) (string, error) {
@@ -671,26 +704,6 @@ func readWorkspaceFile(sessionDir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-func attachContainer(name string) (int, error) {
-	cmd := exec.Command("podman", "start", "-ai", name)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
-		}
-		return 0, err
-	}
-	out, err := podman("inspect", "--format", "{{.State.ExitCode}}", name)
-	if err != nil {
-		return 0, nil
-	}
-	code := 0
-	_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &code)
-	return code, nil
 }
 
 func podExists(name string) bool {

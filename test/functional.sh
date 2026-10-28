@@ -826,6 +826,21 @@ fi
 grep -q "not a loopback callback" "$TMP/oauth-reject.out" || fail "oauth callback did not explain the loopback requirement: $(cat "$TMP/oauth-reject.out")"
 pass "oauth callback rejects non-loopback URLs"
 
+echo "== step 17: detach and attach with podman's own flow, and the reaper"
+if command -v python3 >/dev/null; then
+	cat >"$TMP/detach.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"mode":"allowlist","allow":["host.containers.internal"]}}'
+EOF
+	podman build -q -t localhost/hsh-detach-test:latest -f "$TMP/detach.Containerfile" "$TMP" >/dev/null || fail "could not build the detach test image"
+	mkdir -p "$TMP/detachws"
+	"$HSH" rm --all -f >/dev/null 2>&1 || true
+	python3 "$REPO/test/detach.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" || fail "the detach/attach driver failed"
+	pass "detach, attach, closed terminals, the reaper, and gc behave as planned"
+else
+	echo "SKIP: detach/attach checks (no python3 for the pty driver)"
+fi
+
 echo "== final sweep: every session the test created is removable"
 "$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"
 if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then

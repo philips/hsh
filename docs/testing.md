@@ -54,6 +54,12 @@ proxy, the denial database, and the example image:
   request log), and after `secret rm` the entry goes missing: a warning,
   no injection, the request still forwarded, and a dangling-reference
   warning without editing the config
+- **step 17** (`test/detach.py`, a pty driver): Ctrl-] detaches and leaves
+  the shell, secrets, and a reaper running; podman's Ctrl-P Ctrl-Q does
+  nothing; `hsh run --resume` re-enters the same shell; closing the
+  terminal detaches; the reaper scrubs secrets and stops the pod when a
+  detached shell exits; without a reaper `hsh ls` shows `Shell exited`
+  and `hsh gc` cleans up; `--rm` sessions cannot detach
 
 Run it with:
 

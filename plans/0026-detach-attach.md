@@ -1,8 +1,10 @@
 # Detach/attach with podman's own flow, and an in-process relay for inline approvals
 
-> **Status: plan.** Builds on plans/0025-libghostty.md (emulator and
-> passthrough decisions) and changes how `internal/cli/run.go` attaches to
-> the workspace container. Relay prototype: `plans/prototype/libghostty/`.
+> **Status: Phase 1 implemented** (podman-native detach/attach, the
+> reaper, `ls`/`gc`, `test/detach.py`); Phase 2 not started. Builds on
+> plans/0025-libghostty.md (emulator and passthrough decisions) and
+> changes how `internal/cli/run.go` attaches to the workspace container.
+> Relay prototype: `plans/prototype/libghostty/`.
 
 ## Goal
 

@@ -125,7 +125,7 @@ func lsCommand() *ff.Command {
 			if t := p.CreatedTime(); !t.IsZero() {
 				created = humanize.Time(t)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", p.Session(), p.Status, created, p.NumContainers(), ws)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", p.Session(), sessionStatus(p), created, p.NumContainers(), ws)
 		}
 		return w.Flush()
 	})

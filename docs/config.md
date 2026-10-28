@@ -43,6 +43,7 @@ image's `org.ifup.hsh` label as the config - see
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
+| `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session |
 
 The workspace starts in the first mount's target directory
@@ -237,6 +238,12 @@ workspace     file with the absolute path of the workspace
   proxy included) and the resolved `secrets.json` is scrubbed, so an idle
   session holds no key material; re-entry re-resolves secrets from the
   session config
+- the detach key (`detach_keys`, default Ctrl-]) leaves an interactive
+  session running in the background; closing the terminal does the same.
+  `hsh run --resume` re-attaches to the same shell, and `hsh ls` shows
+  `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
+  scrubs secrets and stops the pod if the shell exits while detached.
+  `--rm` and `--tasks` sessions cannot detach
 - `hsh run --rm` makes a run temporary: pod and state are removed at exit
 - `hsh run --resume` re-enters the current workspace's session - the only
   one directly, or lists the ids when there are several

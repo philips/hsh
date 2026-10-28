@@ -464,11 +464,36 @@ sessions per workspace.
   label) is copied into the session directory with mounts resolved to
   absolute paths; the copy is the live config — watched for hot reload,
   and the only file the review commands edit.
-- On exit the whole pod is stopped (proxy and infra included — verified:
-  `podman start` auto-starts the infra container, so re-entry needs no
-  extra handling) and the resolved `secrets.json` is scrubbed from the
-  session directory: an idle session holds no key material. Re-entry
-  re-resolves secrets from the session config.
+- When the shell exits the whole pod is stopped (proxy and infra
+  included — verified: `podman start` auto-starts the infra container,
+  so re-entry needs no extra handling) and the resolved `secrets.json` is
+  scrubbed from the session directory: an idle session holds no key
+  material. Re-entry re-resolves secrets from the session config.
+- **Detach and attach** use podman's own flow. Interactive sessions run
+  the podman client with `--sig-proxy=false --detach-keys=<detach_keys>`
+  (default Ctrl-]; podman's Ctrl-P Ctrl-Q is disabled). Detaching, or
+  closing the terminal, ends only the podman client; conmon keeps the
+  container's pty, so the shell and agent keep running, and
+  `hsh run --resume` runs `podman attach` to the same shell. When the
+  client returns and the workspace container is still running, `hsh run`
+  reports the detach and leaves the pod, proxy, and `secrets.json` alone.
+  Output produced while detached is not replayed, and the screen is not
+  repainted until the shell redraws (Ctrl-L). `--rm` and `--tasks`
+  sessions, and non-terminal runs, cannot detach.
+- **The reaper** (`hsh-reaper`, the same binary under another `argv[0]`)
+  is started detached from the terminal (`setsid`) whenever an
+  interactive session is attached. It waits for the workspace container
+  to exit and then runs the same idle cleanup (`secrets.json` removed,
+  pod stopped), so a shell that exits while detached does not leave the
+  proxy running with resolved secrets. One reaper per session (a
+  `reaper.lock` flock in the session directory); `hsh run` also runs the
+  cleanup itself when it sees the container exit. While no `hsh run` is
+  attached, edits to secret entries in the session config are picked up
+  on the next attach.
+- `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
+  directory's `client.pid`), `Detached` (workspace container running, no
+  client), or `Shell exited` (shell gone while the proxy still runs, which
+  `hsh gc` cleans up).
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
 - `hsh run --resume` re-enters the current workspace's session — the
@@ -479,7 +504,8 @@ sessions per workspace.
   On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one.
 - `hsh rm` removes a session and its state; `rm --all` sweeps everything;
-  `hsh gc` collects session state whose pod is gone.
+  `hsh gc` collects session state whose pod is gone and stops pods whose
+  shell has exited.
 - On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one; the proxy's
   listeners keep working across this.
