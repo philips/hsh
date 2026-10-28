@@ -114,35 +114,70 @@ a longer-lived owner of the pty and the emulator:
   it sits outside the sandbox (plans/0024-process-approval.md, option B).
   Cost: a daemon lifecycle (start, adopt after reboot, cleanup in `hsh
   rm`/`gc`).
-- **Inside the workspace parent**: persists as long as the pod runs, no
-  new host process, but the emulator and popover logic then sit on the
-  agent's side of the boundary, which defeats the point for approvals.
 
-Prefer the host daemon. It also resolves 0024's open work: the pty relay
-replaces `podman start -ai`, and detach/reattach plus popovers come from
-the same code.
+The emulator cannot live in the pods as then the popover logic then sit on the
+agent's side of the boundary, which defeats the point for approvals.
 
-## Recommendation
+It also resolves 0024's open work: the pty relay replaces `podman start -ai`,
+and detach/reattach plus popovers come from the same code.
 
-1. Keep libghostty as the leading candidate for the emulator, behind a
-   small interface (`Write`, `Resize`, `Snapshot`) so `charmbracelet/x/vt`
-   or a later cgo build can be swapped in.
-2. Build the host-side pty relay first (no emulator: raw relay,
-   resize, detach key) since both plans depend on it and it is
-   independently useful; add the emulator for restore and popovers once
-   the relay is in.
-3. Decide the Go 1.27 / `GOEXPERIMENT=simd` bump deliberately; it is the
-   biggest non-technical cost.
-4. Do not ship the in-band OSC trigger without the rule above that
-   payloads carry no authority.
+## Decisions
 
-## Not covered
+0. Build a simple prototype for a user to test of a single "status line" for `hsh` that has notification of proxy items needing review- then change that status line from green to red when the user presses Ctrl+Space and pops over a fake approval dialog list.
+1. Use Go 1.27 / `GOEXPERIMENT=simd` and bump go.mod
+2. Attempt to build the wasm from a pinned Ghostty commit ourselves.
+3. Use libghostty for the emulator, behind a small interface (`Write`,
+   `Resize`, `Snapshot`) so `charmbracelet/x/vt` or a later cgo build can be
+   swapped in.
+4. Build the host-side pty relay first (no emulator: raw relay, resize, detach
+   key) since both plans depend on it and it is independently useful; add the
+   emulator for restore and popovers once the relay is in.
+5. Do not ship the in-band OSC trigger without the rule above that payloads
+   carry no authority.
 
-- Throughput under a realistic burst through the relay (the numbers above
-  are the emulator alone).
-- Mouse, bracketed paste, and kitty keyboard protocol passthrough while a
-  popover is up.
+## Status line prototype (decision 0)
+
+`ptymux demo` in `plans/prototype/libghostty/` is the thing to try by
+hand (see its README). It reserves the bottom terminal row for an `hsh`
+status line, shrinks the session's pty and emulator by one row, and
+simulates proxy denials arriving. The line is green and announces
+`N proxy requests need review`; Ctrl+Space turns it red and pops over a
+list where each item can be approved or denied (up/down, `a`, `d`, `A`,
+`D`, Esc to close). The data is fake; nothing reads `denied.db`.
+
+What building it showed:
+
+- **A reserved row forces the relay to render, not pass through.** A
+  passthrough client would let the session scroll into the status row
+  (a child at its last line writes over it) or let the child reset the
+  scroll region. The prototype therefore sends the client a full frame
+  built from emulator state (coalesced to one per 25 ms, wrapped in
+  synchronized-output mode `?2026`) instead of raw child bytes. This is
+  how tmux works, and it makes popovers and status trivial to draw, but
+  the user's own terminal scrollback no longer sees session output; the
+  relay would need its own scrollback view.
+- **Ctrl+Space arrives as a NUL byte** on most terminals. It is a fine
+  hsh key but shadows Emacs' set-mark inside the session; the key should
+  be configurable. Terminals using the kitty keyboard protocol send it
+  differently, which the "Tests" item on keyboard protocol passthrough
+  has to cover.
+- **Red means hsh holds the keyboard.** The line turns red for the review
+  dialog and for the y/n prompt bar, so the user can tell input is not
+  going to the agent.
+- The screen under the dialog keeps updating (the agent is not paused);
+  closing the dialog needs no repaint request to the agent.
+- `render_test.go` feeds the relay's frames into a second emulator that
+  stands in for the user's terminal and asserts the visible rows: status
+  text, dialog contents, session content preserved around the dialog, and
+  restoration after close.
+
+## Tests
+
+- Ensure mouse, bracketed paste, and kitty keyboard protocol passthrough while
+  a popover is up.
+
+## Future Work (out of scope)
+
 - Multiple simultaneous clients (the prototype detaches the previous
   client, like `tmux attach -d`).
 - Scrollback restore on reattach (only the active screen is replayed).
-- Building the wasm from a pinned Ghostty commit ourselves.

@@ -40,6 +40,8 @@ func cmdAttach(args []string) error {
 		return err
 	}
 	defer c.Close()
+	os.Stdout.WriteString("\x1b[?1049h")
+	defer os.Stdout.WriteString("\x1b[?1049l")
 	old, err := term.MakeRaw(fd)
 	if err != nil {
 		return err
@@ -58,10 +60,14 @@ func cmdAttach(args []string) error {
 	}()
 
 	done := make(chan struct{})
+	ended := false
 	go func() {
 		defer close(done)
 		for {
 			kind, payload, err := readFrame(c)
+			if kind == frameEnd {
+				ended = true
+			}
 			if err != nil || kind == frameEnd {
 				return
 			}
@@ -92,7 +98,12 @@ func cmdAttach(args []string) error {
 		}
 	}()
 	<-done
-	fmt.Fprint(os.Stdout, "\x1b[0m\r\n[detached]\r\n")
+	os.Stdout.WriteString("\x1b[0m\x1b[?1049l")
+	if ended {
+		fmt.Fprint(os.Stdout, "[session ended]\r\n")
+	} else {
+		fmt.Fprint(os.Stdout, "[detached]\r\n")
+	}
 	return nil
 }
 
@@ -133,6 +144,34 @@ func cmdNotify(args []string) error {
 		return fmt.Errorf("notify PROMPT")
 	}
 	c, err := dial(*sock, header{Op: "notify", Prompt: fs.Arg(0), Timeout: float64(*timeout) / float64(time.Second)})
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	_, err = io.Copy(os.Stdout, c)
+	return err
+}
+
+func cmdDeny(args []string) error {
+	fs := flag.NewFlagSet("deny", flag.ExitOnError)
+	sock := fs.String("sock", "", "unix socket path")
+	fs.Parse(args)
+	if fs.NArg() != 1 {
+		return fmt.Errorf("deny HOST")
+	}
+	c, err := dial(*sock, header{Op: "deny", Text: fs.Arg(0)})
+	if err != nil {
+		return err
+	}
+	c.Close()
+	return nil
+}
+
+func cmdStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	sock := fs.String("sock", "", "unix socket path")
+	fs.Parse(args)
+	c, err := dial(*sock, header{Op: "status"})
 	if err != nil {
 		return err
 	}

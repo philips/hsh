@@ -128,6 +128,77 @@ if dump().count("example.org") != 1:
     fail("the custom escape sequence leaked onto the emulated screen")
 print("PASS: a custom OSC emitted inside the session raises the popover and never reaches the screen")
 
+def status():
+    return pm("status", "--sock", SOCK).strip()
+
+def read_log():
+    return open(LOG).read() if os.path.exists(LOG) else ""
+
+GREEN = "\x1b[0;30;42m"
+RED = "\x1b[0;97;41m"
+
+if status() != "mode=normal color=green pending=0":
+    fail("unexpected idle status: %r" % status())
+mark = len(transcript)
+pm("deny", "--sock", SOCK, "a.example")
+pm("deny", "--sock", SOCK, "b.example")
+expect(fd, "2 proxy requests need review", mark)
+if GREEN not in transcript[mark:]:
+    fail("the status line is not green while requests are pending")
+if status() != "mode=normal color=green pending=2":
+    fail("unexpected status with two pending: %r" % status())
+print("PASS: proxy denials show up in the green status line as a notification")
+
+mark = len(transcript)
+os.write(fd, b"\x00")
+expect(fd, "Proxy requests awaiting review", mark)
+expect(fd, "a.example", mark)
+expect(fd, "b.example", mark)
+if RED not in transcript[mark:]:
+    fail("the status line did not turn red")
+if status() != "mode=review color=red pending=2":
+    fail("unexpected status in review: %r" % status())
+if "Proxy requests awaiting review" in dump():
+    fail("the dialog leaked into the emulated screen")
+print("PASS: Ctrl+Space turns the status line red and pops over the approval list")
+
+os.write(fd, b"\x1b[B")
+os.write(fd, b"a")
+settle(fd)
+os.write(fd, b"d")
+settle(fd)
+log = read_log()
+if "approved b.example" not in log or "denied a.example" not in log:
+    fail("arrow-key selection and a/d decisions were not applied: %r" % log)
+if status() != "mode=review color=red pending=0":
+    fail("unexpected status after deciding everything: %r" % status())
+print("PASS: arrow keys select, a approves, d denies; the status counts what is left")
+
+mark = len(transcript)
+os.write(fd, b"\x1b")
+expect(fd, "nothing to review", mark)
+if status() != "mode=normal color=green pending=0":
+    fail("Esc did not close the dialog: %r" % status())
+print("PASS: Esc closes the dialog, restores the screen, and the status line is green again")
+
+pm("deny", "--sock", SOCK, "c.example")
+settle(fd)
+os.write(fd, b"\x00")
+settle(fd)
+os.write(fd, b"\x00")
+settle(fd)
+if status() != "mode=normal color=green pending=1":
+    fail("Ctrl+Space did not toggle the dialog closed: %r" % status())
+os.write(fd, b"\x00")
+settle(fd)
+os.write(fd, b"A")
+settle(fd)
+os.write(fd, b"\x00")
+settle(fd)
+if "approved c.example" not in read_log() or status() != "mode=normal color=green pending=0":
+    fail("A did not approve everything pending: %r %r" % (read_log(), status()))
+print("PASS: Ctrl+Space toggles the dialog; A approves everything pending")
+
 os.write(fd, b"\x1d")
 expect(fd, "[detached]", 0)
 os.waitpid(pid, 0)
