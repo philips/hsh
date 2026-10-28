@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -32,6 +34,19 @@ func DefaultPath() string {
 	return filepath.Join(StateDir(), "metrics.db")
 }
 
+func isBusy(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "SQLITE_BUSY")
+}
+
+func busyRetry(op func() error) error {
+	err := op()
+	for i := 0; i < 40 && isBusy(err); i++ {
+		time.Sleep(25 * time.Millisecond)
+		err = op()
+	}
+	return err
+}
+
 func openCounter(path string) (*sql.DB, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -42,7 +57,10 @@ func openCounter(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(counterSchema); err != nil {
+	if err := busyRetry(func() error {
+		_, err := db.Exec(counterSchema + kvSchema)
+		return err
+	}); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -55,11 +73,13 @@ func Bump(path string) error {
 		return err
 	}
 	defer db.Close()
-	_, err = db.Exec(
-		"INSERT INTO counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1",
-		sessionsCounter,
-	)
-	return err
+	return busyRetry(func() error {
+		_, err := db.Exec(
+			"INSERT INTO counters (name, value) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1",
+			sessionsCounter,
+		)
+		return err
+	})
 }
 
 func Take(path string) (int, error) {

@@ -23,6 +23,7 @@ import (
 	"hsh/internal/imageRef"
 	"hsh/internal/netsetup"
 	"hsh/internal/secretstore"
+	"hsh/internal/sessiondb"
 	"hsh/internal/update"
 )
 
@@ -276,6 +277,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		if err := os.WriteFile(filepath.Join(sessionDir, "workspace"), []byte(workspaceSource+"\n"), 0o644); err != nil {
 			return err
 		}
+		recordSessionVersion(sessionDir, "created")
 	}
 	failureCleanup := true
 	defer func() {
@@ -387,6 +389,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		}
 		infof("hsh: configuration reloaded\n")
 	})
+	go watchUpdateChecks()
 
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
@@ -437,6 +440,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			}
 		}
 		reattach = true
+		recordSessionVersion(sessionDir, "resumed")
 		infof("hsh: resuming session %s for workspace %s\n", sessionID, workspaceSource)
 	} else {
 		infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
@@ -806,6 +810,12 @@ func fileExists(path string) bool {
 func newSessionID() string {
 	update.Bump(update.DefaultPath())
 	return randHex(6)
+}
+
+func recordSessionVersion(sessionDir, kind string) {
+	if err := sessiondb.Append(sessionDir, kind); err != nil {
+		fmt.Fprintf(os.Stderr, "hsh: warning: recording session version: %v\n", err)
+	}
 }
 
 func randHex(n int) string {

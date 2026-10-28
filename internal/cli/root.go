@@ -92,7 +92,17 @@ func Root() *ff.Command {
 
 func Run(args []string) error {
 	root := Root()
-	err := root.ParseAndRun(context.Background(), args)
+	if err := root.Parse(args); err != nil {
+		return runResult(root, err)
+	}
+	if sel := root.GetSelected(); sel != nil && sel != root && sel.Name != "update" {
+		autoUpdateHook()
+		spawnCheckHook()
+	}
+	return runResult(root, root.Run(context.Background()))
+}
+
+func runResult(root *ff.Command, err error) error {
 	switch {
 	case err == nil:
 		return nil

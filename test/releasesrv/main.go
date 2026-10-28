@@ -15,6 +15,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8898", "listen address")
 	releaseDir := flag.String("releases", "", "directory serving fake releases: <dir>/<tag>/<asset>")
 	metricsLog := flag.String("metrics-log", "", "file to append received metrics request bodies to")
+	hitsLog := flag.String("hits-log", "", "file to append one line per /latest request to")
 	flag.Parse()
 	if *releaseDir == "" {
 		log.Fatal("-releases is required")
@@ -34,6 +35,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+		if *hitsLog != "" {
+			appendLine(*hitsLog, "hit")
+		}
 		tags := map[string]bool{}
 		entries, err := os.ReadDir(*releaseDir)
 		if err != nil {

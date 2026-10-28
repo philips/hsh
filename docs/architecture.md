@@ -506,6 +506,18 @@ Mounts, image, and shell changes require a restart.
 
 ## Lifecycle and cleanup
 
+When automatic updates are enabled (`hsh update --auto`, see
+[configuration](config.md#automatic-updates)), every host-side command
+spawns a detached `hsh update --autoupdate-check` child that records the
+latest release tag (at most once every few hours), and the next command
+installs a pending release inline at startup — printing exactly what
+`hsh update` prints — before running. The container-role entrypoints
+(`/hsh-proxy`, `/hsh-workspace`, `hsh-reaper`) never check or update:
+only the host binary does. An in-place update cannot disturb live
+sessions: each pod bind-mounts the binary, and the update installs by
+rename, so running pods keep executing the old inode until they stop,
+while stopped pods pick up the new binary on resume.
+
 - Progress information (pod creation, workspace start, config reloads) is
   suppressed by default so the sandbox starts with a clean terminal prompt;
   pass `--verbose` (or set `HSH_VERBOSE=1`) to see it on stderr.
@@ -553,7 +565,18 @@ session id) plus its state directory
 config.json   the session's config copy — the only writable config
 ca.crt ca.key the session's MITM CA, stable across re-entries
 workspace     file with the absolute path of the workspace
+session.db    append-only event log: the hsh version of every entry
 ```
+
+`session.db` is a sqlite database (same driver and open pattern as the
+host-side state databases) whose `events` table records one row per
+`hsh run` entry — `created` when the session is created, `resumed` on
+every `--resume` — with an RFC3339 timestamp and the full
+`hsh version` string of the binary that ran it. Because the update flow
+below replaces the binary in place while sessions may outlive (and be
+resumed by) different versions, this log answers after the fact which
+versions created and re-entered a session. Writes are best-effort: a
+failure is a warning, never a failed session.
 
 A **workspace** is the host directory the first mount sources from
 (recorded as the pod label `hsh.workspace`); there may be several

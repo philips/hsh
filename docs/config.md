@@ -388,6 +388,8 @@ configured or remembered.
 
 ```
 usage: hsh update [--version vTAG] [--no-metrics]
+       hsh update --auto | --no-auto
+       hsh update --autoupdate-check
 ```
 
 Environment overrides (matching install.sh):
@@ -435,6 +437,41 @@ To skip the report entirely, pass `--no-metrics` or set `HSH_NO_METRICS=1`
 (the notice is not printed either); the counter still resets. An install
 that is already up to date downloads nothing and reports nothing.
 `HSH_METRICS_URL` overrides the webhook URL for testing.
+
+### Automatic updates
+
+`hsh update --auto` opts the install into automatic updates;
+`hsh update --no-auto` turns them back off. While enabled:
+
+- Every hsh command starts a **background check** in a detached child
+  process — one HEAD request to the release host (`HSH_RELEASE_BASE`),
+  at most once every 4 hours. The child only *records* what it finds;
+  it never downloads anything or touches the binary. A long `hsh run`
+  re-evaluates the check every 15 minutes in the background, but never
+  disturbs the session.
+- The **next hsh command** after a newer release has been recorded
+  performs the update inline, at command startup, printing exactly what
+  `hsh update` would have printed — including the metrics notice and
+  report above. A failed inline update (offline, checksum, unwritable
+  install dir) prints a warning and the command proceeds normally.
+- A **dev build** (a local `go build`) is never auto-updated; it only
+  prints a one-line notice pointing at `hsh update`.
+
+Updating in place never disturbs running sessions: the binary is
+bind-mounted into each pod, and the update installs by rename, so live
+sessions keep executing the old binary until they stop; a session
+resumed after an update runs the new binary. Each session records
+the versions that created and re-entered it (see
+[architecture](architecture.md)).
+
+Off by default: without `--auto`, hsh makes no background requests and
+prints no notices. `HSH_NO_UPDATE_CHECK=1` silences both the background
+check and the inline update for a single run (useful in scripts);
+`HSH_UPDATE_CHECK_INTERVAL` overrides the check interval (minimum 1h,
+e.g. `2h`). The check state (`update_last_check`, `update_latest_tag`,
+`update_auto`) lives in the `kv` table of the same metrics database
+above. `hsh update --autoupdate-check` runs the check by hand and
+prints what it found without updating.
 
 ## Examples
 

@@ -989,7 +989,7 @@ printf 'fake hsh release binary v1.2.3\n' > "$RELDIR/v1.2.3/$UPD_ASSET"
 printf 'fake hsh release binary v1.3.0\n' > "$RELDIR/v1.3.0/$UPD_ASSET"
 (cd "$RELDIR/v1.2.3" && sha256sum "$UPD_ASSET" > SHA256SUMS)
 (cd "$RELDIR/v1.3.0" && sha256sum "$UPD_ASSET" > SHA256SUMS)
-"$TMP/releasesrv" -addr 127.0.0.1:8898 -releases "$RELDIR" -metrics-log "$TMP/metrics-received.log" &
+"$TMP/releasesrv" -addr 127.0.0.1:8898 -releases "$RELDIR" -metrics-log "$TMP/metrics-received.log" -hits-log "$TMP/latest-hits.log" &
 RELEASESRV_PID=$!
 sleep 0.5
 curl -s -o /dev/null -w 'releasesrv-latest=%{http_code}\n' http://127.0.0.1:8898/latest | grep -q 'releasesrv-latest=302' || fail "the fake release server did not redirect /latest"
@@ -1047,6 +1047,107 @@ grep -q 'could not write to' "$TMP/upd-ro.out" || fail "the read-only install er
 cmp -s "$TMP/upd-ro/hsh" "$TMP/hsh-v1.2.3" || fail "the read-only install was modified"
 chmod 755 "$TMP/upd-ro"
 pass "an unwritable install dir fails with guidance and replaces nothing"
+
+echo "== step 21: hsh update --auto — background check, inline install"
+mkdir -p "$RELDIR/v2.0.0"
+(cd "$REPO" && go build -ldflags "-X hsh/internal/version.Tag=v2.0.0" -o "$RELDIR/v2.0.0/$UPD_ASSET" .)
+(cd "$RELDIR/v2.0.0" && sha256sum "$UPD_ASSET" > SHA256SUMS)
+mkdir -p "$TMP/au-xdg" "$TMP/au-a" "$TMP/au-c"
+cp "$TMP/hsh-v1.2.3" "$TMP/au-a/hsh"
+cp "$TMP/hsh-v1.2.3" "$TMP/au-c/hsh"
+AU_ENV="HSH_RELEASE_BASE=http://127.0.0.1:8898 HSH_METRICS_URL=http://127.0.0.1:8898/hooks/metrics_report XDG_STATE_HOME=$TMP/au-xdg"
+
+AU_HITS0="$(wc -l < "$TMP/latest-hits.log" 2>/dev/null || echo 0)"
+env $AU_ENV "$TMP/au-a/hsh" version >"$TMP/au-off.out" 2>&1
+sleep 1
+grep -q 'hsh v1.2.3' "$TMP/au-off.out" || fail "version output wrong before any update: $(cat "$TMP/au-off.out")"
+[ ! -e "$TMP/au-xdg/hsh/metrics.db" ] || fail "an opt-out install created update-check state"
+[ "$(wc -l < "$TMP/latest-hits.log" 2>/dev/null || echo 0)" = "$AU_HITS0" ] || fail "an opt-out install checked for releases"
+pass "autoupdate is off by default: no background check, no state, no update"
+
+env $AU_ENV "$TMP/au-a/hsh" update --auto >"$TMP/au-on.out" 2>&1
+grep -q 'automatic updates enabled' "$TMP/au-on.out" || fail "hsh update --auto did not confirm: $(cat "$TMP/au-on.out")"
+pass "hsh update --auto opts the install into automatic updates"
+
+env $AU_ENV "$TMP/au-a/hsh" version >"$TMP/au-v1.out" 2>&1
+grep -q 'hsh v1.2.3' "$TMP/au-v1.out" || fail "the first command after enabling changed version output: $(cat "$TMP/au-v1.out")"
+sleep 1
+[ "$(wc -l < "$TMP/latest-hits.log" 2>/dev/null || echo 0)" -gt "$AU_HITS0" ] || fail "the enabled install did not check for releases in the background"
+sleep 1
+cmp -s "$TMP/au-a/hsh" "$TMP/hsh-v1.2.3" || fail "the background check touched the binary"
+pass "the background check records the pending release without touching the binary"
+
+env $AU_ENV "$TMP/au-a/hsh" version >"$TMP/au-v2.out" 2>&1
+grep -q 'hsh v2.0.0 is available (this is v1.2.3), updating' "$TMP/au-v2.out" || fail "the next command did not announce the inline update: $(cat "$TMP/au-v2.out")"
+grep -q 'No identifiable information is uploaded' "$TMP/au-v2.out" || fail "the inline update did not print the metrics notice: $(cat "$TMP/au-v2.out")"
+grep -q '✓ hsh v2.0.0 installed (was v1.2.3)' "$TMP/au-v2.out" || fail "the inline update did not report success: $(cat "$TMP/au-v2.out")"
+cmp -s "$TMP/au-a/hsh" "$RELDIR/v2.0.0/$UPD_ASSET" || fail "the inline update did not replace the binary"
+tail -1 "$TMP/metrics-received.log" | grep -q '"version":"v1.2.3"' || fail "the inline update did not report the pre-update version: $(tail -1 "$TMP/metrics-received.log")"
+pass "the next hsh command installs the pending release inline, exactly as hsh update would"
+
+env $AU_ENV "$TMP/au-a/hsh" version >"$TMP/au-v3.out" 2>&1
+grep -q 'hsh v2.0.0' "$TMP/au-v3.out" || fail "the updated binary does not run: $(cat "$TMP/au-v3.out")"
+grep -q 'available' "$TMP/au-v3.out" && fail "a settled install still printed an update notice: $(cat "$TMP/au-v3.out")"
+pass "a settled install prints nothing further"
+
+HITS1="$(wc -l < "$TMP/latest-hits.log")"
+env $AU_ENV "$TMP/au-a/hsh" version >/dev/null 2>&1
+env $AU_ENV "$TMP/au-a/hsh" version >/dev/null 2>&1
+sleep 1
+[ "$HITS1" = "$(wc -l < "$TMP/latest-hits.log")" ] || fail "a fresh check was re-spawned immediately (throttle broken)"
+pass "the check throttle holds: a fresh check is not re-spawned"
+
+env $AU_ENV "$TMP/au-a/hsh" update --autoupdate-check >"$TMP/au-uptodate.out" 2>&1
+grep -q 'hsh v2.0.0 is up to date' "$TMP/au-uptodate.out" || fail "an up-to-date check printed the wrong thing: $(cat "$TMP/au-uptodate.out")"
+pass "an up-to-date install reports so and installs nothing"
+
+HITS2="$(wc -l < "$TMP/latest-hits.log")"
+env $AU_ENV HSH_NO_UPDATE_CHECK=1 "$TMP/au-c/hsh" update --auto >/dev/null
+env $AU_ENV HSH_NO_UPDATE_CHECK=1 "$TMP/au-c/hsh" version >"$TMP/au-c1.out" 2>&1
+sleep 1
+[ "$HITS2" = "$(wc -l < "$TMP/latest-hits.log")" ] || fail "HSH_NO_UPDATE_CHECK did not stop the background check"
+env $AU_ENV "$TMP/au-c/hsh" update --autoupdate-check >"$TMP/au-chk.out" 2>&1
+grep -q 'hsh v2.0.0 is available (this is v1.2.3)' "$TMP/au-chk.out" || fail "the hand-run check did not report the pending release: $(cat "$TMP/au-chk.out")"
+env $AU_ENV HSH_NO_UPDATE_CHECK=1 "$TMP/au-c/hsh" version >"$TMP/au-c2.out" 2>&1
+grep -q 'available' "$TMP/au-c2.out" && fail "HSH_NO_UPDATE_CHECK did not suppress the update notice: $(cat "$TMP/au-c2.out")"
+cmp -s "$TMP/au-c/hsh" "$TMP/hsh-v1.2.3" || fail "HSH_NO_UPDATE_CHECK did not suppress the inline update"
+pass "HSH_NO_UPDATE_CHECK silences both the background check and the inline update"
+
+kill "$RELEASESRV_PID"
+RELEASESRV_PID=""
+env $AU_ENV "$TMP/au-c/hsh" version >"$TMP/au-fail.out" 2>&1
+grep -q 'warning: automatic update to v2.0.0 failed' "$TMP/au-fail.out" || fail "a failed inline update did not warn: $(cat "$TMP/au-fail.out")"
+grep -q 'hsh v1.2.3' "$TMP/au-fail.out" || fail "a failed inline update broke the command: $(cat "$TMP/au-fail.out")"
+cmp -s "$TMP/au-c/hsh" "$TMP/hsh-v1.2.3" || fail "a failed inline update modified the binary"
+pass "a failed inline update warns and never fails the command"
+
+echo "== step 22: session.db — the version event log per session"
+SESS_XDG="$TMP/sess-xdg"
+mkdir -p "$SESS_XDG" "$TMP/sess-ws"
+cat > "$TMP/sess.config.hsh" <<EOF
+{
+	"image": "localhost/hsh-example:latest",
+	"shell": "/bin/bash",
+	"mounts": ["$TMP/sess-ws:/workspace"]
+}
+EOF
+(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" run --config "$TMP/sess.config.hsh" --denied-db "$TMP/sess-deny.db") >"$TMP/sess1.out" 2>&1 <<'CMDS' || true
+exit
+CMDS
+SESS_ID="$(ls "$SESS_XDG/hsh/sessions" 2>/dev/null | head -1)"
+[ -n "$SESS_ID" ] || fail "the session state directory never appeared: $(cat "$TMP/sess1.out")"
+SESS_DB="$SESS_XDG/hsh/sessions/$SESS_ID/session.db"
+[ -f "$SESS_DB" ] || fail "session.db was not created: $(cat "$TMP/sess1.out")"
+grep -aq 'created' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no created event"
+grep -aq 'hsh dev' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db does not record the creating binary's version"
+(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/au-a/hsh" run --config "$TMP/sess.config.hsh" --denied-db "$TMP/sess-deny.db" --resume "$SESS_ID") >"$TMP/sess2.out" 2>&1 <<'CMDS' || true
+exit
+CMDS
+grep -aq 'resumed' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no resumed event after --resume: $(cat "$TMP/sess2.out")"
+grep -aq 'hsh v2.0.0' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db does not record the resuming binary's version"
+pass "session.db records every binary that created or re-entered the session"
+env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" rm "hsh-$SESS_ID" >/dev/null 2>&1 || podman pod rm -f "hsh-$SESS_ID" >/dev/null 2>&1 || true
+[ ! -e "$SESS_DB" ] || fail "hsh rm did not remove session.db"
 
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions
