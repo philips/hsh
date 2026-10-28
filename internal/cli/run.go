@@ -456,6 +456,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
+		shutdownInline()
 		cleanup()
 		os.Exit(130)
 	}()
@@ -507,6 +508,14 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	detachable := interactive && len(agentExec) == 0 && !ro.rm
 	flags := attachFlags(interactive, detachable, cfg.DetachKeys)
+	var inline *inlineMonitor
+	if detachable {
+		var warn string
+		inline, warn = newInlineMonitor(cfg, sessionID, ro.deniedDB, sessionConfig, interactive)
+		if warn != "" {
+			fmt.Fprintln(os.Stderr, warn)
+		}
+	}
 	exitWith := func(code int) error {
 		if code != 0 {
 			os.Exit(code)
@@ -536,7 +545,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			}
 			defer markAttached(sessionDir)()
 		}
-		code, err := attachContainer(wsName, flags, running)
+		code, err := attachContainer(wsName, flags, running, inline)
 		if detached() {
 			return nil
 		}
@@ -554,7 +563,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			fmt.Fprintf(os.Stderr, "hsh: warning: starting the session reaper: %v\n", err)
 		}
 		unmark := markAttached(sessionDir)
-		code, err := attachContainer(wsName, flags, false)
+		code, err := attachContainer(wsName, flags, false, inline)
 		unmark()
 		if detached() {
 			return nil

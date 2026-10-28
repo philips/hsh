@@ -490,6 +490,24 @@ sessions per workspace.
   cleanup itself when it sees the container exit. While no `hsh run` is
   attached, edits to secret entries in the session config are picked up
   on the next attach.
+- **The relay.** An interactive session is attached through a pty owned by
+  `hsh run` (`internal/relay`): `hsh run` runs the podman client with the
+  pty slave as its terminal and relays between it and the user's raw
+  terminal. Output is passed through unchanged and also fed to a terminal
+  emulator (`internal/vt`, libghostty-vt compiled to wasm and converted to
+  Go, built with `GOEXPERIMENT=simd`). The emulator tells the relay when the
+  stream is between escape sequences (so the status line and dialog are
+  never injected mid-sequence) and lets it repaint exactly the rows the
+  dialog covered. The pty is one row shorter than the terminal and the
+  terminal's scroll region excludes the last row; the relay rewrites a
+  child's scroll-region resets (`ESC[r`) to stay inside it and repaints the
+  row after `clear` or alternate-screen switches. The dialog pauses the
+  session by not reading the pty. Denial data comes from `denied.db`
+  filtered by session; approvals go through the same code as
+  `hsh proxy allow`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
+  session is stripped and only triggers an immediate poll of that queue.
+  On `--resume` the relay briefly changes the pty width by one column and
+  back so the shell repaints. See [config.md](config.md#inline-proxy-review).
 - `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
   client), or `Shell exited` (shell gone while the proxy still runs, which

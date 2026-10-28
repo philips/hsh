@@ -44,6 +44,7 @@ image's `org.ifup.hsh` label as the config - see
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
+| `monitor` | `{"enabled": true, "status_line": true, "key": "ctrl-space"}` | inline proxy review in interactive sessions ([below](#inline-proxy-review)); `enabled: false` attaches the container directly |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session |
 
 The workspace starts in the first mount's target directory
@@ -252,6 +253,32 @@ workspace     file with the absolute path of the workspace
   session's allowlist is that session's policy
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
   every sandbox; `hsh gc` collects session state whose pod is gone
+
+## Inline proxy review
+
+Interactive `hsh run` sessions (not `--rm`, `--tasks`, or piped runs) pass the
+session through a relay in the `hsh run` process, outside the sandbox:
+
+- the bottom terminal row is a status line: green, `proxy: nothing to
+  review`, or `* N proxy requests need review | Ctrl+Space to review` as the
+  proxy records denials for the session (`"status_line": false` removes the
+  reserved row)
+- `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`, `ctrl-]`,
+  `ctrl-^`, `ctrl-_`) turns the line red and pops a dialog over the session:
+  up/down or `j`/`k` select, `a` approves (adds the host to the session
+  config's `network.allow`), `d` denies (hides it), `A`/`D` do all, Esc or the key
+  again closes
+- while the dialog is open `hsh run` stops reading the session's output, so
+  the container blocks in `write()` instead of printing under the dialog;
+  closing repaints what the dialog covered and delivers the held output with
+  nothing lost
+- the session's output is passed through unchanged, so the terminal's own
+  scrollback, selection, and search keep working; the status line is part of
+  the live screen only and is not in scrollback
+
+Binaries built without `GOEXPERIMENT=simd` have no terminal emulator
+(`hsh version` says so) and attach directly. The review list comes from the
+proxy's denial database, never from what the session prints.
 
 ## Managing the allowlist
 

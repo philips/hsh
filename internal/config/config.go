@@ -61,8 +61,17 @@ type Config struct {
 	OAuth   map[string]OAuthProvider `json:"oauth"`
 	Agent   Agent                    `json:"agent"`
 
-	DetachKeys string `json:"detach_keys"`
+	DetachKeys string  `json:"detach_keys"`
+	Monitor    Monitor `json:"monitor"`
 }
+
+type Monitor struct {
+	Enabled    bool   `json:"enabled"`
+	StatusLine bool   `json:"status_line"`
+	Key        string `json:"key"`
+}
+
+const DefaultMonitorKey = "ctrl-space"
 
 const DefaultDetachKeys = "ctrl-]"
 
@@ -105,6 +114,7 @@ func Default() *Config {
 		Mounts: []string{".:/workspace"},
 
 		DetachKeys: DefaultDetachKeys,
+		Monitor:    Monitor{Enabled: true, StatusLine: true, Key: DefaultMonitorKey},
 	}
 }
 

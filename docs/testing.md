@@ -60,6 +60,16 @@ proxy, the denial database, and the example image:
   terminal detaches; the reaper scrubs secrets and stops the pod when a
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
   and `hsh gc` cleans up; `--rm` sessions cannot detach
+- **step 18** (`test/inline.py`): through the relay, the status line is
+  drawn, a proxy denial raises the notification, Ctrl+Space pops the
+  dialog and pauses the session's output, `a` adds the host to the session
+  config, closing delivers the held output, and `monitor.enabled=false`
+  attaches directly. `internal/relay` has Go tests for the pause/restore
+  equivalence (the user's terminal, a second emulator fed only the
+  relay's output, equals the relay's emulator), the status row under
+  scroll, `clear`, the alternate screen and scroll-region resets, the
+  decision flow, source errors, the in-band hint, kitty-encoded keys, and
+  resize; they skip without `GOEXPERIMENT=simd`
 
 Run it with:
 

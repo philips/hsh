@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,30 +26,24 @@ func withRunFlags(wsArgs, flags []string) []string {
 	return append(out, wsArgs[1:]...)
 }
 
-func attachContainer(name string, flags []string, running bool) (int, error) {
+func attachArgs(name string, flags []string, running bool) []string {
 	args := []string{"start", "-ai"}
 	if running {
 		args = []string{"attach"}
 	}
 	args = append(args, flags...)
-	args = append(args, name)
-	cmd := exec.Command("podman", args...)
+	return append(args, name)
+}
+
+func attachContainer(name string, flags []string, running bool, im *inlineMonitor) (int, error) {
+	if im != nil {
+		return attachWithRelay(name, flags, running, im)
+	}
+	cmd := exec.Command("podman", attachArgs(name, flags, running)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode(), nil
-		}
-		return 0, err
-	}
-	out, err := podman("inspect", "--format", "{{.State.ExitCode}}", name)
-	if err != nil {
-		return 0, nil
-	}
-	code := 0
-	_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &code)
-	return code, nil
+	return containerExitCode(name, cmd.Run())
 }
 
 func clientPIDPath(sessionDir string) string {

@@ -1,8 +1,9 @@
 # libghostty for attach/detach and approval popovers
 
-> **Status: research, with a working prototype** in
-> `plans/prototype/libghostty/` (`./test.sh` runs it). Nothing in
-> `internal/` changes yet.
+> **Status: foundation and the passthrough relay are implemented**
+> (`internal/vt`, `internal/relay`, plans/0026-detach-attach.md Phase 2).
+> The research below is the record of the decisions; the prototype is in
+> `plans/prototype/libghostty/` (`./test.sh` runs it).
 
 ## Question
 

@@ -12,6 +12,7 @@ import (
 	"hsh/internal/denieddb"
 	"hsh/internal/secretstore"
 	"hsh/internal/version"
+	"hsh/internal/vt"
 )
 
 func newCommand(name, usage, shortHelp string, define func(*ff.FlagSet), run func(context.Context, []string) error) *ff.Command {
@@ -121,6 +122,11 @@ func versionCommand() *ff.Command {
 			return fmt.Errorf("version takes no arguments")
 		}
 		fmt.Println(version.Get())
+		if vt.Available() {
+			fmt.Printf("terminal emulator: %s (inline proxy review enabled)\n", vt.Backend)
+		} else {
+			fmt.Println("terminal emulator: none (built without GOEXPERIMENT=simd; inline proxy review disabled)")
+		}
 		return nil
 	})
 }

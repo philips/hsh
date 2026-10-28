@@ -45,7 +45,7 @@ pass() {
 }
 
 echo "== building hsh and the dummy endpoint"
-(cd "$REPO" && CGO_ENABLED=0 go build -o "$TMP/hsh" .)
+(cd "$REPO" && GOEXPERIMENT=simd CGO_ENABLED=0 go build -o "$TMP/hsh" .)
 (cd "$REPO" && go build -o "$TMP/dummyopenai" ./test/dummyopenai)
 
 echo "== ensuring the example image exists"
@@ -839,6 +839,19 @@ EOF
 	pass "detach, attach, closed terminals, the reaper, and gc behave as planned"
 else
 	echo "SKIP: detach/attach checks (no python3 for the pty driver)"
+fi
+
+echo "== step 18: inline proxy review (status line, Ctrl+Space dialog, pause)"
+if command -v python3 >/dev/null; then
+	cat >"$TMP/nomonitor.Containerfile" <<'EOF'
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"mode":"allowlist","allow":["host.containers.internal"]},"monitor":{"enabled":false}}'
+EOF
+	podman build -q -t localhost/hsh-nomonitor-test:latest -f "$TMP/nomonitor.Containerfile" "$TMP" >/dev/null || fail "could not build the no-monitor test image"
+	python3 "$REPO/test/inline.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" localhost/hsh-nomonitor-test:latest || fail "the inline review driver failed"
+	pass "the status line, Ctrl+Space dialog, pause, and approval work through the relay"
+else
+	echo "SKIP: inline review checks (no python3 for the pty driver)"
 fi
 
 echo "== final sweep: every session the test created is removable"

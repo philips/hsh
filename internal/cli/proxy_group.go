@@ -71,43 +71,48 @@ func sessionConfigPath(session string) (string, error) {
 	return p, nil
 }
 
-func allowHosts(db *sql.DB, session, cfgPath string, hosts []string) error {
+func applyAllow(db *sql.DB, session, cfgPath string, hosts []string) (added, already []string, err error) {
 	existing := map[string]bool{}
-	addedSet := map[string]bool{}
-	var added []string
+	seen := map[string]bool{}
+	var unique []string
 	for _, h := range hosts {
-		if !addedSet[h] {
-			addedSet[h] = true
-			added = append(added, h)
+		if !seen[h] {
+			seen[h] = true
+			unique = append(unique, h)
 		}
 	}
-	sort.Strings(added)
+	sort.Strings(unique)
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	for _, h := range cfg.Network.Allow {
 		existing[h] = true
 	}
-	var toAdd []string
-	for _, h := range added {
-		if !existing[h] {
-			toAdd = append(toAdd, h)
-		}
-	}
-	if len(toAdd) > 0 {
-		if _, err := config.AddAllowedHosts(cfgPath, toAdd); err != nil {
-			return err
-		}
-	}
-	for _, h := range added {
+	for _, h := range unique {
 		if existing[h] {
-			fmt.Printf("already allowed %s\n", hostURL(h))
+			already = append(already, h)
 		} else {
-			fmt.Printf("added %s\n", hostURL(h))
+			added = append(added, h)
 		}
 	}
-	return denieddb.MarkAllowed(db, session, added)
+	if len(added) > 0 {
+		if _, err := config.AddAllowedHosts(cfgPath, added); err != nil {
+			return nil, nil, err
+		}
+	}
+	return added, already, denieddb.MarkAllowed(db, session, unique)
+}
+
+func allowHosts(db *sql.DB, session, cfgPath string, hosts []string) error {
+	added, already, err := applyAllow(db, session, cfgPath, hosts)
+	for _, h := range already {
+		fmt.Printf("already allowed %s\n", hostURL(h))
+	}
+	for _, h := range added {
+		fmt.Printf("added %s\n", hostURL(h))
+	}
+	return err
 }
 
 func proxyDeniedCommand() *ff.Command {
