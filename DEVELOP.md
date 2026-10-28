@@ -1,12 +1,16 @@
 ## Getting Started
 
-Build the project:
+Build the project (Go 1.27; the terminal emulator needs the simd
+experiment, set it in the environment or with `go env -w GOEXPERIMENT=simd`):
 
 ```
 git clone https://github.com/philips/hsh
 cd hsh
-CGO_ENABLED=0 go build -o hsh .
+GOEXPERIMENT=simd CGO_ENABLED=0 go build -o hsh .
 ```
+
+Without `GOEXPERIMENT=simd` everything still builds and tests pass, but the
+emulator (`internal/vt`) is compiled out and its tests are skipped.
 
 Build the example pi container
 

@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  GOEXPERIMENT: simd
+
 jobs:
   unit:
     name: unit (build, vet, test)

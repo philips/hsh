@@ -244,6 +244,40 @@ wasm build (decision 2), and the emulator package behind a small interface
 built in plans/0026-detach-attach.md Phase 2 on top of them; 0026 Phase 1
 does not depend on this plan and can go first.
 
+## Foundation (implemented)
+
+- `go.mod` is on Go 1.27; the CI workflows (`test.yml`, `release.yml`)
+  set `GOEXPERIMENT=simd`, and DEVELOP.md documents it.
+- `internal/vt` is the emulator interface (`Write`, `Resize`, `Ground`,
+  `Cursor`, `Plain`, `Replay`, `Row`, `Close`). The libghostty backend
+  (`ghostty.go`, `code.selman.me/hauntty/libghostty`) is compiled only
+  with `GOEXPERIMENT=simd`; without it `none.go` returns
+  `ErrUnavailable`, so `go build`, `go vet`, and `go test` keep working
+  everywhere and the emulator tests skip. Nothing links the package into
+  the binary yet; the relay (0026 Phase 2) will.
+- **Provenance of the wasm.** The blob in that module is byte-identical
+  to the official Ghostty release-tip artifact for revision
+  `7f62fe70a288c5d35ebd3097e75c46017950bcc7`
+  (`tip.files.ghostty.org/<rev>/ghostty-vt-small.wasm`, sha256
+  `98ed3473d125460daea8602cebe2cd0e5a63209c908b72f054be712c2ccdcf6c`).
+  `internal/vt/provenance_test.go` pins both, so a dependency bump that
+  changes the blob fails a test and has to be a conscious decision.
+- **Reproducing it ourselves (decision 2): attempted, not bit-exact.**
+  Ghostty builds the artifact with `zig build -Demit-lib-vt
+  -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall` followed by
+  binaryen's `wasm-opt -O3` with simd, bulk-memory, sign-ext,
+  nontrapping-float-to-int, multivalue and reference-types enabled, inside
+  a nix environment, and signs it with minisign. At that revision
+  (minimum Zig 0.16.0) the Zig build takes about a minute and yields a
+  730 KB module; wasm-opt from binaryen version_133 turns it into 654,413
+  bytes against the official 654,354, so the output is not identical. The
+  difference is expected to be the binaryen version pinned by Ghostty's
+  nix lock, which I could not match (older binaryen release tarballs were
+  not fetchable and the disk filled up). Bit-exact reproduction therefore
+  remains open; the supply-chain control today is the pinned revision and
+  hash above plus the official artifact's minisign signature, which this
+  repository does not yet verify.
+
 ## Tests
 
 - Ensure mouse, bracketed paste, and kitty keyboard protocol passthrough while
