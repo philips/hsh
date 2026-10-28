@@ -472,7 +472,6 @@ func TestProxyStartClearsStaleHoldingCounts(t *testing.T) {
 	}
 }
 
-
 func TestHoldingIsOffUnlessTheConfigAsksForIt(t *testing.T) {
 	e := startHoldProxy(t, "allowlist", "", true)
 	start := time.Now()

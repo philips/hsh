@@ -15,11 +15,12 @@ import (
 const (
 	holdPoll = 250 * time.Millisecond
 
-	dnsHoldLimit  = 9 * time.Second
-	denialMessage = "hsh: egress to %s is blocked by the sandbox policy and needs the user's approval.\n" +
-		"The user can approve it with `hsh monitor`. Do not look for workarounds or alternative hosts.\n" +
-		"Wait a minute or two and retry the same request, or tell the user which host you need.\n"
+	dnsHoldLimit = 9 * time.Second
 )
+
+var denialMessage = "hsh: egress to %s is blocked by the sandbox policy and needs the user's approval.\n" +
+	"The user can approve it with `hsh monitor`. Do not look for workarounds or alternative hosts.\n" +
+	"Wait a minute or two and retry the same request, or tell the user which host you need.\n"
 
 var maxHolds int64 = 64
 

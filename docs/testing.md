@@ -119,3 +119,14 @@ The relay writes escape sequences to the user's real terminal, which the
 automated tests only model. `docs/terminal-checks.md` is the checklist to run
 by hand per terminal (scroll region and scrollback, the review screen,
 paste, mouse, and keyboard protocols).
+
+## Measurement tools
+
+`test/measure/` holds manual tools used to design how agents are told about
+network restrictions (plans/0028-network-notice.md): `clients.sh` runs curl,
+wget, Python, Node, npm, git, and Go against a stand-in denying proxy
+(`test/measure/denyproxy`, with configurable status, reason phrase, body, and
+headers) and records what each client shows and whether it retries;
+`agent-trial.sh` runs pi with a Mistral model through an hsh allowlist session
+for several wordings of a notice and counts tool calls and tokens (it spends
+tokens and needs the `hsh://mistral-api-key` secret).
