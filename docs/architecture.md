@@ -27,18 +27,20 @@ is not part of the user-facing command set. The `proxy`, `workspace`, and
 
 ## Pod layout
 
-`hsh run` creates one podman pod (a session) with two containers — the
-diagram shows the network namespaces, the user-namespace mapping, and
-every bind mount:
+`hsh run` creates one podman pod (a session) with two containers. The
+layout is shown in three diagrams: the host side that `hsh run` sets
+up, the pod side it creates, and the interface between them (every bind
+mount, the pasta uplink, and the user-namespace mapping).
+
+### Host side
+
+What `hsh run` touches before and during a session — all of it inside the
+invoking user's own directories, no root required:
 
 ```mermaid
 flowchart TB
-    classDef host fill:#e8eef7,stroke:#5b7fa6
     classDef proc fill:#fdf3d8,stroke:#b59b3e
     classDef file fill:#e7f4e7,stroke:#6a9a6a
-    classDef ctr fill:#f3e7f4,stroke:#9a6a9a
-    classDef net fill:#e2ecf5,stroke:#5b7fa6,stroke-dasharray: 4 2
-    classDef secret fill:#f9e3e3,stroke:#c46a6a
 
     subgraph HOST["HOST (user session, no root)"]
         direction TB
@@ -58,6 +60,24 @@ flowchart TB
         wsdir[("workspace directory<br/>git checkouts, shared via mount")]
     end
 
+    hshrun -->|"starts one per pod"| pasta
+    secretstore -.->|"read on the host only,<br/>never mounted anywhere"| hshrun
+    hshrun -->|"copies config, resolves secrets,<br/>writes session state"| SESDIR
+
+    class hshrun,pasta proc
+    class denieddb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
+```
+
+### Pod side
+
+What runs inside the pod once it exists — two containers, two network
+namespaces, and the only paths between them:
+
+```mermaid
+flowchart TB
+    classDef proc fill:#fdf3d8,stroke:#b59b3e
+    classDef net fill:#e2ecf5,stroke:#5b7fa6,stroke-dasharray: 4 2
+
     subgraph PODNET["POD NETWORK NAMESPACE 10.77.0.0/24 (shared)"]
         direction TB
         infra["infra container (pause)<br/>holds the pod netns; stops when idle"]
@@ -74,32 +94,62 @@ flowchart TB
         end
     end
 
-    hshrun -->|"creates / re-enters"| infra
-    hshrun -->|"uid 0 in container<br/>= host user (rootless subuid map)"| WSC
-
-    pasta === PODNET
+    pasta["pasta process<br/>(host side, see interface diagram)"]
 
     hsh0 ---|"veth pair"| hsh1
     hsh1 -->|"only route: 10.77.0.0/24"| hsh0
     inner -->|"HTTP(S) via proxy env<br/>resolv.conf → 10.77.0.1:53"| proxy
     proxy -->|"allowlisted egress<br/>(TLS-verified upstream)"| pasta
 
-    hshrun -.->|"bind ro → /hsh-proxy"| PROXY
-    cfgcopy -.->|"bind ro → /hsh-session/config.json"| PROXY
-    secretsjson -.->|"bind ro → /hsh-session/secrets.json"| PROXY
-    cafiles -.->|"bind ro → /hsh-session/ca.crt + ca.key"| PROXY
-    caBundle -.->|"bind ro → /hsh-roots.pem"| PROXY
-    denieddb <-.->|"bind rw → /hsh-state/denied.db"| PROXY
-
-    hshrun -.->|"bind ro → /hsh-workspace,<br/>/hsh-workspace-inner"| WSC
-    cafiles -.->|"bind ro → /hsh-run/ca.crt"| WSC
-    wsdir -.->|"bind rw → /workspace<br/>(the shared filesystem)"| WSC
-
-    secretstore -.->|"read on the host only,<br/>never mounted anywhere"| hshrun
-
-    class hshrun,pasta,proxy,parent,inner proc
-    class denieddb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
+    class proxy,parent,inner proc
     class infra,PODNET net
+```
+
+### Host–pod interface
+
+Everything that crosses the sandbox boundary: the mounts the pod is
+assembled from, the pasta uplink, and the user-namespace mapping:
+
+```mermaid
+flowchart LR
+    classDef proc fill:#fdf3d8,stroke:#b59b3e
+    classDef file fill:#e7f4e7,stroke:#6a9a6a
+    classDef ctr fill:#f3e7f4,stroke:#9a6a9a
+
+    subgraph HOST["HOST"]
+        hshbin["hsh binary (static)"]
+        pasta["pasta process"]
+        subgraph SESDIR["session directory"]
+            cfgcopy[("config.json")]
+            cafiles[("ca.crt / ca.key")]
+            secretsjson[("secrets.json")]
+        end
+        denieddb[("denied.db")]
+        caBundle["host CA bundle"]
+        wsdir[("workspace directory")]
+    end
+
+    subgraph POD["POD"]
+        PROXY["proxy container"]
+        WSC["workspace container<br/>(parent + inner)"]
+    end
+
+    hshbin -.->|"ro → /hsh-proxy"| PROXY
+    hshbin -.->|"ro → /hsh-workspace,<br/>/hsh-workspace-inner"| WSC
+    cfgcopy -.->|"ro → /hsh-session/config.json"| PROXY
+    secretsjson -.->|"ro → /hsh-session/secrets.json"| PROXY
+    cafiles -.->|"ro → /hsh-session/ca.crt + ca.key"| PROXY
+    caBundle -.->|"ro → /hsh-roots.pem"| PROXY
+    denieddb <-.->|"rw → /hsh-state/denied.db"| PROXY
+    cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
+    wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
+    pasta ===|"user-mode network uplink"| POD
+
+    hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
+
+    class hshbin,pasta proc
+    class cfgcopy,cafiles,secretsjson,denieddb,wsdir file
+    class PROXY,WSC ctr
 ```
 
 Reading notes:
@@ -117,10 +167,12 @@ Reading notes:
   image-layer directories; without it `dnf`/`rpm` unpacks fail with
   "cpio: symlink failed - Permission denied"), sets NO_NEW_PRIVS, and
   setuid binaries are stripped from the workspace.
-- **Filesystem**: solid edges are network/data flow, dashed edges are
-  bind mounts. The session directory is mounted read-only into the
-  proxy only (config copy, resolved secrets, CA); the workspace sees
-  only the CA certificate. `secrets.json` never enters the workspace.
+- **Filesystem**: dashed edges are bind mounts, thick arrows are pod
+  lifecycle control, and `===` is the pasta network uplink (see the
+  interface diagram for the full mount set). The session directory is
+  mounted read-only into the proxy only (config copy, resolved secrets,
+  CA); the workspace sees only the CA certificate. `secrets.json` never
+  enters the workspace.
 - Pods do not share PID namespaces, so the workspace cannot see or
   signal the proxy's processes.
 - **Idle**: when the shell exits the whole pod is stopped (infra and
