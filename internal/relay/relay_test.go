@@ -80,6 +80,12 @@ func (u *userTerminal) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (u *userTerminal) rawText() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return string(u.raw)
+}
+
 func (u *userTerminal) lastPasteMode() string {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -717,5 +723,46 @@ func TestStatusLineColorFollowsWhetherSomethingNeedsAttention(t *testing.T) {
 	set(0, 0, false)
 	if got := line(); !strings.HasPrefix(got, sgrGreen) {
 		t.Fatalf("nothing pending is not green again: %q", got)
+	}
+}
+
+func TestClosingTheRelayResetsTheModesTheSessionTurnedOn(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run(`printf '\033[>1u\033[>4;2m\033[?1000h\033[?1006h\033[?1004h\033[?2004h\033[?1h'`)
+	h.run("echo hi")
+	before := len(h.user.rawText())
+	h.relay.Close()
+	closing := h.user.rawText()[before:]
+	for name, seq := range map[string]string{
+		"kitty keyboard flags": "\x1b[<99u",
+		"modifyOtherKeys":      "\x1b[>4;0m",
+		"mouse reporting":      "\x1b[?1000l",
+		"SGR mouse":            "\x1b[?1006l",
+		"focus reporting":      "\x1b[?1004l",
+		"bracketed paste":      "\x1b[?2004l",
+		"application cursor":   "\x1b[?1l",
+		"cursor shown":         "\x1b[?25h",
+		"scroll region reset":  "\x1b[r",
+	} {
+		if !strings.Contains(closing, seq) {
+			t.Errorf("closing did not reset %s (%q missing)", name, seq)
+		}
+	}
+	if strings.Contains(closing, "\x1b[?1049l") {
+		t.Error("left the alternate screen although the session was not in it")
+	}
+}
+
+func TestClosingWhileTheSessionIsInTheAlternateScreenLeavesIt(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run(`printf '\033[?1049h\033[Halt'`)
+	before := len(h.user.rawText())
+	h.relay.Close()
+	closing := h.user.rawText()[before:]
+	if !strings.Contains(closing, "\x1b[?1049l") {
+		t.Fatalf("the alternate screen was left on: %q", closing)
+	}
+	if strings.Index(closing, "\x1b[?1049l") > strings.Index(closing, "\x1b[r") {
+		t.Fatal("the alternate screen must be left before the scroll region and status row are cleaned up")
 	}
 }

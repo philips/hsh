@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	"golang.org/x/term"
+
+	"hsh/internal/relay"
 )
 
 func attachFlags(interactive, detachable bool, detachKeys string) []string {
@@ -57,6 +59,7 @@ func attachContainer(name string, flags []string, running bool, im *inlineMonito
 	activeClient.Store(nil)
 	if saved != nil {
 		_ = term.Restore(int(os.Stdin.Fd()), saved)
+		_, _ = os.Stdout.WriteString(relay.ModeReset(false))
 	}
 	return containerExitCode(name, waitErr)
 }

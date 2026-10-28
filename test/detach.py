@@ -137,6 +137,8 @@ if code != 0:
     fail("detaching exited %d" % code)
 if "detached from session %s" % sid not in transcript:
     fail("no detach message")
+if "\x1b[<99u" not in transcript:
+    fail("detaching did not reset the terminal's keyboard and mouse modes (Ctrl+letter keys would stay encoded)")
 if not running(ws):
     fail("the workspace container stopped when the user detached")
 if not os.path.exists(secrets):

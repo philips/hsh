@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,7 @@ type Relay struct {
 	detach         []Key
 	cursorHidden   bool
 	bracketedPaste bool
+	altScreen      bool
 	hints          hintFilter
 	region         regionFilter
 	review         reviewState
@@ -165,6 +167,7 @@ func (r *Relay) Close() {
 		r.resumeLocked()
 	}
 	var b bytes.Buffer
+	b.WriteString(ModeReset(r.altScreen))
 	b.WriteString("\x1b[0m\x1b[r\x1b[?25h")
 	if r.statusRows > 0 {
 		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[2K\x1b[%d;1H\r\n", r.rows+r.statusRows, r.rows)
@@ -172,6 +175,20 @@ func (r *Relay) Close() {
 	r.writeOut(b.Bytes())
 	r.term.Close()
 	r.wake.Broadcast()
+}
+
+func ModeReset(altScreen bool) string {
+	var b strings.Builder
+	if altScreen {
+		b.WriteString("\x1b[?1049l")
+	}
+	b.WriteString("\x1b[<99u\x1b[=0;1u")
+	b.WriteString("\x1b[>4;0m")
+	b.WriteString("\x1b[?1l\x1b>")
+	b.WriteString("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l")
+	b.WriteString("\x1b[?1004l\x1b[?2004l\x1b[?2026l\x1b[?2031l\x1b[?2048l")
+	b.WriteString("\x1b[?7h\x1b[?6l\x1b[?25h\x1b(B")
+	return b.String()
 }
 
 func (r *Relay) writeOut(p []byte) {
@@ -233,6 +250,15 @@ func (r *Relay) processLocked(data []byte) {
 		r.bracketedPaste = true
 	} else if pasteOff > pasteOn {
 		r.bracketedPaste = false
+	}
+	for _, mode := range []string{"1049", "1047", "47"} {
+		on := bytes.LastIndex(clean, []byte("\x1b[?"+mode+"h"))
+		off := bytes.LastIndex(clean, []byte("\x1b[?"+mode+"l"))
+		if on > off {
+			r.altScreen = true
+		} else if off > on {
+			r.altScreen = false
+		}
 	}
 	r.term.Write(clean)
 	r.writeOut(clean)
