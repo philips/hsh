@@ -15,6 +15,11 @@ Wait a minute or two and retry the same request, or tell the user which host you
 OLDBODY="hsh: egress to $HOST is not allowed (not in network.allow)
 review denied hosts with: hsh proxy-denied
 "
+SMOKEMSG="Egress proxying is denied to host '$HOST': connection not allowed by ACL."
+SMOKEBODY="$SMOKEMSG
+
+Proxy denied
+"
 
 declare -A VARIANTS
 VARIANTS[old]="--status 407 --body @OLD"
@@ -24,7 +29,8 @@ VARIANTS[403-reason]="--status 403 --reason @PHRASE --body @NEW"
 VARIANTS[503-retry]="--status 503 --reason @PHRASE --header Retry-After:60 --body @NEW"
 VARIANTS[400-reason]="--status 400 --reason @PHRASE --body @NEW"
 VARIANTS[511-reason]="--status 511 --reason @PHRASE --body @NEW"
-ORDER=(${MEASURE_VARIANTS:-old 407 407-reason 403-reason 503-retry 400-reason 511-reason})
+VARIANTS[smokescreen]="--status 407 --header SMOKE --body @SMOKE"
+ORDER=(${MEASURE_VARIANTS:-old 407 407-reason 403-reason 503-retry 400-reason 511-reason smokescreen})
 
 CLIENTS=(curl wget py-urllib py-requests node-fetch npm git go)
 TSV="$OUT/results.tsv"
@@ -56,11 +62,18 @@ for v in "${ORDER[@]}"; do
 		case "$t" in
 		--status) argv+=(--status "${toks[$((i + 1))]}"); i=$((i + 2)) ;;
 		--reason) argv+=(--reason "$PHRASE"); i=$((i + 2)) ;;
-		--header) argv+=(--header "Retry-After: 60"); i=$((i + 2)) ;;
+		--header)
+			case "${toks[$((i + 1))]}" in
+			SMOKE) argv+=(--header "X-Smokescreen-Error: $SMOKEMSG") ;;
+			*) argv+=(--header "Retry-After: 60") ;;
+			esac
+			i=$((i + 2))
+			;;
 		--body)
 			case "${toks[$((i + 1))]}" in
 			@OLD) argv+=(--body "$OLDBODY") ;;
 			@NEW) argv+=(--body "$NEWBODY") ;;
+			@SMOKE) argv+=(--body "$SMOKEBODY") ;;
 			esac
 			i=$((i + 2))
 			;;
