@@ -35,6 +35,7 @@ type runOptions struct {
 	pull         string
 	verbose      bool
 	resume       bool
+	takeOver     bool
 	fresh        bool
 	rm           bool
 }
@@ -56,6 +57,7 @@ func runCommand() *ff.Command {
 	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.resume, 0, "resume", "re-enter a session for this workspace (positional: session id)")
+	fs.BoolVar(&ro.takeOver, 0, "take-over", "with --resume: detach whatever terminal is attached to the session first")
 	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
 	return &ff.Command{
@@ -95,6 +97,9 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	}
 	if ro.fresh && !ro.resume {
 		return fmt.Errorf("--fresh requires --resume")
+	}
+	if ro.takeOver && !ro.resume {
+		return fmt.Errorf("--take-over requires --resume")
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -452,6 +457,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	if ro.rm {
 		cleanup = func() { removeSessionState(podName, sessionDir) }
 	}
+	watchDetachSignal()
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -526,13 +532,25 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		if !detachable || !containerRunning(wsName) {
 			return false
 		}
-		fmt.Fprintf(os.Stderr, "hsh: detached from session %s; re-enter with: hsh run --resume %s\n", sessionID, sessionID)
+		by := ""
+		if detachRequested.Load() {
+			by = " (requested by hsh detach or --take-over)"
+		}
+		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh run --resume %s\n", sessionID, by, sessionID)
 		return true
 	}
 	if reattach {
 		running := containerRunning(wsName)
 		if running && !detachable {
-			return fmt.Errorf("session %s is already running; exit it first or pick another session", sessionID)
+			return fmt.Errorf("session %s is already running and cannot be attached from here (a non-interactive, --rm, or --tasks run); detach or exit it first", sessionID)
+		}
+		if running && clientAttached(sessionDir) {
+			if !ro.takeOver {
+				return fmt.Errorf("session %s is attached from another terminal (hsh run, pid %d); detach it with: hsh detach %s, or take it over with: hsh run --resume --take-over %s", sessionID, readClientPID(sessionDir), sessionID, sessionID)
+			}
+			if _, err := detachClient(sessionDir, 10*time.Second); err != nil {
+				return err
+			}
 		}
 		if !containerExists(wsName) {
 			if out, err := podman(wsArgs...); err != nil {

@@ -206,8 +206,9 @@ wasm build (0025 decisions 1 and 2); Phase 1 does not.
   no detach.
 - Whether the reaper should survive `hsh` upgrades (it re-execs the same
   binary path) or exit and be re-spawned by the next `hsh` command.
-- Multiple clients: a second `podman attach` shares the pty; decide
-  whether `--resume` refuses when another client is attached.
+- Multiple clients (decided: one at a time). `--resume` refuses a session
+  attached elsewhere; `hsh detach` and `--resume --take-over` detach it.
+  Read-only observers remain a possible later feature.
 - Whether `hsh ls` can tell attached from detached cheaply (podman does
   not expose attached clients directly).
 - Terminals other than Ghostty's core: partial-region scrollback

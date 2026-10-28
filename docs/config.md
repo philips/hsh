@@ -246,6 +246,11 @@ workspace     file with the absolute path of the workspace
   `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
   scrubs secrets and stops the pod if the shell exits while detached.
   `--rm` and `--tasks` sessions cannot detach
+- only one terminal is attached to a session at a time: `hsh run --resume`
+  refuses a session that is attached elsewhere. `hsh detach [<session id>]`
+  detaches whatever terminal is attached (that `hsh run` restores its
+  terminal and exits; the session keeps running), and
+  `hsh run --resume --take-over <id>` does that and attaches here
 - `hsh run --rm` makes a run temporary: pod and state are removed at exit
 - `hsh run --resume` re-enters the current workspace's session - the only
   one directly, or lists the ids when there are several

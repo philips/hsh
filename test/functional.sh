@@ -834,7 +834,6 @@ LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"mode":"allowlist","allow":[
 EOF
 	podman build -q -t localhost/hsh-detach-test:latest -f "$TMP/detach.Containerfile" "$TMP" >/dev/null || fail "could not build the detach test image"
 	mkdir -p "$TMP/detachws"
-	"$HSH" rm --all -f >/dev/null 2>&1 || true
 	python3 "$REPO/test/detach.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" || fail "the detach/attach driver failed"
 	pass "detach, attach, closed terminals, the reaper, and gc behave as planned"
 else

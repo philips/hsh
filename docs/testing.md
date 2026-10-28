@@ -59,7 +59,9 @@ proxy, the denial database, and the example image:
   nothing; `hsh run --resume` re-enters the same shell; closing the
   terminal detaches; the reaper scrubs secrets and stops the pod when a
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
-  and `hsh gc` cleans up; `--rm` sessions cannot detach
+  and `hsh gc` cleans up; `hsh detach` force-detaches an attached
+  terminal; `--resume` refuses a session attached elsewhere and
+  `--resume --take-over` takes it over; `--rm` sessions cannot detach
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/term"
 )
 
 func attachFlags(interactive, detachable bool, detachKeys string) []string {
@@ -43,7 +45,20 @@ func attachContainer(name string, flags []string, running bool, im *inlineMonito
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	return containerExitCode(name, cmd.Run())
+	var saved *term.State
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		saved, _ = term.GetState(int(os.Stdin.Fd()))
+	}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	activeClient.Store(cmd.Process)
+	waitErr := cmd.Wait()
+	activeClient.Store(nil)
+	if saved != nil {
+		_ = term.Restore(int(os.Stdin.Fd()), saved)
+	}
+	return containerExitCode(name, waitErr)
 }
 
 func clientPIDPath(sessionDir string) string {

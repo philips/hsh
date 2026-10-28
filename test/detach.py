@@ -165,6 +165,53 @@ if "Detached" not in hsh_ls():
     fail("a closed terminal did not leave the session Detached: " + hsh_ls())
 print("PASS: closing the terminal detaches instead of killing the session")
 
+def settle(fd, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        pump(fd, 0.1)
+
+
+pid, fd = spawn("run", "--resume", sid)
+settle(fd, 3)
+type_line(fd, "echo second-attach-$((6*7))", "second-attach-42")
+mark = len(transcript)
+res = subprocess.run([hsh, "detach", sid], capture_output=True, text=True, cwd=workdir)
+if "detached session %s" % sid not in res.stdout:
+    fail("hsh detach did not report success: %r %r" % (res.stdout, res.stderr))
+code = reap(pid)
+pump(fd, 0.5)
+if code != 0:
+    fail("the force-detached client exited %d" % code)
+if "requested by hsh detach" not in transcript[mark:]:
+    fail("the force-detached client did not say why it detached")
+if not running(ws):
+    fail("force-detaching stopped the session")
+if "Detached" not in hsh_ls():
+    fail("hsh ls does not show the force-detached session as Detached: " + hsh_ls())
+again = subprocess.run([hsh, "detach", sid], capture_output=True, text=True, cwd=workdir)
+if "is not attached" not in again.stdout:
+    fail("detaching an unattached session did not say so: %r" % again.stdout)
+print("PASS: hsh detach force-detaches the attached terminal; the session keeps running")
+
+pid_a, fd_a = spawn("run", "--resume", sid)
+settle(fd_a, 3)
+pid_b, fd_b = spawn("run", "--resume", sid)
+mark = len(transcript)
+code_b = reap(pid_b)
+pump(fd_b, 0.5)
+if code_b == 0 or "attached from another terminal" not in transcript[mark:]:
+    fail("a second --resume was not refused while the session is attached (exit %d)" % code_b)
+pid_c, fd_c = spawn("run", "--resume", "--take-over", sid)
+if reap(pid_a) != 0:
+    fail("--take-over did not detach the first client cleanly")
+settle(fd_c, 3)
+type_line(fd_c, "echo took-over-$((6*7))", "took-over-42")
+os.write(fd_c, b"\x1d")
+reap(pid_c)
+if not running(ws):
+    fail("--take-over ended the session")
+print("PASS: --resume refuses a session attached elsewhere; --resume --take-over detaches it and attaches here")
+
 subprocess.run(["podman", "stop", "-t", "1", ws], capture_output=True)
 wait_for(lambda: not os.path.exists(secrets), "the reaper to scrub secrets.json")
 wait_for(lambda: "Running" not in out("podman", "pod", "ls", "--filter", "name=" + session, "--format", "{{.Status}}"), "the reaper to stop the pod")

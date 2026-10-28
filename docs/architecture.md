@@ -511,6 +511,11 @@ sessions per workspace.
   session is stripped and only triggers an immediate poll of that queue.
   On `--resume` the relay briefly changes the pty width by one column and
   back so the shell repaints. See [config.md](config.md#inline-proxy-review).
+- **One client at a time.** `hsh run --resume` refuses a session whose
+  `client.pid` names a live `hsh run`. `hsh detach` and
+  `hsh run --resume --take-over` send that process SIGUSR1; it terminates
+  its podman client (which, with `--sig-proxy=false`, leaves the container
+  running), restores the terminal, and exits reporting the detach.
 - `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
   client), or `Shell exited` (shell gone while the proxy still runs, which

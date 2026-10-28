@@ -186,6 +186,8 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 		return 0, err
 	}
 	slave.Close()
+	activeClient.Store(cmd.Process)
+	defer activeClient.Store(nil)
 
 	winch := make(chan os.Signal, 1)
 	signal.Notify(winch, syscall.SIGWINCH)
