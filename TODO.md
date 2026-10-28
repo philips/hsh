@@ -13,3 +13,7 @@ See plans/0026-detach-attach.md (podman-native detach/attach, in-process relay, 
 ## Process-control approvals
 
 See plans/0024-process-approval.md: implement the hold-the-request option first, then host-owned approval.
+
+## Hold denied requests for approval
+
+See plans/0027-approval-hold.md (plan, awaiting review).
