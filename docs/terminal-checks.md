@@ -27,7 +27,9 @@ Mark each pass, fail, or n/a, and describe any failure.
 ### Status row and scroll region
 
 1. The bottom row is a green status line that reads `proxy: nothing to
-   review` (or counts requests) and stays at the bottom while you type.
+   review` and stays at the bottom while you type. After a request is denied
+   (see Setup) it turns blue and counts requests; opening the review screen
+   turns it red.
 2. `seq 1 200`: the output scrolls above the status line; the status line is
    never overwritten or duplicated.
 3. Scroll back with the terminal's own scrollback (mouse wheel, Shift+PgUp,
@@ -83,7 +85,7 @@ Mark each pass, fail, or n/a, and describe any failure.
 
 ### Colors and attributes
 
-18. The status line is readable (black on green, white on red) with your
+18. The status line is readable (black on green, white on blue, white on red) with your
     color scheme, including a light scheme.
 19. The review screen's selection highlight and borders render correctly.
 

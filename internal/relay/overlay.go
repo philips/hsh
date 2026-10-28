@@ -13,6 +13,7 @@ import (
 
 const (
 	sgrGreen = "\x1b[0;30;42m"
+	sgrBlue  = "\x1b[0;97;44m"
 	sgrRed   = "\x1b[0;97;41m"
 )
 
@@ -141,6 +142,9 @@ func (r *Relay) statusLineLocked() string {
 		text = " hsh | REVIEW | same keys as `hsh monitor` | q or Esc closes"
 	default:
 		sgr = sgrGreen
+		if r.pending > 0 {
+			sgr = sgrBlue
+		}
 		heldNote := ""
 		if r.heldReqs > 0 {
 			heldNote = fmt.Sprintf(" (%d held)", r.heldReqs)

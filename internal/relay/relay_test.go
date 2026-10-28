@@ -685,3 +685,37 @@ func TestStatusLineShowsHowManyRequestsAreHeld(t *testing.T) {
 		return strings.Contains(r, "3 proxy requests need review") && !strings.Contains(r, "held")
 	})
 }
+
+func TestStatusLineColorFollowsWhetherSomethingNeedsAttention(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	line := func() string {
+		h.relay.mu.Lock()
+		defer h.relay.mu.Unlock()
+		return h.relay.statusLineLocked()
+	}
+	set := func(pending, held int, review bool) {
+		h.relay.mu.Lock()
+		defer h.relay.mu.Unlock()
+		h.relay.pending, h.relay.heldReqs = pending, held
+		h.relay.review.open = review
+	}
+	if got := line(); !strings.HasPrefix(got, sgrGreen) {
+		t.Fatalf("idle status line is not green: %q", got)
+	}
+	set(1, 0, false)
+	if got := line(); !strings.HasPrefix(got, sgrBlue) || !strings.Contains(got, "1 proxy request needs review") {
+		t.Fatalf("a pending request does not turn the line blue: %q", got)
+	}
+	set(3, 2, false)
+	if got := line(); !strings.HasPrefix(got, sgrBlue) || !strings.Contains(got, "(2 held)") {
+		t.Fatalf("held requests: %q", got)
+	}
+	set(3, 2, true)
+	if got := line(); !strings.HasPrefix(got, sgrRed) {
+		t.Fatalf("the open review screen is not red: %q", got)
+	}
+	set(0, 0, false)
+	if got := line(); !strings.HasPrefix(got, sgrGreen) {
+		t.Fatalf("nothing pending is not green again: %q", got)
+	}
+}

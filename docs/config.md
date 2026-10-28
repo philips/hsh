@@ -312,10 +312,11 @@ key that your programs do not remap, or avoid the protocol.
 Interactive `hsh run` sessions (not `--rm`, `--tasks`, or piped runs) pass the
 session through a relay in the `hsh run` process, outside the sandbox:
 
-- the bottom terminal row is a status line: green, `proxy: nothing to
-  review`, or `* N proxy requests need review | Ctrl+Space to review` as the
-  proxy records denials for the session (`"status_line": false` removes the
-  reserved row)
+- the bottom terminal row is a status line: green with `proxy: nothing to
+  review`, **blue** with `* N proxy requests need review | Ctrl+Space to
+  review` (plus `(M held)` when requests are waiting on you) as the proxy
+  records denials for the session, and red while the review screen is open
+  (`"status_line": false` removes the reserved row)
 - `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`, `ctrl-]`,
   `ctrl-^`, `ctrl-_`) turns the line red and takes over the whole screen with
   the same view and keys as `hsh monitor`, scoped to this session: up/down
