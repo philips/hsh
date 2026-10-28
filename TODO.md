@@ -9,3 +9,6 @@ the status bar flickers with dns install and other commands with a spinner. anno
 - do the full emulator with libghostty (gah!)
 - only pop-up the status bar when there is an approval needed
 
+## Tell agents about the network restrictions
+
+See plans/0028-network-notice.md (plan, awaiting review).
