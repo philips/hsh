@@ -236,6 +236,14 @@ client terminal, a second libghostty fed only the relay's output, equals
 the emulator after a pause with 30 held lines) and
 `TestPassthroughStatusRowSurvivesScrollClearAndAltScreen`.
 
+## Implementation order
+
+This plan's deliverables are the toolchain bump (decision 1), the pinned
+wasm build (decision 2), and the emulator package behind a small interface
+(decision 3). The relay, status row, and dialog (decisions 4 and 6) are
+built in plans/0026-detach-attach.md Phase 2 on top of them; 0026 Phase 1
+does not depend on this plan and can go first.
+
 ## Tests
 
 - Ensure mouse, bracketed paste, and kitty keyboard protocol passthrough while

@@ -179,6 +179,20 @@ using Phases 1 and 2.
 Phase 2 depends on the Go 1.27 / `GOEXPERIMENT=simd` bump and the pinned
 wasm build (0025 decisions 1 and 2); Phase 1 does not.
 
+## Implementation order
+
+1. **Phase 1 first or in parallel.** It has no dependency on 0025 (no
+   emulator, no toolchain change) and on its own fixes the Ctrl-P Ctrl-Q
+   session loss and the closed-terminal kill.
+2. **0025's foundation**: the Go 1.27 / `GOEXPERIMENT=simd` bump, the
+   pinned wasm build, and the `Write/Resize/Snapshot` emulator interface.
+   0025 delivers these and the decisions; the relay and dialog it
+   describes are built here.
+3. **Phase 2**: the raw pty relay in `hsh run` (resize, detach key,
+   exit codes) can land before the emulator exists; the emulator, status
+   row, and dialog follow once step 2 is done.
+4. Phase 4 only if wanted.
+
 ## Open questions
 
 - Default detach key (Ctrl-] vs something less likely to clash) and
