@@ -26,11 +26,11 @@ type reviewState struct {
 func (r *Relay) pollLocked() {
 	r.lastPoll = time.Now()
 	r.pollNow = false
-	n, err := r.cfg.Count()
-	if err != nil || n == r.pending {
+	n, heldN, err := r.cfg.Count()
+	if err != nil || (n == r.pending && heldN == r.heldReqs) {
 		return
 	}
-	r.pending = n
+	r.pending, r.heldReqs = n, heldN
 	r.dirty = true
 }
 
@@ -141,13 +141,17 @@ func (r *Relay) statusLineLocked() string {
 		text = " hsh | REVIEW | same keys as `hsh monitor` | q or Esc closes"
 	default:
 		sgr = sgrGreen
+		heldNote := ""
+		if r.heldReqs > 0 {
+			heldNote = fmt.Sprintf(" (%d held)", r.heldReqs)
+		}
 		switch n := r.pending; {
 		case n == 0:
 			text = " hsh | " + name + " | proxy: nothing to review"
 		case n == 1:
-			text = " hsh | " + name + " | * 1 proxy request needs review | Ctrl+Space to review"
+			text = " hsh | " + name + " | * 1 proxy request needs review" + heldNote + " | Ctrl+Space to review"
 		default:
-			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review | Ctrl+Space to review", name, n)
+			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review%s | Ctrl+Space to review", name, n, heldNote)
 		}
 	}
 	return sgr + padTo(text, r.cols) + "\x1b[0m"

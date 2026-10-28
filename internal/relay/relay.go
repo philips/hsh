@@ -27,7 +27,7 @@ type Config struct {
 	StatusLine bool
 	Key        Key
 	DetachKeys string
-	Count      func() (int, error)
+	Count      func() (pending, held int, err error)
 	Overlay    func(cols, rows int) tea.Model
 	Name       string
 	PollEvery  time.Duration
@@ -52,6 +52,7 @@ type Relay struct {
 	region         regionFilter
 	review         reviewState
 	pending        int
+	heldReqs       int
 	covTop         int
 	covRows        int
 	lastPoll       time.Time

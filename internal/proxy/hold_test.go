@@ -416,3 +416,58 @@ func TestDNSHoldIsCappedBelowResolverPatience(t *testing.T) {
 		t.Fatalf("dnsHoldLimit = %s", dnsHoldLimit)
 	}
 }
+
+func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "30s", true)
+	req := e.send(connectTo("blocked.test:443"))
+	time.Sleep(500 * time.Millisecond)
+	holding := func() int {
+		db, err := denieddb.Open(e.db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		rows, err := denieddb.All(db, denieddb.Filter{Session: "s1"})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("%+v %v", rows, err)
+		}
+		return rows[0].Holding
+	}
+	if holding() != 1 {
+		t.Fatalf("holding = %d while a request is held", holding())
+	}
+	e.ignore("blocked.test")
+	req.within(t, 3*time.Second)
+	time.Sleep(200 * time.Millisecond)
+	if holding() != 0 {
+		t.Fatalf("holding = %d after the request ended", holding())
+	}
+}
+
+func TestProxyStartClearsStaleHoldingCounts(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "denied.db")
+	db, err := denieddb.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := denieddb.Record(db, "/ws", "s1", "stale.test", "stale.test:443"); err != nil {
+		t.Fatal(err)
+	}
+	if err := denieddb.AdjustHolding(db, "s1", "stale.test", 4); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	ca, _ := certs.NewCA()
+	os.WriteFile(filepath.Join(dir, "ca.crt"), ca.CertPEM(), 0o600)
+	os.WriteFile(filepath.Join(dir, "ca.key"), ca.KeyPEM(), 0o600)
+	if _, err := New(Options{CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"), DeniedDB: dbPath, Session: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	db, _ = denieddb.Open(dbPath)
+	defer db.Close()
+	rows, _ := denieddb.Pending(db, denieddb.Filter{Session: "s1"})
+	if len(rows) != 1 || rows[0].Holding != 0 {
+		t.Fatalf("stale counts survived the proxy start: %+v", rows)
+	}
+}

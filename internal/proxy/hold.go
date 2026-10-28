@@ -78,6 +78,10 @@ func (p *Proxy) awaitApproval(ctx context.Context, host, target, kind string, al
 		return false
 	}
 	defer p.releaseHold()
+	if p.deniedDB != nil {
+		_ = denieddb.AdjustHolding(p.deniedDB, p.opts.Session, host, 1)
+		defer func() { _ = denieddb.AdjustHolding(p.deniedDB, p.opts.Session, host, -1) }()
+	}
 	log.Printf("%s %s: holding for approval (up to %s)", kind, host, maxWait)
 	deadline := time.NewTimer(maxWait)
 	defer deadline.Stop()

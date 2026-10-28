@@ -87,15 +87,21 @@ func (s *sessionDenials) Close() {
 	}
 }
 
-func (s *sessionDenials) Count() (int, error) {
+func (s *sessionDenials) Count() (int, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	db, err := s.open()
 	if err != nil || db == nil {
-		return 0, err
+		return 0, 0, err
 	}
 	rows, err := denieddb.Pending(db, denieddb.Filter{Session: s.session})
-	return len(rows), err
+	held := 0
+	for _, r := range rows {
+		if r.Holding > 0 {
+			held++
+		}
+	}
+	return len(rows), held, err
 }
 
 func (s *sessionDenials) Overlay(cols, rows int) tea.Model {

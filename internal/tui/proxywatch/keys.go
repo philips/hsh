@@ -9,6 +9,7 @@ type keyMap struct {
 	Approve        key.Binding
 	Ignore         key.Binding
 	ToggleIgnored  key.Binding
+	ToggleHold     key.Binding
 	Refresh        key.Binding
 	Quit           key.Binding
 	Filter         key.Binding
@@ -24,6 +25,7 @@ var keys = keyMap{
 	Approve:        key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter", "approve")),
 	Ignore:         key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "ignore")),
 	ToggleIgnored:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "ignored")),
+	ToggleHold:     key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "hold")),
 	Refresh:        key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Quit:           key.NewBinding(key.WithKeys("q", "esc", "ctrl+c"), key.WithHelp("q", "quit")),
 	Filter:         key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
@@ -33,5 +35,5 @@ var keys = keyMap{
 }
 
 func (k keyMap) shortHelp() []key.Binding {
-	return []key.Binding{k.Select, k.Approve, k.Ignore, k.SelectAll, k.SelectNone, k.ToggleIgnored, k.Refresh}
+	return []key.Binding{k.Select, k.Approve, k.Ignore, k.SelectAll, k.SelectNone, k.ToggleIgnored, k.ToggleHold, k.Refresh}
 }

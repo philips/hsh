@@ -28,6 +28,7 @@ type Model struct {
 	ignoredRows []denieddb.DeniedHost
 	rows        []denieddb.DeniedHost
 	selected    map[string]bool
+	holds       map[string]string
 
 	filtering   bool
 	filterInput textinput.Model
@@ -82,9 +83,11 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 		pendingRows: pending,
 		ignoredRows: ignored,
 		selected:    map[string]bool{},
+		holds:       map[string]string{},
 		width:       80,
 		height:      24,
 	}
+	m.holds = loadHolds(filter, pending, ignored)
 	m.filterInput = textinput.New()
 	m.filterInput.Prompt = "/"
 	m.rows = m.visibleRows()
@@ -110,6 +113,9 @@ func (m Model) allRows() []denieddb.DeniedHost {
 	var rows []denieddb.DeniedHost
 	rows = append(rows, m.pendingRows...)
 	sort.Slice(rows, func(a, b int) bool {
+		if (rows[a].Holding > 0) != (rows[b].Holding > 0) {
+			return rows[a].Holding > 0
+		}
 		if rows[a].LastSeen != rows[b].LastSeen {
 			return rows[a].LastSeen > rows[b].LastSeen
 		}
@@ -135,6 +141,9 @@ func (m Model) tableRows(rows []denieddb.DeniedHost) []table.Row {
 		url := hostURL(h.Host)
 		if h.Ignored {
 			url += "  (ignored)"
+		}
+		if h.Holding > 0 {
+			url += fmt.Sprintf("  HELD x%d", h.Holding)
 		}
 		out = append(out, table.Row{sel, h.Session, ws, url, fmt.Sprint(h.Count), h.LastSeen})
 	}
@@ -282,6 +291,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case refreshMsg:
 		return m.applyRefresh(msg)
 
+	case holdMsg:
+		return m.applyHold(msg)
+
 	case actionMsg:
 		return m.applyAction(msg)
 	}
@@ -330,6 +342,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.approve()
 		case key.Matches(msg, keys.Ignore):
 			return m.ignore()
+		case key.Matches(msg, keys.ToggleHold):
+			return m.toggleHold()
 		case key.Matches(msg, keys.ToggleIgnored):
 			m.showIgnored = !m.showIgnored
 			m.rebuildRows(false)
@@ -424,6 +438,7 @@ func (m Model) applyRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 	}
 	m.pendingRows = msg.pending
 	m.ignoredRows = msg.ignored
+	m.holds = msg.holds
 	m.rebuildRows(true)
 	return m, nil
 }
@@ -474,8 +489,95 @@ func (m Model) refreshCmd() tea.Cmd {
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		return refreshMsg{pending: pending, ignored: ignored}
+		return refreshMsg{pending: pending, ignored: ignored, holds: loadHolds(filter, pending, ignored)}
 	}
+}
+
+func sessionConfigFile(session string) string {
+	return denieddb.SessionDir(session) + "/config.json"
+}
+
+func loadHolds(f denieddb.Filter, rows ...[]denieddb.DeniedHost) map[string]string {
+	sessions := map[string]bool{}
+	if f.Session != "" {
+		sessions[f.Session] = true
+	}
+	for _, set := range rows {
+		for _, h := range set {
+			if h.Session != "" {
+				sessions[h.Session] = true
+			}
+		}
+	}
+	out := map[string]string{}
+	for s := range sessions {
+		if cfg, err := config.Load(sessionConfigFile(s)); err == nil {
+			out[s] = cfg.Network.HoldSummary()
+		}
+	}
+	return out
+}
+
+func (m Model) holdSession() string {
+	if len(m.rows) > 0 && m.table.Cursor() >= 0 && m.table.Cursor() < len(m.rows) {
+		if s := m.rows[m.table.Cursor()].Session; s != "" {
+			return s
+		}
+	}
+	return m.filter.Session
+}
+
+func (m Model) toggleHold() (tea.Model, tea.Cmd) {
+	session := m.holdSession()
+	if session == "" {
+		m.status = "no session to change: select a row first"
+		return m, nil
+	}
+	return m, func() tea.Msg {
+		path := sessionConfigFile(session)
+		cfg, err := config.Load(path)
+		if err != nil {
+			return holdMsg{session: session, err: err}
+		}
+		value := "off"
+		if cfg.Network.ApprovalWaitDuration() == 0 {
+			value = ""
+		}
+		if err := config.SetApprovalWait(path, value); err != nil {
+			return holdMsg{session: session, err: err}
+		}
+		cfg, err = config.Load(path)
+		if err != nil {
+			return holdMsg{session: session, err: err}
+		}
+		return holdMsg{session: session, summary: cfg.Network.HoldSummary(), on: cfg.Network.ApprovalWaitDuration() > 0}
+	}
+}
+
+func (m Model) applyHold(msg holdMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status = "error: " + msg.err.Error()
+		return m, nil
+	}
+	m.holds[msg.session] = msg.summary
+	if msg.on {
+		m.status = fmt.Sprintf("session %s: %s — denied requests wait for approval while someone is watching", msg.session, msg.summary)
+	} else {
+		m.status = fmt.Sprintf("session %s: holding off — denied requests fail immediately", msg.session)
+	}
+	return m, nil
+}
+
+func (m Model) holdTitle() string {
+	session := m.holdSession()
+	summary, ok := m.holds[session]
+	if !ok {
+		return ""
+	}
+	if m.filter.Session != "" {
+		return summary
+	}
+	return summary + " (session " + session + ")"
 }
 
 func title(showIgnored bool, f denieddb.Filter) string {
@@ -502,7 +604,11 @@ func (m Model) View() string {
 		total += len(m.ignoredRows)
 	}
 	var sections []string
-	sections = append(sections, title(m.showIgnored, m.filter))
+	heading := title(m.showIgnored, m.filter)
+	if h := m.holdTitle(); h != "" {
+		heading += " — " + h
+	}
+	sections = append(sections, heading)
 	if len(m.rows) == 0 {
 		if m.filterText() != "" {
 			sections = append(sections, "Nothing matches the filter.")
@@ -527,7 +633,7 @@ func (m Model) View() string {
 		sections = append(sections, "  filter: "+m.filterInput.View())
 		sections = append(sections, helpStyle.Render("  type to filter (session, workspace, url) • tab complete • enter apply • esc clear"))
 	} else {
-		sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • / filter • r refresh • q quit"))
+		sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • w hold on/off • / filter • r refresh • q quit"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }

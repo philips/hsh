@@ -40,9 +40,20 @@ func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 
 	src := &sessionDenials{dbPath: dbPath, session: "s1", cfgPath: cfgPath}
 	defer src.Close()
-	if n, err := src.Count(); err != nil || n != 2 {
-		t.Fatalf("count: %d %v", n, err)
+	if n, held, err := src.Count(); err != nil || n != 2 || held != 0 {
+		t.Fatalf("count: %d %d %v", n, held, err)
 	}
+	hdb, _ := denieddb.Open(dbPath)
+	if err := denieddb.AdjustHolding(hdb, "s1", "a.example", 2); err != nil {
+		t.Fatal(err)
+	}
+	hdb.Close()
+	if n, held, _ := src.Count(); n != 2 || held != 1 {
+		t.Fatalf("count with one held host: %d %d", n, held)
+	}
+	hdb, _ = denieddb.Open(dbPath)
+	_ = denieddb.ResetHolding(hdb, "s1")
+	hdb.Close()
 
 	model := src.Overlay(100, 30)
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -69,7 +80,7 @@ func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 	if got := cfg.Network.Allow; len(got) != 2 || got[1] != "a.example" && got[1] != "b.example" {
 		t.Fatalf("the approval did not reach the session config: %v", got)
 	}
-	if n, _ := src.Count(); n != 1 {
+	if n, _, _ := src.Count(); n != 1 {
 		t.Fatalf("count after approving one host: %d", n)
 	}
 	_ = model
@@ -118,9 +129,9 @@ func TestPastingIntoTheMonitorFilterDoesNotTriggerCommands(t *testing.T) {
 
 func TestSessionDenialsWithoutADatabase(t *testing.T) {
 	src := &sessionDenials{dbPath: filepath.Join(t.TempDir(), "none.db"), session: "s", cfgPath: "x"}
-	n, err := src.Count()
-	if err != nil || n != 0 {
-		t.Fatalf("%v %v", n, err)
+	n, held, err := src.Count()
+	if err != nil || n != 0 || held != 0 {
+		t.Fatalf("%v %v %v", n, held, err)
 	}
 }
 

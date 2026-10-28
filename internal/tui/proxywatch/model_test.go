@@ -422,3 +422,126 @@ func (e *testEnv) pendingSnapshot() []denieddb.DeniedHost {
 	}
 	return pending
 }
+
+func approvalWaitInConfig(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Network struct {
+			ApprovalWait string `json:"approval_wait"`
+		} `json:"network"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Network.ApprovalWait
+}
+
+func TestToggleHoldWritesTheSessionConfigAndUpdatesTheTitle(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com")
+	m, _ := send(env.model, tea.WindowSizeMsg{Width: 140, Height: 30})
+	if view := m.View(); !strings.Contains(view, "holding: 30s (session testsess)") {
+		t.Fatalf("the title does not show the hold state:\n%s", view)
+	}
+
+	m, cmd := send(m, keyMsg("w"))
+	msg := runCmd(cmd)
+	if msg == nil {
+		t.Fatal("w returned no command")
+	}
+	m, _ = send(m, msg)
+	if got := approvalWaitInConfig(t, env.configPath); got != "off" {
+		t.Fatalf("approval_wait = %q after turning holding off", got)
+	}
+	if !hasHost(allowlist(t, env.configPath), "already.example.com") {
+		t.Fatal("toggling holding lost the allowlist")
+	}
+	view := m.View()
+	if !strings.Contains(view, "holding: off (session testsess)") || !strings.Contains(view, "holding off — denied requests fail immediately") {
+		t.Fatalf("view after turning holding off:\n%s", view)
+	}
+
+	m, cmd = send(m, keyMsg("w"))
+	m, _ = send(m, runCmd(cmd))
+	if got := approvalWaitInConfig(t, env.configPath); got != "" {
+		t.Fatalf("approval_wait = %q after turning holding back on (the default should apply)", got)
+	}
+	if !strings.Contains(m.View(), "holding: 30s") {
+		t.Fatalf("view after turning holding on:\n%s", m.View())
+	}
+}
+
+func TestToggleHoldNeedsASession(t *testing.T) {
+	env := newTestEnv(t)
+	m, cmd := send(env.model, keyMsg("w"))
+	if cmd != nil {
+		t.Fatal("w with no row and no session scope returned a command")
+	}
+	if !strings.Contains(m.status, "no session") {
+		t.Fatalf("status = %q", m.status)
+	}
+}
+
+func TestToggleHoldActsOnTheSelectedRowsSession(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com")
+	other := denieddb.SessionDir("othersess")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	otherCfg := filepath.Join(other, "config.json")
+	if err := os.WriteFile(otherCfg, []byte(`{"network":{"allow":[]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	recordAt(t, env.db, "zeta.example.com", "zeta.example.com:443", time.Now().UTC().Add(time.Hour), "othersess")
+	pending, _ := denieddb.Pending(env.db, denieddb.Filter{})
+	m := New(env.db, denieddb.Filter{}, pending, nil, false)
+	if m.rows[0].Session != "othersess" {
+		t.Fatalf("expected the most recent row (othersess) first, got %s", m.rows[0].Session)
+	}
+	m, cmd := send(m, keyMsg("w"))
+	m, _ = send(m, runCmd(cmd))
+	if approvalWaitInConfig(t, otherCfg) != "off" {
+		t.Fatal("the selected row's session was not changed")
+	}
+	if approvalWaitInConfig(t, env.configPath) != "" {
+		t.Fatal("another session's config was changed")
+	}
+}
+
+func TestTypingWInTheFilterDoesNotToggleHolding(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com")
+	m, _ := send(env.model, keyMsg("/"))
+	m, cmd := send(m, keyMsg("w"))
+	if cmd != nil {
+		if msg := runCmd(cmd); msg != nil {
+			if _, ok := msg.(holdMsg); ok {
+				t.Fatal("w typed into the filter toggled holding")
+			}
+		}
+	}
+	if m.filterInput.Value() != "w" {
+		t.Fatalf("filter = %q", m.filterInput.Value())
+	}
+	if approvalWaitInConfig(t, env.configPath) != "" {
+		t.Fatal("the config changed")
+	}
+}
+
+func TestHeldHostsAreListedFirstAndMarked(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
+	if err := denieddb.AdjustHolding(env.db, env.session, "alpha.example.com", 2); err != nil {
+		t.Fatal(err)
+	}
+	pending, _ := denieddb.Pending(env.db, denieddb.Filter{})
+	m := New(env.db, denieddb.Filter{}, pending, nil, false)
+	m, _ = send(m, tea.WindowSizeMsg{Width: 160, Height: 30})
+	if m.rows[0].Host != "alpha.example.com" {
+		t.Fatalf("the held host is not first: %v", listHosts(m))
+	}
+	if !strings.Contains(m.View(), "HELD x2") {
+		t.Fatalf("the held marker is missing:\n%s", m.View())
+	}
+}

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS denied (
 	allowed    INTEGER NOT NULL DEFAULT 0,
 	allowed_at TEXT,
 	ignored    INTEGER NOT NULL DEFAULT 0,
+	holding    INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (host, session)
 );
 `
@@ -38,6 +39,7 @@ type DeniedHost struct {
 	Allowed   bool
 	AllowedAt string
 	Ignored   bool
+	Holding   int
 }
 
 type Filter struct {
@@ -124,7 +126,43 @@ func migrate(db *sql.DB) error {
 	if err := mergeLegacyDNS(db); err != nil {
 		return err
 	}
-	return nil
+	return ensureHoldingColumn(db)
+}
+
+func ensureHoldingColumn(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(denied)")
+	if err != nil {
+		return err
+	}
+	has := false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "holding" {
+			has = true
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || has {
+		return err
+	}
+	_, err = db.Exec("ALTER TABLE denied ADD COLUMN holding INTEGER NOT NULL DEFAULT 0")
+	return err
+}
+
+func AdjustHolding(db *sql.DB, session, host string, delta int) error {
+	_, err := db.Exec(`UPDATE denied SET holding = MAX(0, holding + ?) WHERE host = ? AND session = ?`, delta, host, session)
+	return err
+}
+
+func ResetHolding(db *sql.DB, session string) error {
+	_, err := db.Exec(`UPDATE denied SET holding = 0 WHERE session = ?`, session)
+	return err
 }
 
 func mergeLegacyDNS(db *sql.DB) error {
@@ -262,11 +300,11 @@ func Record(db *sql.DB, workspace, session, host, target string) error {
 	return err
 }
 
-const deniedCols = "host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored"
+const deniedCols = "host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored, holding"
 
 func Pending(db *sql.DB, f Filter) ([]DeniedHost, error) {
 	where, args := f.where("allowed = 0")
-	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY count DESC, host ASC`, args...)
+	return query(db, `SELECT `+deniedCols+` FROM denied`+where+` ORDER BY (holding > 0) DESC, count DESC, host ASC`, args...)
 }
 
 func All(db *sql.DB, f Filter) ([]DeniedHost, error) {
@@ -328,7 +366,7 @@ func query(db *sql.DB, q string, args ...any) ([]DeniedHost, error) {
 		var h DeniedHost
 		var allowed, ignored int
 		var allowedAt sql.NullString
-		if err := rows.Scan(&h.Host, &h.Session, &h.Workspace, &h.Target, &h.Count, &h.FirstSeen, &h.LastSeen, &allowed, &allowedAt, &ignored); err != nil {
+		if err := rows.Scan(&h.Host, &h.Session, &h.Workspace, &h.Target, &h.Count, &h.FirstSeen, &h.LastSeen, &allowed, &allowedAt, &ignored, &h.Holding); err != nil {
 			return nil, err
 		}
 		h.Allowed = allowed != 0

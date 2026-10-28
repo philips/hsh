@@ -269,3 +269,86 @@ func TestLookupDecision(t *testing.T) {
 		t.Fatalf("approved: %+v", d)
 	}
 }
+
+func TestHoldingCounts(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "denied.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, h := range []string{"a.example", "b.example", "b.example", "c.example"} {
+		if err := Record(db, "/ws", "s1", h, h+":443"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Record(db, "/ws", "s2", "a.example", "x"); err != nil {
+		t.Fatal(err)
+	}
+	holding := func(session string) map[string]int {
+		rows, err := Pending(db, Filter{Session: session})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]int{}
+		for _, r := range rows {
+			out[r.Host] = r.Holding
+		}
+		return out
+	}
+	if err := AdjustHolding(db, "s1", "a.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := AdjustHolding(db, "s1", "a.example", 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := holding("s1"); got["a.example"] != 2 || got["b.example"] != 0 {
+		t.Fatalf("after two holds: %v", got)
+	}
+	rows, _ := Pending(db, Filter{Session: "s1"})
+	if rows[0].Host != "a.example" {
+		t.Fatalf("held hosts must be listed first, got %s (count order would put b.example first)", rows[0].Host)
+	}
+	if err := AdjustHolding(db, "s1", "a.example", -1); err != nil {
+		t.Fatal(err)
+	}
+	if err := AdjustHolding(db, "s1", "c.example", -5); err != nil {
+		t.Fatal(err)
+	}
+	if got := holding("s1"); got["a.example"] != 1 || got["c.example"] != 0 {
+		t.Fatalf("decrements: %v", got)
+	}
+	if err := AdjustHolding(db, "s2", "a.example", 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := ResetHolding(db, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := holding("s1"); got["a.example"] != 0 {
+		t.Fatalf("reset: %v", got)
+	}
+	if got := holding("s2"); got["a.example"] != 3 {
+		t.Fatalf("another session's counts were reset: %v", got)
+	}
+}
+
+func TestOpeningAnOldDatabaseAddsTheHoldingColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "denied.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE denied (host TEXT NOT NULL, session TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', target TEXT NOT NULL, count INTEGER NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, allowed INTEGER NOT NULL DEFAULT 0, allowed_at TEXT, ignored INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (host, session));
+		INSERT INTO denied (host, session, target, count, first_seen, last_seen) VALUES ('old.example', 's1', 'old.example:443', 3, 'x', 'y')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := Pending(db, Filter{})
+	if err != nil || len(rows) != 1 || rows[0].Host != "old.example" || rows[0].Holding != 0 {
+		t.Fatalf("%+v %v", rows, err)
+	}
+}

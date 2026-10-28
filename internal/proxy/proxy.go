@@ -93,6 +93,9 @@ func New(opts Options) (*Proxy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("open denial database: %w", err)
 		}
+		if opts.Session != "" {
+			_ = denieddb.ResetHolding(db, opts.Session)
+		}
 	}
 	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, deniedDB: db, store: loadTokenStore(opts.OAuthStore)}, nil
 }

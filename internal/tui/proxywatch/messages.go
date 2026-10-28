@@ -13,6 +13,14 @@ type tickMsg time.Time
 type refreshMsg struct {
 	pending []denieddb.DeniedHost
 	ignored []denieddb.DeniedHost
+	holds   map[string]string
+	err     error
+}
+
+type holdMsg struct {
+	session string
+	summary string
+	on      bool
 	err     error
 }
 

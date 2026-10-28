@@ -130,6 +130,7 @@ type harness struct {
 	logMu   sync.Mutex
 	log     []string
 	pending atomic.Int64
+	held    atomic.Int64
 	polls   atomic.Int64
 }
 
@@ -167,9 +168,9 @@ func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, 
 	h := &harness{t: t, master: master, user: user, keys: pw, done: make(chan struct{})}
 	r, err := New(Config{In: pr, Out: user, Pty: master, Cols: userCols, Rows: userRows,
 		StatusLine: status, Key: key, DetachKeys: detachKeys, Name: "unit", PollEvery: pollEvery,
-		Count: func() (int, error) {
+		Count: func() (int, int, error) {
 			h.polls.Add(1)
-			return int(h.pending.Load()), nil
+			return int(h.pending.Load()), int(h.held.Load()), nil
 		},
 		Overlay: func(cols, rows int) tea.Model {
 			return fakeModel{mu: &h.logMu, log: &h.log}
@@ -669,4 +670,18 @@ func TestBracketedPasteIsEnabledForTheOverlayAndRestoredAfterwards(t *testing.T)
 	h.press("\x00")
 	h.press("q")
 	h.waitFor("the overlay to close", func() bool { return h.user.lastPasteMode() == "off" })
+}
+
+func TestStatusLineShowsHowManyRequestsAreHeld(t *testing.T) {
+	h := newHarness(t, true, 40*time.Millisecond)
+	h.pending.Store(3)
+	h.held.Store(2)
+	h.waitFor("the held count", func() bool {
+		return strings.Contains(h.statusRow(), "3 proxy requests need review (2 held)")
+	})
+	h.held.Store(0)
+	h.waitFor("the held note to go away", func() bool {
+		r := h.statusRow()
+		return strings.Contains(r, "3 proxy requests need review") && !strings.Contains(r, "held")
+	})
 }
