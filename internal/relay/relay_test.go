@@ -112,6 +112,11 @@ const (
 
 func newHarness(t *testing.T, status bool, pollEvery time.Duration) *harness {
 	t.Helper()
+	return newHarnessWith(t, status, pollEvery, `stty -echo; while IFS= read -r l; do eval "$l"; done`, "")
+}
+
+func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, detachKeys string) *harness {
+	t.Helper()
 	if !vt.Available() {
 		t.Skip("built without GOEXPERIMENT=simd")
 	}
@@ -119,7 +124,7 @@ func newHarness(t *testing.T, status bool, pollEvery time.Duration) *harness {
 	if status {
 		rows--
 	}
-	cmd := exec.Command("bash", "-c", `stty -echo; while IFS= read -r l; do eval "$l"; done`)
+	cmd := exec.Command("bash", "-c", script)
 	master, err := pty.StartWithSize(cmd, &pty.Winsize{Cols: userCols, Rows: uint16(rows)})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +138,7 @@ func newHarness(t *testing.T, status bool, pollEvery time.Duration) *harness {
 	src := &fakeSource{}
 	key, _ := ParseKey("ctrl-space")
 	r, err := New(Config{In: pr, Out: user, Pty: master, Cols: userCols, Rows: userRows,
-		StatusLine: status, Key: key, Source: src, Name: "unit", PollEvery: pollEvery})
+		StatusLine: status, Key: key, DetachKeys: detachKeys, Source: src, Name: "unit", PollEvery: pollEvery})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,5 +436,73 @@ func TestFilters(t *testing.T) {
 	out := string(rf.feed([]byte("x\x1b["), 23)) + string(rf.feed([]byte("2;"), 23)) + string(rf.feed([]byte("10r"), 23))
 	if out != "x\x1b[2;10r" {
 		t.Errorf("split region: %q", out)
+	}
+}
+
+func TestEnhancedKeyEncodingsAreRecognised(t *testing.T) {
+	cases := []struct {
+		in      string
+		code    rune
+		width   int
+		release bool
+		ok      bool
+	}{
+		{"\x1b[93;5u", ']', 7, false, true},
+		{"\x1b[93;5:1u", ']', 9, false, true},
+		{"\x1b[93;5:3u", ']', 9, true, true},
+		{"\x1b[93;133u", ']', 9, false, true},
+		{"\x1b[93:93;5u", ']', 10, false, true},
+		{"\x1b[27;5;93~", ']', 10, false, true},
+		{"\x1b[32;5u", ' ', 7, false, true},
+		{"\x1b[93;1u", 0, 0, false, false},
+		{"\x1b[93;6u", 0, 0, false, false},
+		{"\x1b[93;7u", 0, 0, false, false},
+		{"\x1b[A", 0, 0, false, false},
+		{"\x1b[93u", 0, 0, false, false},
+	}
+	for _, c := range cases {
+		ev, ok := decodeCtrl([]byte(c.in))
+		if ok != c.ok || (ok && (ev.code != c.code || ev.width != c.width || ev.release != c.release)) {
+			t.Errorf("%q: got %+v ok=%v", c.in, ev, ok)
+		}
+	}
+}
+
+func TestTranslateKeysRewritesOnlyTheConfiguredKeys(t *testing.T) {
+	keys := ParseDetachKeys("ctrl-],ctrl-a,d")
+	if len(keys) != 2 {
+		t.Fatalf("parsed %d keys from the detach spec", len(keys))
+	}
+	cases := []struct{ in, want string }{
+		{"ab", "ab"},
+		{"x\x1b[93;5uy", "x\x1dy"},
+		{"\x1b[27;5;93~", "\x1d"},
+		{"\x1b[93;5:3u", ""},
+		{"\x1b[97;5u", "\x01"},
+		{"\x1b[98;5u", "\x1b[98;5u"},
+		{"\x1b[A\x1b[93;5u", "\x1b[A\x1d"},
+	}
+	for _, c := range cases {
+		if got := string(translateKeys([]byte(c.in), keys)); got != c.want {
+			t.Errorf("%q: got %q want %q", c.in, got, c.want)
+		}
+	}
+	if got := string(translateKeys([]byte("\x1b[93;5u"), nil)); got != "\x1b[93;5u" {
+		t.Errorf("no keys configured changed the input: %q", got)
+	}
+}
+
+func TestDetachKeyInKittyEncodingReachesTheChildAsTheLegacyByte(t *testing.T) {
+	file := t.TempDir() + "/got"
+	h := newHarnessWith(t, true, time.Hour, "stty raw -echo; head -c 3 > "+file, "ctrl-]")
+	time.Sleep(300 * time.Millisecond)
+	h.press("\x1b[93;5uxy")
+	h.waitFor("the child to read three bytes", func() bool {
+		b, _ := os.ReadFile(file)
+		return len(b) == 3
+	})
+	b, _ := os.ReadFile(file)
+	if string(b) != "\x1dxy" {
+		t.Fatalf("child received %q, want the legacy Ctrl+] byte then xy", b)
 	}
 }

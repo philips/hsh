@@ -181,8 +181,11 @@ session2 = new_pod(before)
 sid2 = session2[len("hsh-"):]
 ws2 = session2 + "-ws"
 secrets2 = os.path.join(state, "sessions", sid2, "secrets.json")
-os.write(fd, b"\x1d")
+os.write(fd, b"\x1b[93;5u")
 reap(pid)
+if not running(ws2):
+    fail("the kitty-encoded detach key ended the session instead of detaching")
+print("PASS: Ctrl+] sent in the kitty keyboard encoding still detaches (the relay translates it)")
 subprocess.run(["pkill", "-f", "hsh-reaper --pod " + session2], capture_output=True)
 time.sleep(0.5)
 if reaper_alive(session2):

@@ -37,6 +37,7 @@ type Config struct {
 	Cols, Rows int
 	StatusLine bool
 	Key        Key
+	DetachKeys string
 	Source     Source
 	Name       string
 	PollEvery  time.Duration
@@ -54,6 +55,7 @@ type Relay struct {
 	held         []byte
 	dirty        bool
 	closed       bool
+	detach       []Key
 	cursorHidden bool
 	hints        hintFilter
 	region       regionFilter
@@ -72,7 +74,7 @@ func New(cfg Config) (*Relay, error) {
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
 	}
-	r := &Relay{cfg: cfg, done: make(chan struct{})}
+	r := &Relay{cfg: cfg, done: make(chan struct{}), detach: ParseDetachKeys(cfg.DetachKeys)}
 	r.wake = sync.NewCond(&r.mu)
 	if cfg.StatusLine {
 		r.statusRows = 1
@@ -281,11 +283,11 @@ func (r *Relay) inputLocked(p []byte) {
 		}
 		idx, width := r.cfg.Key.find(p)
 		if idx < 0 {
-			_, _ = r.cfg.Pty.Write(p)
+			_, _ = r.cfg.Pty.Write(translateKeys(p, r.detach))
 			return
 		}
 		if idx > 0 {
-			_, _ = r.cfg.Pty.Write(p[:idx])
+			_, _ = r.cfg.Pty.Write(translateKeys(p[:idx], r.detach))
 		}
 		p = p[idx+width:]
 		r.openReviewLocked()

@@ -239,8 +239,9 @@ workspace     file with the absolute path of the workspace
   proxy included) and the resolved `secrets.json` is scrubbed, so an idle
   session holds no key material; re-entry re-resolves secrets from the
   session config
-- the detach key (`detach_keys`, default Ctrl-]) leaves an interactive
-  session running in the background; closing the terminal does the same.
+- the detach key (`detach_keys`, default Ctrl-], see below) leaves an
+  interactive session running in the background; closing the terminal does
+  the same.
   `hsh run --resume` re-attaches to the same shell, and `hsh ls` shows
   `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
   scrubs secrets and stops the pod if the shell exits while detached.
@@ -253,6 +254,24 @@ workspace     file with the absolute path of the workspace
   session's allowlist is that session's policy
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
   every sandbox; `hsh gc` collects session state whose pod is gone
+
+### Detach key
+
+`detach_keys` takes podman's syntax: comma-separated keys, each `ctrl-` plus
+a letter or one of `@ \ ] ^ _` (for example `ctrl-a,d` is Ctrl-A then d), and an
+empty string disables detaching. Set it in the seed config (`config.hsh`), in
+an image's `org.ifup.hsh` label, or, for a session that already exists, in
+`$XDG_STATE_HOME/hsh/sessions/<id>/config.json` before `hsh run --resume <id>`
+(a session keeps its own copy of the config).
+
+If the key seems to do nothing, check what your terminal sends: run `cat -v`
+in the session and press it. `^]` is the plain control byte. Something like
+`^[[93;5u` or `^[[27;5;93~` means a program in the session switched the
+terminal to an enhanced keyboard protocol (kitty or xterm modifyOtherKeys),
+and podman does not understand those encodings. The inline review relay
+(below) translates such encodings back for the configured detach key; without
+it (a build without `GOEXPERIMENT=simd`, or `monitor.enabled: false`) pick a
+key that your programs do not remap, or avoid the protocol.
 
 ## Inline proxy review
 
