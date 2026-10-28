@@ -27,6 +27,9 @@ cleanup() {
 	for pod in $TEST_PODS; do
 		podman pod rm -f "$pod" >/dev/null 2>&1 || true
 	done
+	if [ -n "${PREV_PI_IMAGE:-}" ]; then
+		podman tag "$PREV_PI_IMAGE" ghcr.io/philips/hsh-pi:latest >/dev/null 2>&1 || true
+	fi
 	if [ "$PASSED" = "1" ]; then
 		rm -rf "$TMP"
 	else
@@ -83,6 +86,18 @@ EOF
 export HSH_TEST_SECRET=test-secret-value-123
 HSH="$TMP/hsh"
 DB="$TMP/denied.db"
+
+# Sessions started by this test have a workspace label under $TMP. Never remove
+# other hsh sessions on the host: `hsh rm --all` would.
+test_pods() {
+	podman pod ls --format '{{.Name}} {{.Labels}}' | awk -v t="hsh.workspace:$TMP" 'index($0, t) { print $1 }'
+}
+rm_test_sessions() {
+	local p
+	for p in $(test_pods); do
+		"$HSH" rm -f "$p" >/dev/null 2>&1 || true
+	done
+}
 
 echo "== step 1: curl to a not-yet-allowed endpoint is denied (407) and recorded"
 "$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
@@ -249,7 +264,7 @@ kill "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
 
 echo "== step 5: sessions persist by default; --resume re-enters; idle pods are stopped"
-"$HSH" rm --all -f >/dev/null 2>&1 || true
+rm_test_sessions
 if (cd "$TMP/workspace" && "$HSH" run --resume >"$TMP/resume-none.out" 2>&1); then
 	fail "hsh run --resume with no session unexpectedly succeeded"
 fi
@@ -328,11 +343,11 @@ if [ -d "$XDG_STATE_HOME/hsh/sessions/$ORPHAN" ]; then
 fi
 pass "hsh gc collects session state whose pod is gone"
 
-"$HSH" rm --all -f >/dev/null || fail "rm --all failed to clear sessions between steps"
+rm_test_sessions
 RESUME_POD=""
 
 echo "== step 6: hsh ls / hsh rm"
-"$HSH" rm --all -f >/dev/null 2>&1 || true
+rm_test_sessions
 OTHER_HSH_PODS="$(podman pod ls --format '{{.Name}}' | grep '^hsh-' || true)"
 POD_A="hsh-fn-a-$$"
 POD_B="hsh-fn-b-$$"
@@ -704,6 +719,7 @@ else
 fi
 
 echo "== step 15: image shortnames, transport references, and the pull policy"
+PREV_PI_IMAGE="$(podman image inspect --format '{{.Id}}' ghcr.io/philips/hsh-pi:latest 2>/dev/null || true)"
 podman tag localhost/hsh-example:latest ghcr.io/philips/hsh-pi:latest
 mkdir -p "$TMP/shortws"
 (cd "$TMP/shortws" && "$HSH" run --pull=never pi) >"$TMP/short-run.out" 2>&1 <<'CMDS' || true
@@ -853,13 +869,117 @@ else
 	echo "SKIP: inline review checks (no python3 for the pty driver)"
 fi
 
+echo "== step 19: denied requests are held for approval (network.approval_wait)"
+HOLD_WS="$TMP/holdws"
+mkdir -p "$HOLD_WS"
+cat >"$TMP/hold.config.hsh" <<EOF
+{
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "mounts": ["$HOLD_WS:/workspace"],
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
+}
+EOF
+cat >"$TMP/hold-off.config.hsh" <<EOF
+{
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "mounts": ["$HOLD_WS:/workspace"],
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "off" }
+}
+EOF
+
+start_attended_loop() {
+	local before="$1" out_pid="$2"
+	(
+		for _ in $(seq 1 3000); do
+			kill -0 "$out_pid" 2>/dev/null || exit 0
+			for d in "$XDG_STATE_HOME"/hsh/sessions/*/; do
+				id="$(basename "$d")"
+				case " $before " in *" $id "*) continue ;; esac
+				touch "$d/attended"
+			done
+			sleep 0.2
+		done
+	) &
+	ATTENDED_PID=$!
+}
+session_ids() { ls "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null | tr '\n' ' '; }
+
+BEFORE_IDS="$(session_ids)"
+(cd "$HOLD_WS" && "$HSH" run --config "$TMP/hold.config.hsh" --denied-db "$DB") >"$TMP/hold-run.out" 2>&1 <<'CMDS' &
+sleep 3
+curl -sS -m 40 -o /dev/null -w 'held-result code=%{http_code} time=%{time_total}\n' https://api.mistral.ai 2>&1
+exit
+CMDS
+HOLD_PID=$!
+start_attended_loop "$BEFORE_IDS" "$HOLD_PID"
+HOLD_SESSION=""
+for _ in $(seq 1 120); do
+	for id in $(session_ids); do
+		case " $BEFORE_IDS " in *" $id "*) ;; *) HOLD_SESSION="$id" ;; esac
+	done
+	[ -n "$HOLD_SESSION" ] && break
+	sleep 0.5
+done
+[ -n "$HOLD_SESSION" ] || fail "the hold test session never appeared"
+for _ in $(seq 1 120); do
+	"$HSH" proxy denied --db "$DB" --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" && break
+	sleep 0.5
+done
+"$HSH" proxy denied --db "$DB" --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" || fail "the held request was never recorded as a denial: $(cat "$TMP/hold-run.out")"
+sleep 3
+grep -q "held-result" "$TMP/hold-run.out" && fail "the denied request was answered instead of held: $(cat "$TMP/hold-run.out")"
+pass "a denied CONNECT stays pending (held) while someone is watching"
+
+"$HSH" proxy allow --db "$DB" --session "$HOLD_SESSION" https://api.mistral.ai >/dev/null || fail "hsh proxy allow failed"
+wait "$HOLD_PID" || true
+kill "$ATTENDED_PID" 2>/dev/null || true
+grep -q "held-result" "$TMP/hold-run.out" || fail "the held request never completed after approval: $(cat "$TMP/hold-run.out")"
+HELD_CODE="$(sed -n 's/.*held-result code=\([0-9]*\).*/\1/p' "$TMP/hold-run.out" | head -1)"
+case "$HELD_CODE" in 000|407|"") fail "the approved request did not reach the host (code=$HELD_CODE): $(cat "$TMP/hold-run.out")" ;; esac
+pass "approving the host releases the held request, which then succeeds (HTTP $HELD_CODE)"
+
+BEFORE_IDS="$(session_ids)"
+(cd "$HOLD_WS" && "$HSH" run --config "$TMP/hold-off.config.hsh" --denied-db "$DB") >"$TMP/hold-off.out" 2>&1 <<'CMDS' &
+sleep 3
+curl -s -m 30 -w '\noptout-result code=%{http_code} time=%{time_total}\n' http://blocked-optout.example.test/ 2>&1
+exit
+CMDS
+OFF_PID=$!
+start_attended_loop "$BEFORE_IDS" "$OFF_PID"
+wait "$OFF_PID" || true
+kill "$ATTENDED_PID" 2>/dev/null || true
+OFF_TIME="$(sed -n 's/.*optout-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/hold-off.out" | head -1)"
+[ -n "$OFF_TIME" ] || fail "an opted-out session did not answer 407: $(cat "$TMP/hold-off.out")"
+awk -v t="$OFF_TIME" 'BEGIN { exit !(t < 10) }' || fail "an opted-out session still waited ($OFF_TIME s)"
+grep -q "needs the user's approval" "$TMP/hold-off.out" || fail "the denial text does not tell the agent what to do: $(cat "$TMP/hold-off.out")"
+pass "network.approval_wait: off denies at once, with a message aimed at the agent"
+
+OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
+"$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off" || fail "hsh proxy hold did not report the opt-out"
+"$HSH" proxy hold --session "$OFF_SESSION" 4s | grep -q "up to 4s" || fail "hsh proxy hold 4s did not apply"
+(cd "$HOLD_WS" && "$HSH" run --denied-db "$DB" --resume "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
+sleep 3
+curl -s -m 30 -w '\nfourgs-result code=%{http_code} time=%{time_total}\n' http://blocked-four.example.test/ 2>&1
+exit
+CMDS
+FOUR_PID=$!
+start_attended_loop "$BEFORE_IDS" "$FOUR_PID"
+wait "$FOUR_PID" || true
+kill "$ATTENDED_PID" 2>/dev/null || true
+FOUR_TIME="$(sed -n 's/.*fourgs-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/hold-4s.out" | head -1)"
+[ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 407: $(cat "$TMP/hold-4s.out")"
+awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
+pass "hsh proxy hold 4s turns holding back on live; an unapproved request is held about 4s, then denied"
+
 echo "== final sweep: every session the test created is removable"
-"$HSH" rm --all -f >/dev/null || fail "the final rm --all failed"
-if podman pod ls --format '{{.Name}}' | grep -q '^hsh-'; then
-	fail "sessions were left behind after the final sweep"
+rm_test_sessions
+if [ -n "$(test_pods)" ]; then
+	fail "sessions were left behind after the final sweep: $(test_pods)"
 fi
 [ -z "$(ls -A "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null)" ] || fail "session state was left behind after the final sweep"
-pass "hsh rm --all removes every session and its state"
+pass "hsh rm removes every session the test created and its state"
 
 echo
 echo "ALL FUNCTIONAL TESTS PASSED"

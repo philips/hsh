@@ -183,10 +183,14 @@ the veth addresses.
 
 Every request is checked against `network.allow`:
 
-- **Denied**: the proxy answers `407 Proxy Authentication Required` with a
-  `Proxy-Authenticate: Hsh realm="egress-allowlist"` header (RFC 7235)
-  and records the host in the denial database. For `CONNECT` this surfaces
-  in curl as `CONNECT tunnel failed, response 407`.
+- **Denied**: the proxy records the host in the denial database and answers
+  `407 Proxy Authentication Required` with a
+  `Proxy-Authenticate: Hsh realm="egress-allowlist"` header (RFC 7235). For
+  `CONNECT` this surfaces in curl as `CONNECT tunnel failed, response 407`.
+  The body is written for an agent: the host is blocked pending the user's
+  approval (`hsh monitor`), and the agent should not look for workarounds
+  but retry later or tell the user which host is needed. Before answering,
+  the proxy may hold the request (below).
 - **Allowed, no secret configured for the host**: the proxy tunnels the
   connection (`CONNECT` → `200 Connection Established`, then a raw TCP
   splice). TLS is end-to-end between the workspace and the upstream; any
@@ -199,6 +203,49 @@ Every request is checked against `network.allow`:
 
 Plain-HTTP proxy requests (absolute URIs) are forwarded the same way, with
 injection applied when the host matches a secret.
+
+### Holding denied requests
+
+An agent that is refused starts working around the refusal, which costs
+tokens and usually ends worse than the approval would have. So a request
+the policy would deny is first **held** until the user decides, for up to
+`network.approval_wait` (default `30s`; `off`/`0s` disables; at most `5m`):
+
+- The denial is recorded first, so the host shows up in `hsh monitor` and
+  the inline status line at once, and `denied.db`'s `holding` column counts
+  the requests currently held for that host (the monitor lists held hosts
+  first with `HELD xN`; the status line says `(N held)`; the proxy zeroes
+  its session's counts when it starts).
+- The proxy then polls every 250 ms. It lets the request through as soon
+  as the host is allowed (an approval rewrites the session config and the
+  proxy's one-second reload picks it up), fails it with the normal 407 as
+  soon as the user *ignores* the host (the row is marked ignored; hosts
+  already ignored are not held at all), and otherwise fails it when the wait
+  runs out, when holding is switched off by a reload, when nobody is watching
+  any more, or when the client goes away. At most 64 requests are held at
+  once; beyond that requests are denied immediately.
+- Applies to `CONNECT` and plain-HTTP requests before they are hijacked or
+  forwarded, and to DNS queries in `allowlist` mode. A DNS query is held for
+  at most `min(approval_wait, 9s)`: resolvers (glibc, Go) give up after two
+  5 s tries, so a longer hold would end in a timeout instead of an answer.
+  `none` mode never holds, because nothing can be approved there; `https`
+  mode only holds what it denies (plaintext and non-443).
+- **Only while someone can approve.** The proxy holds only if the file
+  `attended` in the session directory (mounted read-only into the proxy as
+  `/hsh-session/attended`; `--attended` on `hsh-proxy`) was modified within
+  the last 20 seconds. `hsh run` keeps it fresh while an inline-review relay
+  is attached, and `hsh monitor` (unscoped, or for its `--session`/
+  `--workspace` filter) and `hsh proxy allow --watch` do the same for the
+  sessions they cover. Without it requests are denied at once, as before,
+  so an unattended session never makes an agent wait for nothing. A proxy
+  started without `--attended` never holds.
+- Holding does not widen policy: allow decisions still come only from the
+  allowlist in the session config, and a hold ends in the same denial as
+  without holding.
+- Per session: `hsh proxy hold [--session ID] [on|off|DURATION]` rewrites
+  `network.approval_wait` in the session config, and `w` in `hsh monitor`
+  (and the inline review screen, which is the same model) toggles it for the
+  selected row's session; the title shows `holding: 30s` or `holding: off`.
 
 Host matching is case-insensitive, ignores a trailing dot, and supports
 `*.example.com` wildcards (matching one or more leading labels).
@@ -259,6 +306,7 @@ CREATE TABLE IF NOT EXISTS denied (
     allowed    INTEGER NOT NULL DEFAULT 0,
     allowed_at TEXT,
     ignored    INTEGER NOT NULL DEFAULT 0,
+    holding    INTEGER NOT NULL DEFAULT 0,  -- requests currently held
     PRIMARY KEY (host, session)
 );
 ```

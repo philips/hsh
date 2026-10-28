@@ -41,6 +41,7 @@ image's `org.ifup.hsh` label as the config - see
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
+| `network.approval_wait` | `30s` | how long a denied request is held for the user's approval before it fails; `off` (or `0s`) fails it at once; at most `5m` (see [holding denied requests](#holding-denied-requests)) |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
@@ -160,6 +161,34 @@ A config entry referencing the store:
 `hsh run --network MODE` overrides the mode from the command line.
 In `https` mode a compromised agent can exfiltrate data to any TLS
 endpoint; for untrusted code use `--network allowlist`.
+
+## Holding denied requests
+
+A refused request makes an agent hunt for workarounds, which burns tokens. By
+default hsh therefore *holds* a request the policy would deny (a CONNECT, a
+plaintext HTTP request, or a DNS lookup in `allowlist` mode) for up to
+`network.approval_wait` (30 s) while you decide. If you approve the host in
+that time the request simply succeeds and the agent only saw a slow network;
+if you ignore the host it fails at once; if nobody decides it fails with the
+same 407 as before, whose message tells the agent to ask you rather than look
+for workarounds.
+
+- It only holds while someone can approve: an inline-review relay is
+  attached, or `hsh monitor` / `hsh proxy allow --watch` is covering the
+  session. Otherwise denials are immediate.
+- It does not apply in `none` mode, and in `https` mode only to what is
+  denied (plaintext HTTP and non-443 ports).
+- DNS lookups are held for at most 9 s (resolvers give up after about 10 s).
+- Clients with short connect timeouts (Node's fetch gives up after 10 s) will
+  see a timeout before 30 s; that still reads as a transient failure.
+- Opt out per session: `"network": {"approval_wait": "off"}` in the seed
+  config, an image label, or the session's `config.json`;
+  `hsh proxy hold [--session ID] off|on|45s` changes a running session (the
+  proxy reloads within a second and releases requests already held); in
+  `hsh monitor` and the inline review screen press `w` to toggle the session
+  of the selected row.
+- Held hosts are listed first in the monitor (`HELD x2`) and the inline
+  status line shows `(N held)`.
 
 ## Allowlist matching
 

@@ -62,6 +62,15 @@ proxy, the denial database, and the example image:
   and `hsh gc` cleans up; `hsh detach` force-detaches an attached
   terminal; `--resume` refuses a session attached elsewhere and
   `--resume --take-over` takes it over; `--rm` sessions cannot detach
+- **step 19**: held requests — in an `allowlist` session with someone
+  watching (the `attended` marker), a denied CONNECT stays pending until
+  `hsh proxy allow` approves it and then succeeds; `approval_wait: off` in
+  the seed config denies at once with the agent-directed message;
+  `hsh proxy hold 4s` turns holding back on live and an unapproved request
+  is held about 4 s, then denied. The proxy unit tests (`hold_test.go`)
+  cover release by approval, release by ignore, timeout, disabling during a
+  hold, unattended and stale markers, `none` mode, the concurrency cap, client
+  disconnects, the `holding` counts, and held DNS queries
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

@@ -19,7 +19,7 @@ func gcCommand() *ff.Command {
 		stopped := 0
 		if pods, err := listSandboxes(); err == nil {
 			for _, p := range sandboxPods(pods) {
-				if sessionStatus(p) == "Shell exited" {
+				if sessionStatus(p) == "Shell exited" && fileExists(sessionDirFor(p.Name)) {
 					stopSessionPod(p.Name, sessionDirFor(p.Name))
 					fmt.Printf("stopped session %s (its shell exited)\n", p.Session())
 					stopped++

@@ -1,6 +1,7 @@
 # Hold denied requests for approval instead of failing them
 
-> **Status: plan, for review.** Builds on the inline review screen
+> **Status: implemented** (core, monitor toggle and held markers, the
+> attended marker; see Decisions). Desktop notifications are deferred. Builds on the inline review screen
 > (plans/0026-detach-attach.md Phase 2) and the denial database
 > (plans/0003-proxy-denied.md). Implements option C of
 > plans/0024-process-approval.md.
@@ -181,23 +182,16 @@ help.
 
 ## Open questions
 
-- **Unattended sessions.** With no one around to approve, every denied
-  request costs the full wait before failing. The proxy cannot see whether
-  a terminal is attached. A later option: `hsh run` writes a marker the
-  proxy can read (the session directory is mounted read-only into it) while
-  a relay or monitor is attached, and holds apply only then. The first
-  version holds regardless, which matches "on by default", and the toggle
-  is the escape hatch.
-- **30 s as the default.** It is long enough to notice the status line and
-  approve, short of most client timeouts except Node's connect timeout.
-- **Per-host overrides** (hold some hosts longer or never). Not planned;
-  the allowlist is the per-host control.
-- **Desktop notifications** when a request is first held, so approval does
-  not depend on watching the status line. Separate feature.
+All resolved; see Decisions below.
 
 ## Decisions
 
-- **Unattended sessions.** Yes, implement a liveness file for the proxy to read to know if someone might be watching as a next step.
+- **Unattended sessions.** Yes, implement a liveness file for the proxy to read to know if someone might be watching. Implemented: the `attended` file (see docs/architecture.md); holds apply only while it is fresh, so a proxy with no marker never holds.
 - **Per-host overrides** No, do not do this.
 - **30 s as the default.** OK
-- **Desktop notifications** Yes, hold on this
+- **Desktop notifications** Yes, hold on this (deferred; not built).
+- **Added during implementation.** The attended marker is also touched by
+  `hsh monitor` and `hsh proxy allow --watch`, not only by the relay, and the
+  relay creates it before the container starts so the first requests of a
+  session are held. A proxy started without `--attended` never holds, which
+  keeps the existing proxy tests and standalone `hsh proxy` immediate.

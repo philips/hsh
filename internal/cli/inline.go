@@ -188,6 +188,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	inlineShutdown.Store(&restore)
 	defer inlineShutdown.Store(nil)
 
+	_ = attend.Touch(attend.Path(denieddb.SessionDir(im.session)))
 	if err := cmd.Start(); err != nil {
 		slave.Close()
 		return 0, err
