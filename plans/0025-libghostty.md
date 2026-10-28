@@ -142,7 +142,7 @@ and detach/reattach plus popovers come from the same code.
    optional (`monitor.status_line`, default on) because it is the part with
    the known gaps; the dialog alone needs no reserved row. The status line is
    not part of scrollback, so it is not visible while scrolled back. The
-   relay lives in the host session daemon (plans/0026-host-session-daemon.md).
+   relay lives in `hsh run` itself (plans/0026-detach-attach.md); a host daemon is an optional later phase there.
    Render mode stays in the prototype for comparison only.
 
 ## Status line prototype (decision 0)
