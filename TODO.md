@@ -6,9 +6,9 @@
 
 version config schema so that `hsh` doesn't try to use container schema it doesn't understand
 
-## Investigate using libghostty
+## Session attach/detach and approval popovers
 
-Investigate using libghostty and a custom escape sequence so that sessions can be attached/detached and the monitor can pop-over the session for firewall approvals. Essentially an application specific tmux.
+See plans/0025-libghostty.md: build a host-side pty relay first, then add libghostty-vt for screen restore and popovers.
 
 ## Process-control approvals
 
