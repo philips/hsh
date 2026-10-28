@@ -61,15 +61,18 @@ proxy, the denial database, and the example image:
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
   and `hsh gc` cleans up; `--rm` sessions cannot detach
 - **step 18** (`test/inline.py`): through the relay, the status line is
-  drawn, a proxy denial raises the notification, Ctrl+Space pops the
-  dialog and pauses the session's output, `a` adds the host to the session
-  config, closing delivers the held output, and `monitor.enabled=false`
-  attaches directly. `internal/relay` has Go tests for the pause/restore
+  drawn, a proxy denial raises the notification, Ctrl+Space takes over the
+  screen with the `hsh monitor` view and pauses the session's output,
+  space+enter adds the host to the session config, `q` closes and delivers
+  the held output, and `monitor.enabled=false` attaches directly. `internal/relay` has Go tests for the pause/restore
   equivalence (the user's terminal, a second emulator fed only the
   relay's output, equals the relay's emulator), the status row under
-  scroll, `clear`, the alternate screen and scroll-region resets, the
-  decision flow, source errors, the in-band hint, kitty-encoded keys, and
-  resize; they skip without `GOEXPERIMENT=simd`
+  scroll, `clear`, the alternate screen and scroll-region resets, a
+  full-screen overlay driven by a fake bubbletea model (keys, commands,
+  size, close and restore), the in-band hint, kitty-encoded keys, and
+  resize; `internal/cli` checks that the overlay is the real monitor model
+  scoped to the session and that approving reaches the session config; they
+  skip without `GOEXPERIMENT=simd`
 
 Run it with:
 

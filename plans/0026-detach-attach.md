@@ -104,16 +104,18 @@ becomes the relay, in the foreground, with no daemon:
   group, so `Setsid` + `Setctty`), and relays between the user's raw
   terminal and the master.
 - The relay is the passthrough design of 0025 decision 6: the emulator is
-  fed exactly the forwarded bytes; the review dialog and prompt bar pause
-  the output by not reading the pty master and repaint the covered rows on
-  close; overlays and the status row are written only at the emulator's
+  fed exactly the forwarded bytes; the review screen pauses the output by
+  not reading the pty master and the session screen is repainted from the
+  emulator on close; overlays and the status row are written only at the emulator's
   ground state; the reserved status row is a scroll region on a pty one
   row short and is optional (`monitor.status_line`); Ctrl+Space is
   configurable.
-- The dialog and approvals come from `denied.db` filtered by the session
-  id and apply through `allowHosts` (the code behind `hsh proxy allow`),
-  never from the byte stream; an in-band OSC from the agent can at most
-  say "look at the queue" and is stripped.
+- The review screen is the `hsh monitor` model itself, filtered to the
+  session and drawn over the whole screen, so the two share one UX; the
+  relay drives the model directly rather than starting a second bubbletea
+  program. Its data and approvals come from `denied.db` and the same code
+  as `hsh monitor`, never from the byte stream; an in-band OSC from the
+  agent can at most say "look at the queue" and is stripped.
 - On attach the relay briefly changes the pty window size by one column
   and back, which makes the shell (and full-screen programs) repaint. That
   gives a usable screen after reattach without an emulator that outlives

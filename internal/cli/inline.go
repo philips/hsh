@@ -10,14 +10,15 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
-	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 	"golang.org/x/term"
 
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
 	"hsh/internal/relay"
+	"hsh/internal/tui/proxywatch"
 	"hsh/internal/vt"
 )
 
@@ -85,50 +86,51 @@ func (s *sessionDenials) Close() {
 	}
 }
 
-func (s *sessionDenials) Pending() ([]relay.Item, error) {
+func (s *sessionDenials) Count() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	db, err := s.open()
 	if err != nil || db == nil {
-		return nil, err
+		return 0, err
 	}
 	rows, err := denieddb.Pending(db, denieddb.Filter{Session: s.session})
-	if err != nil {
-		return nil, err
-	}
-	items := make([]relay.Item, 0, len(rows))
-	for _, r := range rows {
-		last, _ := time.Parse(time.RFC3339, r.LastSeen)
-		items = append(items, relay.Item{Host: r.Host, Count: r.Count, Last: last})
-	}
-	return items, nil
+	return len(rows), err
 }
 
-func (s *sessionDenials) Allow(host string) error {
+func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	db, err := s.open()
+	db, err := denieddb.Open(s.dbPath)
 	if err != nil {
-		return err
+		return errorModel{err: err}
 	}
-	if db == nil {
-		return fmt.Errorf("no denial database")
+	if s.db != nil {
+		s.db.Close()
 	}
-	_, _, err = applyAllow(db, s.session, s.cfgPath, []string{host})
-	return err
+	s.db = db
+	filter := denieddb.Filter{Session: s.session}
+	pending, err := denieddb.Pending(db, filter)
+	if err != nil {
+		return errorModel{err: err}
+	}
+	ignored, err := denieddb.Ignored(db, filter)
+	if err != nil {
+		return errorModel{err: err}
+	}
+	return proxywatch.New(db, filter, pending, ignored, false)
 }
 
-func (s *sessionDenials) Deny(host string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	db, err := s.open()
-	if err != nil {
-		return err
+type errorModel struct{ err error }
+
+func (m errorModel) Init() tea.Cmd { return nil }
+func (m errorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if _, ok := msg.(tea.KeyMsg); ok {
+		return m, tea.Quit
 	}
-	if db == nil {
-		return fmt.Errorf("no denial database")
-	}
-	return denieddb.MarkIgnored(db, s.session, []string{host})
+	return m, nil
+}
+func (m errorModel) View() string {
+	return fmt.Sprintf("cannot open the denial database: %v\n\npress any key to close", m.err)
 }
 
 func attachWithRelay(name string, flags []string, running bool, im *inlineMonitor) (int, error) {
@@ -151,7 +153,8 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	defer master.Close()
 	r, err := relay.New(relay.Config{
 		In: os.Stdin, Out: os.Stdout, Pty: master, Cols: cols, Rows: rows,
-		StatusLine: im.monitor.StatusLine, Key: key, DetachKeys: im.detachKeys, Source: source, Name: im.session,
+		StatusLine: im.monitor.StatusLine, Key: key, DetachKeys: im.detachKeys,
+		Count: source.Count, Overlay: source.Overlay, Name: im.session,
 	})
 	if err != nil {
 		slave.Close()

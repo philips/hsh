@@ -6,190 +6,116 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 const (
 	sgrGreen = "\x1b[0;30;42m"
 	sgrRed   = "\x1b[0;97;41m"
-	sgrBox   = "\x1b[0;30;47m"
-	sgrSel   = "\x1b[0;97;44m"
-	sgrDim   = "\x1b[0;90;47m"
 )
-
-type itemStatus int
-
-const (
-	statusPending itemStatus = iota
-	statusApproved
-	statusDenied
-)
-
-func (s itemStatus) String() string {
-	return [...]string{"pending", "approved", "denied"}[s]
-}
-
-type reviewItem struct {
-	host   string
-	count  int
-	last   time.Time
-	status itemStatus
-}
 
 type reviewState struct {
-	items []*reviewItem
 	open  bool
-	sel   int
-	err   string
-}
-
-func (r *Relay) pendingLocked() int {
-	n := 0
-	for _, it := range r.review.items {
-		if it.status == statusPending {
-			n++
-		}
-	}
-	return n
+	model tea.Model
+	gen   int
 }
 
 func (r *Relay) pollLocked() {
 	r.lastPoll = time.Now()
 	r.pollNow = false
-	rows, err := r.cfg.Source.Pending()
-	if err != nil {
+	n, err := r.cfg.Count()
+	if err != nil || n == r.pending {
 		return
 	}
-	seen := map[string]bool{}
-	for _, row := range rows {
-		seen[row.Host] = true
-		found := false
-		for _, it := range r.review.items {
-			if it.host == row.Host && it.status == statusPending {
-				if it.count != row.Count {
-					it.count, it.last = row.Count, row.Last
-					r.dirty = true
-				}
-				found = true
-			}
-		}
-		if !found {
-			r.review.items = append(r.review.items, &reviewItem{host: row.Host, count: row.Count, last: row.Last})
-			r.dirty = true
-		}
-	}
-	kept := r.review.items[:0]
-	for _, it := range r.review.items {
-		if it.status != statusPending || seen[it.host] {
-			kept = append(kept, it)
-		} else {
-			r.dirty = true
-		}
-	}
-	r.review.items = kept
-	if r.review.sel >= len(r.review.items) {
-		r.review.sel = max(0, len(r.review.items)-1)
-	}
+	r.pending = n
+	r.dirty = true
 }
 
 func (r *Relay) openReviewLocked() {
 	r.pollLocked()
 	r.review.open = true
-	r.review.err = ""
-	r.review.sel = 0
-	r.selectNextPendingLocked(-1)
+	r.review.gen++
+	r.review.model = r.cfg.Overlay(r.cols, r.rows)
+	r.updateOverlayLocked(tea.WindowSizeMsg{Width: r.cols, Height: r.rows})
+	r.runCmdLocked(r.review.model.Init(), r.review.gen)
 	r.paintLocked()
 }
 
 func (r *Relay) closeReviewLocked() {
 	r.review.open = false
-	kept := r.review.items[:0]
-	for _, it := range r.review.items {
-		if it.status == statusPending {
-			kept = append(kept, it)
-		}
-	}
-	r.review.items = kept
+	r.review.model = nil
+	r.review.gen++
+	r.pollLocked()
 	r.paintLocked()
 }
 
-func (r *Relay) selectNextPendingLocked(from int) {
-	items := r.review.items
-	for i := 1; i <= len(items); i++ {
-		j := (from + i + len(items)) % len(items)
-		if items[j].status == statusPending {
-			r.review.sel = j
+func (r *Relay) updateOverlayLocked(msg tea.Msg) {
+	if !r.review.open {
+		return
+	}
+	model, cmd := r.review.model.Update(msg)
+	r.review.model = model
+	r.runCmdLocked(cmd, r.review.gen)
+}
+
+func (r *Relay) runCmdLocked(cmd tea.Cmd, gen int) {
+	if cmd == nil {
+		return
+	}
+	go func() {
+		msg := cmd()
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.closed || !r.review.open || r.review.gen != gen {
 			return
 		}
+		r.handleMsgLocked(msg, gen)
+		r.paintLocked()
+	}()
+}
+
+func (r *Relay) handleMsgLocked(msg tea.Msg, gen int) {
+	switch m := msg.(type) {
+	case nil:
+	case tea.QuitMsg:
+		r.closeReviewLocked()
+	case tea.BatchMsg:
+		for _, c := range m {
+			r.runCmdLocked(c, gen)
+		}
+	default:
+		r.updateOverlayLocked(msg)
 	}
 }
 
-func (r *Relay) decideLocked(it *reviewItem, approve bool) {
-	if it.status != statusPending {
-		return
-	}
-	var err error
-	if approve {
-		err = r.cfg.Source.Allow(it.host)
-	} else {
-		err = r.cfg.Source.Deny(it.host)
-	}
-	if err != nil {
-		r.review.err = fmt.Sprintf("%s: %v", it.host, err)
-		return
-	}
-	r.review.err = ""
-	it.status = statusDenied
-	if approve {
-		it.status = statusApproved
-	}
-}
-
-func (r *Relay) moveLocked(d int) {
-	if n := len(r.review.items); n > 0 {
-		r.review.sel = (r.review.sel + d + n) % n
-	}
-}
-
-func (r *Relay) reviewInputLocked(p []byte) {
-	st := &r.review
-	for i := 0; i < len(p); i++ {
-		if idx, _ := r.cfg.Key.find(p[i:]); idx == 0 {
+func (r *Relay) reviewInputLocked(p []byte) []byte {
+	for len(p) > 0 && r.review.open {
+		idx, width := r.cfg.Key.find(p)
+		chunk := p
+		if idx >= 0 {
+			chunk = p[:idx]
+		}
+		for _, km := range parseInput(chunk) {
+			if !r.review.open {
+				break
+			}
+			r.updateOverlayLocked(km)
+		}
+		if idx < 0 {
+			p = nil
+			break
+		}
+		p = p[idx+width:]
+		if r.review.open {
 			r.closeReviewLocked()
-			return
-		}
-		b := p[i]
-		switch {
-		case b == 0x1b:
-			if i+2 < len(p) && (p[i+1] == '[' || p[i+1] == 'O') {
-				switch p[i+2] {
-				case 'A':
-					r.moveLocked(-1)
-				case 'B':
-					r.moveLocked(1)
-				}
-				i += 2
-				continue
-			}
-			if i == len(p)-1 {
-				r.closeReviewLocked()
-				return
-			}
-		case b == 'k':
-			r.moveLocked(-1)
-		case b == 'j':
-			r.moveLocked(1)
-		case b == 'a' || b == 'd':
-			if st.sel < len(st.items) {
-				r.decideLocked(st.items[st.sel], b == 'a')
-				r.selectNextPendingLocked(st.sel)
-			}
-		case b == 'A' || b == 'D':
-			for _, it := range st.items {
-				r.decideLocked(it, b == 'A')
-			}
 		}
 	}
 	r.paintLocked()
+	if r.review.open {
+		return nil
+	}
+	return p
 }
 
 func padTo(text string, width int) string {
@@ -209,10 +135,10 @@ func (r *Relay) statusLineLocked() string {
 	switch {
 	case r.review.open:
 		sgr = sgrRed
-		text = " hsh | REVIEW | up/down select | a approve | d deny | A all | D deny all | Esc close"
+		text = " hsh | REVIEW | same keys as `hsh monitor` | q or Esc closes"
 	default:
 		sgr = sgrGreen
-		switch n := r.pendingLocked(); {
+		switch n := r.pending; {
 		case n == 0:
 			text = " hsh | " + name + " | proxy: nothing to review"
 		case n == 1:
@@ -222,56 +148,6 @@ func (r *Relay) statusLineLocked() string {
 		}
 	}
 	return sgr + padTo(text, r.cols) + "\x1b[0m"
-}
-
-func (r *Relay) dialogLocked() (string, int, int) {
-	st := &r.review
-	width := min(r.cols-4, 72)
-	if width < 30 || r.rows < 5 {
-		return "", 0, 0
-	}
-	lines := []string{"Proxy requests awaiting review", ""}
-	if len(st.items) == 0 {
-		lines = append(lines, "Nothing to review.")
-	}
-	for i, it := range st.items {
-		mark := "  "
-		if i == st.sel {
-			mark = "> "
-		}
-		age := time.Since(it.last).Round(time.Second)
-		lines = append(lines, fmt.Sprintf("%s%-34s x%-3d %6s ago  %s", mark, it.host, it.count, age, it.status))
-	}
-	hint := "a approve  d deny  A all  D deny all  Esc close"
-	if st.err != "" {
-		hint = "error: " + st.err
-	}
-	lines = append(lines, "", hint)
-	maxBody := r.rows - 2
-	if len(lines) > maxBody {
-		keep := maxBody - 2
-		lines = append(lines[:keep:keep], "", hint)
-	}
-	height := len(lines) + 2
-	top := (r.rows-height)/2 + 1
-	left := (r.cols-width)/2 + 1
-	var b bytes.Buffer
-	b.WriteString("\x1b[?25l")
-	fmt.Fprintf(&b, "\x1b[%d;%dH%s+%s+", top, left, sgrBox, strings.Repeat("-", width-2))
-	for i, ln := range lines {
-		sgr := sgrBox
-		idx := i - 2
-		if idx >= 0 && idx < len(st.items) {
-			if idx == st.sel {
-				sgr = sgrSel
-			} else if st.items[idx].status != statusPending {
-				sgr = sgrDim
-			}
-		}
-		fmt.Fprintf(&b, "\x1b[%d;%dH%s|%s|", top+1+i, left, sgr, padTo(" "+ln, width-2))
-	}
-	fmt.Fprintf(&b, "\x1b[%d;%dH%s+%s+\x1b[0m", top+1+len(lines), left, sgrBox, strings.Repeat("-", width-2))
-	return b.String(), top, height
 }
 
 func (r *Relay) cursorModeLocked() string {
@@ -291,6 +167,24 @@ func (r *Relay) repaintRowsLocked(b *bytes.Buffer, top, n int) {
 	}
 }
 
+func (r *Relay) overlayFrameLocked() string {
+	view := ""
+	if r.review.model != nil {
+		view = r.review.model.View()
+	}
+	lines := strings.Split(view, "\n")
+	var b strings.Builder
+	b.WriteString("\x1b[?25l")
+	for y := 0; y < r.rows; y++ {
+		line := ""
+		if y < len(lines) {
+			line = lines[y]
+		}
+		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[0m%s\x1b[0m\x1b[K", y+1, line)
+	}
+	return b.String()
+}
+
 func (r *Relay) paintLocked() {
 	want := r.review.open
 	ground := r.term.Ground()
@@ -304,10 +198,12 @@ func (r *Relay) paintLocked() {
 	if !want && r.paused {
 		var b bytes.Buffer
 		b.WriteString("\x1b7")
-		r.repaintRowsLocked(&b, r.covTop, r.covRows)
+		r.repaintRowsLocked(&b, 1, r.rows)
 		b.WriteString("\x1b8")
 		b.WriteString(r.cursorModeLocked())
-		r.covTop, r.covRows = 0, 0
+		if r.statusRows > 0 {
+			fmt.Fprintf(&b, "\x1b7\x1b[%d;1H%s\x1b8", r.rows+1, r.statusLineLocked())
+		}
 		r.writeOut(b.Bytes())
 		r.resumeLocked()
 		return
@@ -320,9 +216,7 @@ func (r *Relay) paintLocked() {
 	var b bytes.Buffer
 	b.WriteString("\x1b7\x1b[0m")
 	if r.paused {
-		overlay, top, n := r.dialogLocked()
-		r.covTop, r.covRows = top, n
-		b.WriteString(overlay)
+		b.WriteString(r.overlayFrameLocked())
 	}
 	if r.statusRows > 0 {
 		fmt.Fprintf(&b, "\x1b[%d;1H%s", r.rows+1, r.statusLineLocked())

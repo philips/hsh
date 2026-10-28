@@ -3,16 +3,24 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
 )
 
-func TestSessionDenialsPendingAllowAndDeny(t *testing.T) {
+func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	dbPath := filepath.Join(dir, "denied.db")
-	cfgPath := filepath.Join(dir, "config.json")
+	sessionDir := denieddb.SessionDir("s1")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(sessionDir, "config.json")
 	if err := os.WriteFile(cfgPath, []byte(`{"image":"x","network":{"mode":"allowlist","allow":["keep.example"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -32,46 +40,46 @@ func TestSessionDenialsPendingAllowAndDeny(t *testing.T) {
 
 	src := &sessionDenials{dbPath: dbPath, session: "s1", cfgPath: cfgPath}
 	defer src.Close()
-	items, err := src.Pending()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(items) != 2 || items[0].Host != "a.example" || items[0].Count != 2 || items[0].Last.IsZero() {
-		t.Fatalf("pending: %+v", items)
+	if n, err := src.Count(); err != nil || n != 2 {
+		t.Fatalf("count: %d %v", n, err)
 	}
 
-	if err := src.Allow("a.example"); err != nil {
-		t.Fatal(err)
+	model := src.Overlay(100, 30)
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	view := model.View()
+	for _, want := range []string{"denied hosts awaiting review", "session s1", "https://a.example", "https://b.example"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the overlay is not the monitor view: missing %q in\n%s", want, view)
+		}
 	}
+	if strings.Contains(view, "other.example") {
+		t.Error("another session's denial is listed")
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+	model, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("approving returned no command")
+	}
+	model, _ = model.Update(cmd())
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Network.Allow; len(got) != 2 || got[0] != "keep.example" || got[1] != "a.example" {
-		t.Fatalf("allow list: %v", got)
+	if got := cfg.Network.Allow; len(got) != 2 || got[1] != "a.example" && got[1] != "b.example" {
+		t.Fatalf("the approval did not reach the session config: %v", got)
 	}
-	if err := src.Deny("b.example"); err != nil {
-		t.Fatal(err)
+	if n, _ := src.Count(); n != 1 {
+		t.Fatalf("count after approving one host: %d", n)
 	}
-	items, _ = src.Pending()
-	if len(items) != 0 {
-		t.Fatalf("still pending after decisions: %+v", items)
-	}
-	other := &sessionDenials{dbPath: dbPath, session: "other", cfgPath: cfgPath}
-	defer other.Close()
-	if items, _ := other.Pending(); len(items) != 1 {
-		t.Fatalf("another session's denial was affected: %+v", items)
-	}
+	_ = model
 }
 
 func TestSessionDenialsWithoutADatabase(t *testing.T) {
 	src := &sessionDenials{dbPath: filepath.Join(t.TempDir(), "none.db"), session: "s", cfgPath: "x"}
-	items, err := src.Pending()
-	if err != nil || len(items) != 0 {
-		t.Fatalf("%v %v", items, err)
-	}
-	if err := src.Allow("a.example"); err == nil {
-		t.Fatal("allow without a database succeeded")
+	n, err := src.Count()
+	if err != nil || n != 0 {
+		t.Fatalf("%v %v", n, err)
 	}
 }
 

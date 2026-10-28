@@ -283,13 +283,15 @@ session through a relay in the `hsh run` process, outside the sandbox:
   proxy records denials for the session (`"status_line": false` removes the
   reserved row)
 - `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`, `ctrl-]`,
-  `ctrl-^`, `ctrl-_`) turns the line red and pops a dialog over the session:
-  up/down or `j`/`k` select, `a` approves (adds the host to the session
-  config's `network.allow`), `d` denies (hides it), `A`/`D` do all, Esc or the key
-  again closes
-- while the dialog is open `hsh run` stops reading the session's output, so
-  the container blocks in `write()` instead of printing under the dialog;
-  closing repaints what the dialog covered and delivers the held output with
+  `ctrl-^`, `ctrl-_`) turns the line red and takes over the whole screen with
+  the same view and keys as `hsh monitor`, scoped to this session: up/down
+  select, space selects, enter approves the selected hosts (adding them to
+  the session config's `network.allow`), `i` ignores, `a`/`n` select all or
+  none, `t` toggles ignored hosts, `/` filters, `r` refreshes, `q` or Esc
+  closes (as does the review key again)
+- while the review screen is up `hsh run` stops reading the session's output,
+  so the container blocks in `write()` instead of printing; closing repaints
+  the session screen from the emulator and delivers the held output with
   nothing lost
 - the session's output is passed through unchanged, so the terminal's own
   scrollback, selection, and search keep working; the status line is part of

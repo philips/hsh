@@ -497,14 +497,17 @@ sessions per workspace.
   emulator (`internal/vt`, libghostty-vt compiled to wasm and converted to
   Go, built with `GOEXPERIMENT=simd`). The emulator tells the relay when the
   stream is between escape sequences (so the status line and dialog are
-  never injected mid-sequence) and lets it repaint exactly the rows the
-  dialog covered. The pty is one row shorter than the terminal and the
+  never injected mid-sequence) and lets it repaint the session screen after the
+  review screen closes. The pty is one row shorter than the terminal and the
   terminal's scroll region excludes the last row; the relay rewrites a
   child's scroll-region resets (`ESC[r`) to stay inside it and repaints the
-  row after `clear` or alternate-screen switches. The dialog pauses the
-  session by not reading the pty. Denial data comes from `denied.db`
-  filtered by session; approvals go through the same code as
-  `hsh proxy allow`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
+  row after `clear` or alternate-screen switches. The review screen is the
+  `hsh monitor` bubbletea model (`internal/tui/proxywatch`) filtered to the
+  session; the relay drives it directly (key parsing, running its commands,
+  drawing its `View()` over every row) instead of starting a second
+  program, so no terminal modes change. Opening it pauses the session by
+  not reading the pty. Denial data comes from `denied.db` and approvals use
+  the same code as `hsh monitor`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
   session is stripped and only triggers an immediate poll of that queue.
   On `--resume` the relay briefly changes the pty width by one column and
   back so the shell repaints. See [config.md](config.md#inline-proxy-review).

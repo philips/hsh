@@ -25,7 +25,7 @@ def spawn(*args):
     pid, fd = pty.fork()
     if pid == 0:
         os.execv(hsh, [hsh] + list(args))
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 140, 0, 0))
     return pid, fd
 
 
@@ -124,25 +124,27 @@ print("PASS: a proxy denial shows up in the status line")
 type_line(fd, "(sleep 2; for i in 1 2 3; do echo late-$i-$((6*7)); done) &", "[1]")
 mark = len(transcript)
 os.write(fd, b"\x00")
-expect(fd, "Proxy requests awaiting review", 10, since=mark)
-expect(fd, "blocked.example.test", 10, since=mark)
+expect(fd, "denied hosts awaiting review", 10, since=mark)
+expect(fd, "https://blocked.example.test", 10, since=mark)
 expect(fd, "REVIEW", 10, since=mark)
 time.sleep(4)
 pump(fd, 0.5)
 if "late-3-42" in transcript[mark:]:
     fail("session output reached the terminal while the dialog was up")
-print("PASS: Ctrl+Space pops the dialog and pauses the session's output")
+print("PASS: Ctrl+Space takes over the screen with the hsh monitor view and pauses the session's output")
 
 mark = len(transcript)
-os.write(fd, b"a")
-time.sleep(0.5)
+os.write(fd, b" ")
+time.sleep(0.3)
+os.write(fd, b"\r")
+expect(fd, "approved 1 host", 10, since=mark)
 cfg = read_session_config(sid)
 if "blocked.example.test" not in cfg["network"]["allow"]:
     fail("approving did not add the host to the session config: %s" % cfg["network"])
-os.write(fd, b"\x1b")
+os.write(fd, b"q")
 expect(fd, "late-3-42", 10, since=mark)
 expect(fd, "nothing to review", 10, since=mark)
-print("PASS: approving adds the host to the session config; closing delivers the held output and the line goes quiet")
+print("PASS: selecting with space and approving with enter adds the host to the session config, as in hsh monitor; closing with q delivers the held output and the line goes quiet")
 
 type_line(fd, "echo after-dialog-$((6*7))", "after-dialog-42")
 os.write(fd, b"\x1d")

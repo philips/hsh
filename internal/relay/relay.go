@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 
 	"hsh/internal/vt"
@@ -18,18 +19,6 @@ const (
 	scrollback    = 1000
 )
 
-type Item struct {
-	Host  string
-	Count int
-	Last  time.Time
-}
-
-type Source interface {
-	Pending() ([]Item, error)
-	Allow(host string) error
-	Deny(host string) error
-}
-
 type Config struct {
 	In         io.Reader
 	Out        io.Writer
@@ -38,7 +27,8 @@ type Config struct {
 	StatusLine bool
 	Key        Key
 	DetachKeys string
-	Source     Source
+	Count      func() (int, error)
+	Overlay    func(cols, rows int) tea.Model
 	Name       string
 	PollEvery  time.Duration
 }
@@ -60,6 +50,7 @@ type Relay struct {
 	hints        hintFilter
 	region       regionFilter
 	review       reviewState
+	pending      int
 	covTop       int
 	covRows      int
 	lastPoll     time.Time
@@ -68,8 +59,8 @@ type Relay struct {
 }
 
 func New(cfg Config) (*Relay, error) {
-	if cfg.Source == nil {
-		return nil, fmt.Errorf("relay needs a source of review items")
+	if cfg.Count == nil || cfg.Overlay == nil {
+		return nil, fmt.Errorf("relay needs a pending counter and an overlay")
 	}
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = 2 * time.Second
@@ -150,6 +141,9 @@ func (r *Relay) Resize(cols, rows int) {
 		return
 	}
 	_ = r.term.Resize(r.cols, r.rows)
+	if r.review.open {
+		r.updateOverlayLocked(tea.WindowSizeMsg{Width: r.cols, Height: r.rows})
+	}
 	_ = pty.Setsize(r.cfg.Pty, &pty.Winsize{Cols: uint16(r.cols), Rows: uint16(r.rows)})
 	if r.statusRows > 0 {
 		r.writeOut([]byte(fmt.Sprintf("\x1b7\x1b[1;%dr\x1b8", r.rows)))
@@ -278,8 +272,8 @@ func (r *Relay) inputLoop() {
 func (r *Relay) inputLocked(p []byte) {
 	for len(p) > 0 {
 		if r.review.open {
-			r.reviewInputLocked(p)
-			return
+			p = r.reviewInputLocked(p)
+			continue
 		}
 		idx, width := r.cfg.Key.find(p)
 		if idx < 0 {

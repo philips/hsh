@@ -5,69 +5,65 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
 
 	"hsh/internal/vt"
 )
 
-type fakeSource struct {
-	mu      sync.Mutex
-	pending []Item
-	allowed []string
-	denied  []string
-	failOn  string
+type fakeModel struct {
+	mu    *sync.Mutex
+	log   *[]string
+	title string
 }
 
-func (s *fakeSource) Pending() ([]Item, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]Item(nil), s.pending...), nil
+func (m fakeModel) note(s string) {
+	m.mu.Lock()
+	*m.log = append(*m.log, s)
+	m.mu.Unlock()
 }
 
-func (s *fakeSource) drop(host string) {
-	kept := s.pending[:0]
-	for _, it := range s.pending {
-		if it.Host != host {
-			kept = append(kept, it)
+func (m fakeModel) Init() tea.Cmd {
+	return func() tea.Msg {
+		time.Sleep(100 * time.Millisecond)
+		return fakeTick{}
+	}
+}
+
+type fakeTick struct{}
+
+func (m fakeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.note(fmt.Sprintf("size %dx%d", msg.Width, msg.Height))
+	case fakeTick:
+		m.note("tick")
+	case tea.KeyMsg:
+		m.note("key " + msg.String())
+		if s := msg.String(); s == "q" || s == "esc" {
+			return m, tea.Quit
 		}
 	}
-	s.pending = kept
+	return m, nil
 }
 
-func (s *fakeSource) Allow(host string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if host == s.failOn {
-		return fmt.Errorf("config is read-only")
-	}
-	s.allowed = append(s.allowed, host)
-	s.drop(host)
-	return nil
+func (m fakeModel) View() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return "FAKE REVIEW SCREEN\n" + strings.Join(*m.log, "|")
 }
 
-func (s *fakeSource) Deny(host string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.denied = append(s.denied, host)
-	s.drop(host)
-	return nil
-}
-
-func (s *fakeSource) set(items ...Item) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pending = items
-}
-
-func (s *fakeSource) results() (allowed, denied []string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.allowed...), append([]string(nil), s.denied...)
+func (h *harness) modelLog() string {
+	h.logMu.Lock()
+	defer h.logMu.Unlock()
+	return strings.Join(h.log, "|")
 }
 
 type userTerminal struct {
@@ -93,16 +89,32 @@ func (u *userTerminal) lines() []string {
 	return out
 }
 
+var ansi = regexp.MustCompile("\x1b\\[[0-9;?:]*[A-Za-z]")
+
+func (u *userTerminal) screen() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []string
+	for y := 0; y < userRows; y++ {
+		row, _ := u.term.Row(y)
+		out = append(out, strings.TrimRight(ansi.ReplaceAllString(row, ""), " \r"))
+	}
+	return out
+}
+
 func (u *userTerminal) text() string { return strings.Join(u.lines(), "\n") }
 
 type harness struct {
-	t      *testing.T
-	relay  *Relay
-	master *os.File
-	user   *userTerminal
-	keys   *io.PipeWriter
-	src    *fakeSource
-	done   chan struct{}
+	t       *testing.T
+	relay   *Relay
+	master  *os.File
+	user    *userTerminal
+	keys    *io.PipeWriter
+	done    chan struct{}
+	logMu   sync.Mutex
+	log     []string
+	pending atomic.Int64
+	polls   atomic.Int64
 }
 
 const (
@@ -135,14 +147,21 @@ func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, 
 	}
 	user := &userTerminal{term: ut}
 	pr, pw := io.Pipe()
-	src := &fakeSource{}
 	key, _ := ParseKey("ctrl-space")
+	h := &harness{t: t, master: master, user: user, keys: pw, done: make(chan struct{})}
 	r, err := New(Config{In: pr, Out: user, Pty: master, Cols: userCols, Rows: userRows,
-		StatusLine: status, Key: key, DetachKeys: detachKeys, Source: src, Name: "unit", PollEvery: pollEvery})
+		StatusLine: status, Key: key, DetachKeys: detachKeys, Name: "unit", PollEvery: pollEvery,
+		Count: func() (int, error) {
+			h.polls.Add(1)
+			return int(h.pending.Load()), nil
+		},
+		Overlay: func(cols, rows int) tea.Model {
+			return fakeModel{mu: &h.logMu, log: &h.log}
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, relay: r, master: master, user: user, keys: pw, src: src, done: make(chan struct{})}
+	h.relay = r
 	go func() {
 		r.Run()
 		close(h.done)
@@ -226,10 +245,10 @@ func TestPauseKeepsTheUserTerminalIdenticalToTheEmulator(t *testing.T) {
 	paused := h.relay.paused
 	h.relay.mu.Unlock()
 	if !paused {
-		t.Fatal("opening the dialog did not pause the output")
+		t.Fatal("opening the overlay did not pause the output")
 	}
-	if !strings.Contains(h.user.text(), "Proxy requests awaiting review") {
-		t.Fatal("dialog not drawn")
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("overlay not drawn")
 	}
 	if !strings.Contains(h.statusRow(), "REVIEW") {
 		t.Fatalf("status row: %q", h.statusRow())
@@ -242,7 +261,7 @@ func TestPauseKeepsTheUserTerminalIdenticalToTheEmulator(t *testing.T) {
 		t.Fatal("output advanced while paused")
 	}
 
-	h.press("\x1b")
+	h.press("q")
 	h.waitFor("held output to be delivered", func() bool { return strings.Contains(h.user.text(), "while-paused-30") })
 	time.Sleep(200 * time.Millisecond)
 	want := withoutStatus(h.emulatorLines())
@@ -286,53 +305,65 @@ func TestStatusRowSurvivesScrollClearAltScreenAndRegionReset(t *testing.T) {
 	}
 }
 
-func TestReviewDialogAppliesDecisionsThroughTheSource(t *testing.T) {
+func TestOverlayTakesOverTheWholeScreenReceivesKeysAndRestores(t *testing.T) {
 	h := newHarness(t, true, 40*time.Millisecond)
-	h.run("echo hello")
-	h.src.set(Item{Host: "a.example", Count: 2, Last: time.Now()}, Item{Host: "b.example", Count: 1, Last: time.Now()})
+	h.run("seq 1 60")
+	h.run("echo visible-before-overlay")
+	h.pending.Store(2)
 	h.waitFor("the notification", func() bool { return strings.Contains(h.statusRow(), "2 proxy requests need review") })
 
 	h.press("\x00")
-	text := h.user.text()
-	for _, want := range []string{"Proxy requests awaiting review", "> a.example", "b.example", "x2"} {
-		if !strings.Contains(text, want) {
-			t.Errorf("dialog missing %q:\n%s", want, text)
+	lines := h.user.screen()
+	if lines[0] != "FAKE REVIEW SCREEN" {
+		t.Fatalf("the overlay does not start at the top of the screen: %q", lines[0])
+	}
+	for _, l := range lines[:len(lines)-1] {
+		if strings.Contains(l, "visible-before-overlay") || strings.TrimSpace(l) == "60" {
+			t.Fatalf("session text still visible under the full-screen overlay: %q", l)
 		}
 	}
+	if !strings.Contains(h.statusRow(), "REVIEW") {
+		t.Fatalf("status row: %q", h.statusRow())
+	}
+
+	h.press("j")
 	h.press("\x1b[B")
-	h.press("a")
-	h.press("d")
-	allowed, denied := h.src.results()
-	if fmt.Sprint(allowed) != "[b.example]" || fmt.Sprint(denied) != "[a.example]" {
-		t.Fatalf("allowed=%v denied=%v", allowed, denied)
+	h.press(" ")
+	h.press("\r")
+	h.waitFor("the model to have seen the keys", func() bool {
+		return strings.Contains(h.modelLog(), "key j|key down|key  |key enter")
+	})
+	h.waitFor("a command's message to arrive", func() bool { return strings.Contains(h.modelLog(), "tick") })
+	if !strings.Contains(h.user.text(), "tick") {
+		t.Error("the view was not redrawn after a command's message")
 	}
-	h.press("\x1b")
-	h.waitFor("the dialog to close", func() bool { return !strings.Contains(h.user.text(), "awaiting review") })
-	h.waitFor("an idle status row", func() bool { return strings.Contains(h.statusRow(), "nothing to review") })
-	if !strings.Contains(h.user.text(), "hello") {
-		t.Error("screen not restored under the dialog")
+	if !strings.Contains(h.modelLog(), "size 100x29") {
+		t.Errorf("the model never got the screen size: %s", h.modelLog())
 	}
+
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	h.waitFor("the screen to be restored", func() bool { return strings.Contains(h.user.text(), "visible-before-overlay") })
+	h.waitFor("the status line to count again", func() bool { return strings.Contains(h.statusRow(), "2 proxy requests need review") })
 }
 
-func TestSourceErrorsAreShownAndTheItemStaysPending(t *testing.T) {
-	h := newHarness(t, true, 40*time.Millisecond)
-	h.src.failOn = "a.example"
-	h.src.set(Item{Host: "a.example", Count: 1, Last: time.Now()})
-	h.waitFor("the notification", func() bool { return strings.Contains(h.statusRow(), "1 proxy request needs review") })
+func TestTheKeyAndEscapeAlsoCloseTheOverlayAndTrailingBytesGoToTheSession(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run("echo hi")
 	h.press("\x00")
-	h.press("a")
-	if !strings.Contains(h.user.text(), "error: a.example: config is read-only") {
-		t.Fatalf("error not shown:\n%s", h.user.text())
-	}
-	allowed, _ := h.src.results()
-	if len(allowed) != 0 {
-		t.Fatalf("allowed despite the error: %v", allowed)
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("not open")
 	}
 	h.press("\x00")
-	h.waitFor("the dialog to close", func() bool { return !strings.Contains(h.user.text(), "awaiting review") })
-	if !strings.Contains(h.statusRow(), "1 proxy request needs review") {
-		t.Fatalf("item should still be pending: %q", h.statusRow())
-	}
+	h.waitFor("the key to close the overlay", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+
+	h.press("\x00")
+	h.waitFor("reopen", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	h.press("\x1b")
+	h.waitFor("Esc to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+
+	h.press("\x00\x00echo after-$((6*7))\r")
+	h.waitFor("typing after the key to reach the session", func() bool { return strings.Contains(h.user.text(), "after-42") })
 }
 
 func TestInBandHintTriggersAPollAndIsStripped(t *testing.T) {
@@ -341,9 +372,10 @@ func TestInBandHintTriggersAPollAndIsStripped(t *testing.T) {
 	if !strings.Contains(h.statusRow(), "nothing to review") {
 		t.Fatalf("status row: %q", h.statusRow())
 	}
-	h.src.set(Item{Host: "late.example", Count: 1, Last: time.Now()})
+	before := h.polls.Load()
+	h.pending.Store(1)
 	time.Sleep(300 * time.Millisecond)
-	if strings.Contains(h.statusRow(), "needs review") {
+	if h.polls.Load() != before || strings.Contains(h.statusRow(), "needs review") {
 		t.Fatal("poll interval was not respected")
 	}
 	h.run(`printf '\033]%s;look;ignored-payload\a' 7777`)
@@ -353,32 +385,35 @@ func TestInBandHintTriggersAPollAndIsStripped(t *testing.T) {
 	}
 }
 
-func TestKittyEncodedKeyOpensTheDialog(t *testing.T) {
+func TestKittyEncodedKeyOpensTheOverlay(t *testing.T) {
 	h := newHarness(t, true, time.Hour)
 	h.run("echo hi")
 	h.press("\x1b[32;5u")
-	if !strings.Contains(h.user.text(), "Proxy requests awaiting review") {
-		t.Fatal("the kitty-encoded Ctrl+Space did not open the dialog")
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("the kitty-encoded Ctrl+Space did not open the overlay")
 	}
+	h.press("\x1b[27u")
+	h.waitFor("the kitty-encoded Esc to close it", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
 }
 
-func TestDialogWithoutAStatusRow(t *testing.T) {
+func TestOverlayWithoutAStatusRow(t *testing.T) {
 	h := newHarness(t, false, time.Hour)
 	h.run("seq 1 40")
 	h.press("\x00")
-	if !strings.Contains(h.user.text(), "Proxy requests awaiting review") {
-		t.Fatal("dialog not drawn without a status row")
+	lines := h.user.screen()
+	if lines[0] != "FAKE REVIEW SCREEN" {
+		t.Fatalf("overlay not drawn: %q", lines[0])
 	}
-	h.press("\x1b")
-	h.waitFor("the dialog to close", func() bool { return !strings.Contains(h.user.text(), "awaiting review") })
-	l := h.user.lines()
-	if !strings.Contains(strings.Join(l, "\n"), "40") {
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	if !strings.Contains(strings.Join(h.user.lines(), "\n"), "40") {
 		t.Fatal("screen not restored")
 	}
 }
 
-func TestResizeResizesThePtyAndEmulator(t *testing.T) {
+func TestResizeResizesThePtyEmulatorAndTheOpenOverlay(t *testing.T) {
 	h := newHarness(t, true, time.Hour)
+	h.press("\x00")
 	h.relay.Resize(80, 20)
 	rows, cols, err := pty.Getsize(h.master)
 	if err != nil {
@@ -390,6 +425,7 @@ func TestResizeResizesThePtyAndEmulator(t *testing.T) {
 	if c, r := h.relay.ContentSize(); c != 80 || r != 19 {
 		t.Fatalf("content size %dx%d", c, r)
 	}
+	h.waitFor("the model to learn the new size", func() bool { return strings.Contains(h.modelLog(), "size 80x19") })
 }
 
 func TestParseKey(t *testing.T) {
@@ -407,35 +443,37 @@ func TestParseKey(t *testing.T) {
 	}
 }
 
-func TestFilters(t *testing.T) {
-	var hf hintFilter
-	var got []byte
-	hints := 0
-	for _, in := range []string{"a\x1b]77", "77;look;x\x07b\x1b]0;title\x07"} {
-		c, n := hf.feed([]byte(in))
-		got = append(got, c...)
-		hints += n
-	}
-	if string(got) != "ab\x1b]0;title\x07" || hints != 1 {
-		t.Errorf("hint filter: %q %d", got, hints)
-	}
-	var rf regionFilter
+func TestParseInput(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"a\x1b[rb", "a\x1b[1;23rb"},
-		{"\x1b[5r", "\x1b[5;23r"},
-		{"\x1b[2;10r", "\x1b[2;10r"},
-		{"\x1b[31m", "\x1b[31m"},
-		{"\x1b[?1049r", "\x1b[?1049r"},
+		{"j", "j"},
+		{"\x1b[A\x1b[B\x1b[C\x1b[D", "up down right left"},
+		{"\x1bOA\x1bOB", "up down"},
+		{"\r", "enter"},
+		{"\t", "tab"},
+		{" ", " "},
+		{"\x7f", "backspace"},
+		{"\x03", "ctrl+c"},
+		{"\x1b", "esc"},
+		{"\x1b[27u", "esc"},
+		{"\x1b[13u", "enter"},
+		{"\x1b[113u", "q"},
+		{"\x1b[113;2u", "Q"},
+		{"\x1b[99;5u", "ctrl+c"},
+		{"\x1b[27;5;99~", ""},
+		{"\x1b[3~", "delete"},
+		{"\x1b[5~\x1b[6~", "pgup pgdown"},
+		{"\x1b[200~hi\x1b[201~", "h i"},
+		{"héllo", "h é l l o"},
+		{"\x1b[93;5:3u", ""},
 	}
 	for _, c := range cases {
-		if out := string(rf.feed([]byte(c.in), 23)); out != c.want {
-			t.Errorf("region %q: got %q want %q", c.in, out, c.want)
+		var got []string
+		for _, m := range parseInput([]byte(c.in)) {
+			got = append(got, m.String())
 		}
-	}
-	rf = regionFilter{}
-	out := string(rf.feed([]byte("x\x1b["), 23)) + string(rf.feed([]byte("2;"), 23)) + string(rf.feed([]byte("10r"), 23))
-	if out != "x\x1b[2;10r" {
-		t.Errorf("split region: %q", out)
+		if strings.Join(got, " ") != c.want {
+			t.Errorf("%q: got %q want %q", c.in, strings.Join(got, " "), c.want)
+		}
 	}
 }
 
