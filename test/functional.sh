@@ -15,7 +15,7 @@ PASSED=0
 cleanup() {
 	if [ -n "$RELEASESRV_PID" ]; then
 		kill "$RELEASESRV_PID" 2>/dev/null || true
-	}
+	fi
 	if [ -n "$DUMMY_PID" ]; then
 		kill "$DUMMY_PID" 2>/dev/null || true
 	fi
