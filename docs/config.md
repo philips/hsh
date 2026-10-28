@@ -375,6 +375,67 @@ allowlist and Pi never attempts downloads or update checks inside the
 sandbox. If you prefer Pi's pinned tool versions, allowlist the hosts above
 instead and omit `PI_OFFLINE`.
 
+## Updating hsh
+
+`hsh update` replaces the running binary in place with a release from
+GitHub (`github.com/philips/hsh/releases`), using the same rules as
+install.sh: it resolves the newest tag by following the `releases/latest`
+redirect, downloads the `hsh-linux-<amd64|arm64>` asset, verifies its
+SHA-256 checksum against the release's `SHA256SUMS`, and renames it over
+the running binary (found via `os.Executable`, symlinks resolved). The
+binary updates itself wherever it is installed — no install location is
+configured or remembered.
+
+```
+usage: hsh update [--version vTAG] [--no-metrics]
+```
+
+Environment overrides (matching install.sh):
+
+| variable | purpose |
+|---|---|
+| `HSH_VERSION` | update to a specific tag instead of latest (the `--version` flag wins) |
+| `HSH_RELEASE_BASE` | release base URL for testing (default `https://github.com/philips/hsh/releases`) |
+
+If the installed directory is not writable, the update fails with
+instructions to re-run install.sh.
+
+### Usage metrics
+
+When an update installs a new version, hsh posts one anonymous report so
+the project can see how much a released binary is used. Before anything is
+sent, `hsh update` prints:
+
+```
+hsh update reports anonymous usage metrics to the project:
+version, platform (linux/amd64), and the number of sessions created since the
+last update. No identifiable information is uploaded.
+Skip with --no-metrics or HSH_NO_METRICS=1.
+```
+
+The POST:
+
+```
+POST https://infinitelogic.app/o/hsh-home/hooks/metrics_report
+Content-Type: application/json
+
+{"product": "hsh", "version": "0.1.0", "platform": "linux/amd64", "sessions_since_last_update": 38}
+```
+
+`version` is the version that was running before the update, and
+`sessions_since_last_update` counts the sessions created by `hsh run` since
+the previous update's report. The count lives in a sqlite database at
+`~/.local/state/hsh/metrics.db` (`$XDG_STATE_HOME/hsh/metrics.db`) and is
+reset to zero after each report. Nothing else is sent — no hostname, user
+name, workspace paths, session ids, or timestamps — and a report that
+cannot be delivered (offline, server error) is a warning, not a failed
+update.
+
+To skip the report entirely, pass `--no-metrics` or set `HSH_NO_METRICS=1`
+(the notice is not printed either); the counter still resets. An install
+that is already up to date downloads nothing and reports nothing.
+`HSH_METRICS_URL` overrides the webhook URL for testing.
+
 ## Examples
 
 Minimal dev sandbox with an API key:

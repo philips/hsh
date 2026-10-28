@@ -39,6 +39,7 @@ func TestHelpEverywhere(t *testing.T) {
 		{"proxy", "allow", "--help"},
 		{"secret", "add", "-h"},
 		{"ls", "--help"},
+		{"update", "--help"},
 	}
 	for _, args := range cases {
 		var err error

@@ -23,6 +23,7 @@ import (
 	"hsh/internal/imageRef"
 	"hsh/internal/netsetup"
 	"hsh/internal/secretstore"
+	"hsh/internal/update"
 )
 
 type runOptions struct {
@@ -161,7 +162,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			}
 		}
 	} else {
-		sessionID = randHex(6)
+		sessionID = newSessionID()
 	}
 	podName := "hsh-" + sessionID
 	sessionDir := denieddb.SessionDir(sessionID)
@@ -192,7 +193,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			resumeSession = false
 			ro.resume = false
 			ro.fresh = false
-			sessionID = randHex(6)
+			sessionID = newSessionID()
 			podName = "hsh-" + sessionID
 			sessionDir = denieddb.SessionDir(sessionID)
 			sessionConfig = filepath.Join(sessionDir, "config.json")
@@ -800,6 +801,11 @@ func findRootBundle() string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func newSessionID() string {
+	update.Bump(update.DefaultPath())
+	return randHex(6)
 }
 
 func randHex(n int) string {

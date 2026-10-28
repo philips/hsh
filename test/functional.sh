@@ -8,10 +8,14 @@ mkdir -p "$XDG_STATE_HOME"
 DUMMY_PID=""
 PROXY_PID=""
 OAUTH_PID=""
+RELEASESRV_PID=""
 RESUME_POD=""
 TEST_PODS=""
 PASSED=0
 cleanup() {
+	if [ -n "$RELEASESRV_PID" ]; then
+		kill "$RELEASESRV_PID" 2>/dev/null || true
+	}
 	if [ -n "$DUMMY_PID" ]; then
 		kill "$DUMMY_PID" 2>/dev/null || true
 	fi
@@ -49,7 +53,9 @@ pass() {
 
 echo "== building hsh and the dummy endpoint"
 (cd "$REPO" && GOEXPERIMENT=simd CGO_ENABLED=0 go build -o "$TMP/hsh" .)
+(cd "$REPO" && go build -ldflags "-X hsh/internal/version.Tag=v1.2.3" -o "$TMP/hsh-v1.2.3" .)
 (cd "$REPO" && go build -o "$TMP/dummyopenai" ./test/dummyopenai)
+(cd "$REPO" && go build -o "$TMP/releasesrv" ./test/releasesrv)
 
 echo "== ensuring the example image exists"
 if ! podman image exists localhost/hsh-example:latest; then
@@ -972,6 +978,75 @@ FOUR_TIME="$(sed -n 's/.*fourgs-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/h
 [ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 407: $(cat "$TMP/hold-4s.out")"
 awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
 pass "hsh proxy hold 4s turns holding on live; an unapproved request is held about 4s, then denied"
+
+echo "== step 20: hsh update — self-update from a fake release, metrics, session counter"
+UPD_ARCH=amd64
+[ "$(uname -m)" = "aarch64" ] && UPD_ARCH=arm64
+UPD_ASSET="hsh-linux-$UPD_ARCH"
+RELDIR="$TMP/releases"
+mkdir -p "$RELDIR/v1.2.3" "$RELDIR/v1.3.0"
+printf 'fake hsh release binary v1.2.3\n' > "$RELDIR/v1.2.3/$UPD_ASSET"
+printf 'fake hsh release binary v1.3.0\n' > "$RELDIR/v1.3.0/$UPD_ASSET"
+(cd "$RELDIR/v1.2.3" && sha256sum "$UPD_ASSET" > SHA256SUMS)
+(cd "$RELDIR/v1.3.0" && sha256sum "$UPD_ASSET" > SHA256SUMS)
+"$TMP/releasesrv" -addr 127.0.0.1:8898 -releases "$RELDIR" -metrics-log "$TMP/metrics-received.log" &
+RELEASESRV_PID=$!
+sleep 0.5
+curl -s -o /dev/null -w 'releasesrv-latest=%{http_code}\n' http://127.0.0.1:8898/latest | grep -q 'releasesrv-latest=302' || fail "the fake release server did not redirect /latest"
+UPD_ENV="HSH_RELEASE_BASE=http://127.0.0.1:8898 HSH_METRICS_URL=http://127.0.0.1:8898/hooks/metrics_report XDG_STATE_HOME=$TMP/upd-xdg"
+mkdir -p "$TMP/upd-xdg" "$TMP/upd-a" "$TMP/upd-b" "$TMP/upd-c" "$TMP/upd-ro"
+cp "$TMP/hsh-v1.2.3" "$TMP/upd-a/hsh"
+
+# two throwaway sessions bump the session counter
+cat > "$TMP/upd-config.hsh" <<'EOF'
+{
+	"image": "localhost/hsh-example:latest",
+	"shell": "/bin/bash"
+}
+EOF
+for i in 1 2; do
+	env XDG_STATE_HOME="$TMP/upd-xdg" "$TMP/hsh" run --rm --config "$TMP/upd-config.hsh" --denied-db "$TMP/upd-deny.db" >"$TMP/upd-sess$i.out" 2>&1 <<'CMDS' || true
+exit
+CMDS
+done
+
+# target == current: up to date, no download, no metrics POST, counter untouched
+env $UPD_ENV "$TMP/upd-a/hsh" update --version v1.2.3 >"$TMP/upd-uptodate.out" 2>&1
+grep -q 'hsh v1.2.3 is up to date' "$TMP/upd-uptodate.out" || fail "an up-to-date binary was not recognized as such: $(cat "$TMP/upd-uptodate.out")"
+[ ! -s "$TMP/metrics-received.log" ] || fail "the up-to-date run posted metrics: $(cat "$TMP/metrics-received.log")"
+pass "an up-to-date install reports so, downloads nothing, and posts no metrics"
+
+# real update: binary replaced, metrics POST carries the session count
+grep -q 'No identifiable information is uploaded' "$TMP/upd-uptodate.out" || fail "the metrics notice was not printed: $(cat "$TMP/upd-uptodate.out")"
+env $UPD_ENV "$TMP/upd-a/hsh" update >"$TMP/upd-a.out" 2>&1
+grep -q '✓ hsh v1.3.0 installed (was v1.2.3)' "$TMP/upd-a.out" || fail "the update did not report success: $(cat "$TMP/upd-a.out")"
+cmp -s "$TMP/upd-a/hsh" "$RELDIR/v1.3.0/$UPD_ASSET" || fail "the running binary was not replaced by the release asset"
+[ "$(wc -l < "$TMP/metrics-received.log")" = "1" ] || fail "expected exactly one metrics POST, got: $(cat "$TMP/metrics-received.log")"
+grep -q "\"product\":\"hsh\",\"version\":\"v1.2.3\",\"platform\":\"linux/$UPD_ARCH\",\"sessions_since_last_update\":2" "$TMP/metrics-received.log" || fail "the metrics report was wrong: $(cat "$TMP/metrics-received.log")"
+pass "hsh update replaces the running binary and reports the pre-update version with the session count"
+
+# the counter reset: a second install reports zero sessions
+cp "$TMP/hsh-v1.2.3" "$TMP/upd-b/hsh"
+env $UPD_ENV "$TMP/upd-b/hsh" update >"$TMP/upd-b.out" 2>&1
+grep -q "\"sessions_since_last_update\":0" "$TMP/metrics-received.log" || fail "the session counter did not reset after the previous update: $(cat "$TMP/metrics-received.log")"
+pass "the session counter resets after each update's report"
+
+# --no-metrics: no notice, no POST, update still happens
+cp "$TMP/hsh-v1.2.3" "$TMP/upd-c/hsh"
+env $UPD_ENV "$TMP/upd-c/hsh" update --no-metrics >"$TMP/upd-c.out" 2>&1
+[ "$(wc -l < "$TMP/metrics-received.log")" = "2" ] || fail "--no-metrics still posted metrics: $(cat "$TMP/metrics-received.log")"
+grep -q 'No identifiable information is uploaded' "$TMP/upd-c.out" && fail "--no-metrics still printed the metrics notice"
+cmp -s "$TMP/upd-c/hsh" "$RELDIR/v1.3.0/$UPD_ASSET" || fail "--no-metrics did not update the binary"
+pass "--no-metrics skips the notice and the report but still updates"
+
+# unwritable install dir: clear error, nothing replaced
+cp "$TMP/hsh-v1.2.3" "$TMP/upd-ro/hsh"
+chmod 555 "$TMP/upd-ro"
+env $UPD_ENV "$TMP/upd-ro/hsh" update --version v1.3.0 >"$TMP/upd-ro.out" 2>&1 && fail "updating a read-only install dir succeeded"
+grep -q 'could not write to' "$TMP/upd-ro.out" || fail "the read-only install error does not explain the problem: $(cat "$TMP/upd-ro.out")"
+cmp -s "$TMP/upd-ro/hsh" "$TMP/hsh-v1.2.3" || fail "the read-only install was modified"
+chmod 755 "$TMP/upd-ro"
+pass "an unwritable install dir fails with guidance and replaces nothing"
 
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions

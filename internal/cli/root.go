@@ -83,6 +83,7 @@ func Root() *ff.Command {
 			gcCommand(),
 			detachCommand(),
 			versionCommand(),
+			updateCommand(),
 		},
 	}
 	root.Subcommands = append(root.Subcommands, helpCommand(root))
