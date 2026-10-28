@@ -70,14 +70,18 @@ the optional Phase 4 below, not the baseline.
 - `hsh run --resume` on a running workspace container attaches with
   `podman attach` (same flags) instead of failing with "session is
   already running". A stopped container starts a fresh shell as today.
-- **The reaper.** After a detach, `hsh run` starts a tiny setsid'd
-  watcher (`hsh-reaper`, the existing `argv[0]` role dispatch in
-  `main.go`) that blocks in `podman wait <workspace>` and then runs the
-  same cleanup (`rm secrets.json`, `pod stop --time 2`). It has no socket
-  and no protocol, and exits with the pod. Without it a shell that exits
-  while detached leaves the proxy running with resolved secrets until
-  the next `hsh` command. `hsh gc` also stops pods whose workspace
-  container has exited, as a backstop if the reaper died.
+- **The reaper.** For every interactive session `hsh run` starts a tiny
+  setsid'd watcher (`hsh-reaper`, the existing `argv[0]` role dispatch in
+  `main.go`) when it creates the workspace container, not when the user
+  detaches: closing the terminal sends SIGHUP to `hsh run` as well, so
+  anything started at detach time would never exist. The reaper blocks in
+  `podman wait <workspace>` and then runs the same idempotent cleanup
+  (`rm secrets.json`, `pod stop --time 2`); `hsh run` still runs it itself
+  when it sees the container exit, so an attached exit is immediate. The
+  reaper has no socket and no protocol, and exits with the pod. Without it
+  a shell that exits while detached leaves the proxy running with resolved
+  secrets until the next `hsh` command. `hsh gc` also stops pods whose
+  workspace container has exited, as a backstop if the reaper died.
 - `hsh ls` shows attached versus detached (the container is running with
   no attached client) and "shell exited" for the leftover case. `hsh rm`
   stops the reaper by removing the pod.
@@ -156,8 +160,17 @@ interactive sessions, step 14):
 ## Phase 4 (optional): history and screen restore
 
 Only if the resize-nudge repaint and lost detached output are not good
-enough: a per-session host daemon that keeps the pty relay and emulator
-alive across detaches and replays history on attach. That reintroduces a
+enough: a per-session host daemon that owns the pty and runs podman's
+client against it, keeps the relay and emulator alive across detaches, and
+replays history on attach. It would also absorb the reaper: one supervisor
+owns the pty, the cleanup, and the denial watcher, and knows exactly who
+is attached (which answers the `hsh ls` question below). The reaper is its
+seed: it is already a per-session process that outlives the terminal.
+The costs are the double pty layer (host pty, podman client, conmon's
+container pty), a failure mode podman-native does not have (if the daemon
+dies its podman client dies and the shell gets SIGHUP, whereas conmon keeps
+the container's pty alive across `hsh` crashes and upgrades), and the
+protocol and process lifecycle below. That reintroduces a
 socket (it must live under `$XDG_RUNTIME_DIR/hsh/`, never under the state
 or session directories, which are bind-mounted into the proxy container),
 `SO_PEERCRED` checks, a protocol, and a process lifecycle. Decide after
