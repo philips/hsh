@@ -67,6 +67,16 @@ CONNECT; npm appends generic "you or one of your dependencies" text on 403;
 npm retries a 503 (three requests, ignoring `Retry-After: 60`); wget2 retries
 a plain-HTTP 407 once; every client ignored `Retry-After`. **Keep 407.**
 
+Later check of an unusual code: 400 and 511 render like 407 in every client
+(curl and git show only the number for CONNECT; the reason phrase appears where
+it did before); npm retries a 511 (three requests over 4 s, as it does for 503)
+and retries a 400 once. With pi and the same task and no notice (V1 conditions,
+three runs each) neither helped: status 511 made 9, 20, and 3 tool calls
+(24k, 67k, 7k tokens) and status 400 made 7, 16, and 33 calls (15k, 48k, 123k
+tokens), against 10, 3, and 3 for 407. A generic 400 reads as a malformed
+request to retry with variations, and 511 (captive portal) invites attempts to
+authenticate. **Keep 407.**
+
 ### The agent trial
 
 pi 1.4.0 with `devstral-latest`, `--mode json`, task "Fetch

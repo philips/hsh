@@ -22,7 +22,9 @@ VARIANTS[407]="--status 407 --body @NEW"
 VARIANTS[407-reason]="--status 407 --reason @PHRASE --body @NEW"
 VARIANTS[403-reason]="--status 403 --reason @PHRASE --body @NEW"
 VARIANTS[503-retry]="--status 503 --reason @PHRASE --header Retry-After:60 --body @NEW"
-ORDER=(old 407 407-reason 403-reason 503-retry)
+VARIANTS[400-reason]="--status 400 --reason @PHRASE --body @NEW"
+VARIANTS[511-reason]="--status 511 --reason @PHRASE --body @NEW"
+ORDER=(${MEASURE_VARIANTS:-old 407 407-reason 403-reason 503-retry 400-reason 511-reason})
 
 CLIENTS=(curl wget py-urllib py-requests node-fetch npm git go)
 TSV="$OUT/results.tsv"
