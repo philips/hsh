@@ -8,7 +8,7 @@ version config schema so that `hsh` doesn't try to use container schema it doesn
 
 ## Session attach/detach and approval popovers
 
-See plans/0025-libghostty.md: build a host-side pty relay first, then add libghostty-vt for screen restore and popovers.
+See plans/0026-host-session-daemon.md (relay, detach/attach, inline monitor) and plans/0025-libghostty.md (emulator and passthrough decisions).
 
 ## Process-control approvals
 

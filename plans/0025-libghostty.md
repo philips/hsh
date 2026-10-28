@@ -134,6 +134,16 @@ and detach/reattach plus popovers come from the same code.
    emulator for restore and popovers once the relay is in.
 5. Do not ship the in-band OSC trigger without the rule above that payloads
    carry no authority.
+6. **Inline dialog handling for the monitor uses passthrough mode, not render
+   mode.** The relay forwards the session's bytes unchanged so the user's
+   terminal keeps its scrollback, selection, and search. Ctrl+Space pauses by
+   not reading the pty and pops the review dialog; closing repaints the rows
+   it covered and flushes the held output. The reserved status row is
+   optional (`monitor.status_line`, default on) because it is the part with
+   the known gaps; the dialog alone needs no reserved row. The status line is
+   not part of scrollback, so it is not visible while scrolled back. The
+   relay lives in the host session daemon (plans/0026-host-session-daemon.md).
+   Render mode stays in the prototype for comparison only.
 
 ## Status line prototype (decision 0)
 
