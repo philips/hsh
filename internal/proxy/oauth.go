@@ -152,21 +152,22 @@ func (p *Proxy) oauthInvolved(host string) bool {
 	return false
 }
 
-func (p *Proxy) redeemBearerHeader(h http.Header, host string) {
+func (p *Proxy) redeemBearerHeader(h http.Header, host string) bool {
 	if !p.oauthAPIHost(host) {
-		return
+		return false
 	}
 	auth := h.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer hsh_") {
-		return
+		return false
 	}
 	phantom := strings.TrimPrefix(auth, "Bearer ")
 	t, ok := p.store.lookup(phantom)
 	if !ok {
-		return
+		return false
 	}
 	h.Set("Authorization", "Bearer "+t.Value)
 	log.Printf("oauth: redeemed %s %s token for %s", t.Provider, t.Field, host)
+	return true
 }
 
 const oauthBodyLimit = 1 << 20

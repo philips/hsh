@@ -51,10 +51,37 @@ Declare the provider's token endpoint and API hosts in the config
 - **Redeem**: requests to an `api_host` carrying
   `Authorization: Bearer hsh_...` get the real token substituted
   upstream. The phantom never leaves the sandbox; the real token never
-  enters it.
+  enters it. A redeemed phantom wins over a static `secrets` injection
+  on the same host: the static secret is injected only when the request
+  carries no phantom, so a subscription login and a static API key can
+  share one `api_host`.
 - **Refresh**: a phantom sent back in a refresh flow is redeemed in
   the request body, and the rotated response is captured again.
 - Both plain-HTTP and HTTPS flows are handled.
+
+## Browser-redirect logins
+
+A browser-redirect login (the harness runs a loopback listener and the
+provider redirects the browser to it) cannot complete on its own: the
+listener's loopback is inside the sandbox's private network namespace,
+unreachable from the browser. Bridge it by replaying the failed redirect:
+
+```
+sandbox$ pi            # starts a login; prints the authorize URL
+laptop-browser: open the URL, complete the login - the redirect to
+            http://127.0.0.1:PORT/... fails, but the URL is in the
+            address bar
+laptop$ ssh server
+server$ hsh oauth callback [--session ID] 'http://127.0.0.1:PORT/auth/callback?code=...&state=...'
+```
+
+Run it promptly: authorization codes are short-lived and single-use, so
+a code minted before an egress hiccup (a hold, a denied host) is stale
+by the time the exchange finally goes through - the provider answers
+`invalid_grant`. Deliver the callback right after the browser login,
+and start a fresh login (new browser round-trip) rather than replaying
+an old callback URL. The harness's `state` check makes mis-delivery
+fail safe, and non-loopback URLs are refused.
 
 ## Token store
 

@@ -260,10 +260,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.oauthServeHTTP(w, r, prov)
 		return
 	}
-	p.redeemBearerHeader(r.Header, host)
-	for _, s := range p.secretsFor(host) {
-		r.Header.Set(s.Header, s.Prefix+s.Value)
-		log.Printf("%s %s%s: injecting header %s", r.Method, r.URL.Host, r.URL.RequestURI(), s.Header)
+	if !p.redeemBearerHeader(r.Header, host) {
+		for _, s := range p.secretsFor(host) {
+			r.Header.Set(s.Header, s.Prefix+s.Value)
+			log.Printf("%s %s%s: injecting header %s", r.Method, r.URL.Host, r.URL.RequestURI(), s.Header)
+		}
 	}
 	log.Printf("%s %s%s -> allowed", r.Method, r.URL.Host, r.URL.RequestURI())
 	p.forwardHTTP(w, r)
@@ -379,10 +380,11 @@ func (p *Proxy) serveConn(conn *tls.Conn, target string, secrets []config.Resolv
 			}
 			continue
 		}
-		p.redeemBearerHeader(req.Header, host)
-		for _, s := range secrets {
-			req.Header.Set(s.Header, s.Prefix+s.Value)
-			log.Printf("%s %s%s: injecting header %s", req.Method, target, req.URL.RequestURI(), s.Header)
+		if !p.redeemBearerHeader(req.Header, host) {
+			for _, s := range secrets {
+				req.Header.Set(s.Header, s.Prefix+s.Value)
+				log.Printf("%s %s%s: injecting header %s", req.Method, target, req.URL.RequestURI(), s.Header)
+			}
 		}
 		log.Printf("%s %s%s -> allowed", req.Method, target, req.URL.RequestURI())
 		p.forwardRequest(conn, req)

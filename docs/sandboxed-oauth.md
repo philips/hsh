@@ -382,16 +382,8 @@ persistent attackers or hostile providers):
   Options: (a) put `oauth_phantoms` in a state-dir DB
   (`$XDG_STATE_HOME/hsh/oauth.db`, mounted like the denial DB), (b) same
   table in the config-home store plus an extra bind mount. Proposed: (a).
-- **Browser-redirect callback bridge** (phase 2): relay the sandbox's
-  loopback callback through the proxy, or document device-code-only for
-  phase 1?
 - **`endpointPolicy`** (method+path allowlist per provider): phase 2 —
   include?
-- **Interaction with static `secrets` on the same host**: if a host is
-  both an API host and has a static secret configured, phantom
-  resolution wins when the presented credential is a phantom; static
-  injection otherwise. Or disallow configuring both? Proposed: resolve
-  phantoms first, inject statics only when no phantom is present.
 - **Retention/cap numbers**: adopt nono's 90 days / 4096 phantoms?
 - **`hsh oauth logout` semantics**: delete store entries only (the
   client re-logs-in on next use), or also try to run the client's logout

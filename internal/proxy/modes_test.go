@@ -61,7 +61,7 @@ func startModeProxy(t *testing.T, mode, override string) string {
 	t.Helper()
 	dir := t.TempDir()
 	configPath := writeModeConfig(t, dir, mode)
-	addr, _ := startTestProxyMode(t, dir, configPath, nil, override)
+	addr, _ := startTestProxyMode(t, dir, configPath, nil, override, `{"secrets":[]}`)
 	return addr
 }
 

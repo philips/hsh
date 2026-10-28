@@ -24,6 +24,7 @@ type oauthUpstream struct {
 	access    string
 	refresh   string
 	refreshes []string
+	lastAuth  string
 }
 
 func newOAuthUpstream(t *testing.T, tlsUpstream bool) *oauthUpstream {
@@ -55,6 +56,7 @@ func newOAuthUpstream(t *testing.T, tlsUpstream bool) *oauthUpstream {
 		}
 	})
 	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
+		u.lastAuth = r.Header.Get("Authorization")
 		if r.Header.Get("Authorization") != "Bearer "+u.access {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
@@ -98,10 +100,10 @@ func upstreamHost(raw string) string {
 }
 
 func startTestProxy(t *testing.T, dir, configPath string, rootsPEM []byte) (addr string, caPool *x509.CertPool) {
-	return startTestProxyMode(t, dir, configPath, rootsPEM, "")
+	return startTestProxyMode(t, dir, configPath, rootsPEM, "", `{"secrets":[]}`)
 }
 
-func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, networkMode string) (addr string, caPool *x509.CertPool) {
+func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, networkMode, secretsJSON string) (addr string, caPool *x509.CertPool) {
 	t.Helper()
 	ca, err := certs.NewCA()
 	if err != nil {
@@ -113,7 +115,7 @@ func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, n
 	if err := os.WriteFile(filepath.Join(dir, "ca.key"), ca.KeyPEM(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "secrets.json"), []byte(`{"secrets":[]}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "secrets.json"), []byte(secretsJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	storePath := filepath.Join(dir, "oauth-tokens.json")
@@ -264,6 +266,31 @@ func TestOAuthCapturePlainHTTP(t *testing.T) {
 		t.Fatalf("upstream did not receive the real refresh token: %v", up.refreshes)
 	}
 	testStore(t, filepath.Join(dir, "oauth-tokens.json"))
+}
+
+func TestOAuthPhantomWinsOverStaticSecret(t *testing.T) {
+	dir := t.TempDir()
+	up := newOAuthUpstream(t, false)
+	configPath := writeConfig(t, dir, up.srv.URL)
+	host := upstreamHost(up.srv.URL)
+	secrets := fmt.Sprintf(`{"secrets":[{"name":"APIKEY","value":"static-key","header":"Authorization","prefix":"Bearer ","hosts":[%q]}]}`, host)
+	addr, _ := startTestProxyMode(t, dir, configPath, nil, "", secrets)
+	client := &http.Client{Transport: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
+		return url.Parse("http://" + addr)
+	}}}
+	access, _ := testExchange(t, client, up.srv.URL)
+	testAPIWithPhantom(t, client, up.srv.URL, access)
+	if up.lastAuth != "Bearer real-access-1" {
+		t.Fatalf("phantom redemption lost to static secret injection: %q", up.lastAuth)
+	}
+	resp, err := client.Get(up.srv.URL + "/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if up.lastAuth != "Bearer static-key" {
+		t.Fatalf("static secret was not injected without a phantom: %q", up.lastAuth)
+	}
 }
 
 func TestOAuthCaptureTLS(t *testing.T) {

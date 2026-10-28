@@ -100,14 +100,20 @@ sandbox. `--tasks -` reads the task list from stdin.
 - **pi** — multi-provider: `hsh://mistral-api-key` (Bearer) to
   `api.mistral.ai`, `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`, `hsh://openai-api-key` (Bearer) to
-  `api.openai.com`.
+  `api.openai.com`; also allows `auth.openai.com` (Sign in with
+  ChatGPT login; deliver the browser callback with
+  [`hsh oauth callback`](oauth.md#browser-redirect-logins)).
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai`,
-  `statsig.anthropic.com`, `platform.claude.com`, and
-  `raw.githubusercontent.com`.
+  `downloads.claude.ai`, `github.com`,
+  `http-intake.logs.us5.datadoghq.com`, `mcp-proxy.anthropic.com`,
+  `platform.claude.com`, `raw.githubusercontent.com`, and
+  `statsig.anthropic.com`.
 - **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
-  allows `auth.openai.com` and `chatgpt.com` (account login flows).
+  allows `ab.chatgpt.com`, `api.github.com`, `auth.openai.com`,
+  `chatgpt.com`, `files.openai.com`, `github.com`, and
+  `raw.githubusercontent.com` (account login and CLI flows).
 - **muse-code** — `hsh://meta-api-key` (Bearer) to `api.meta.ai`; also
   allows `auth.meta.com`, `accountscenter.meta.com`, and `dev.meta.ai`
   (device-flow login and the installer). Muse Code refuses to start without
