@@ -1,12 +1,71 @@
 package relay
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+var (
+	pasteStart = []byte("\x1b[200~")
+	pasteEnd   = []byte("\x1b[201~")
+)
+
+type inputParser struct {
+	pasting bool
+	paste   []rune
+	held    []byte
+}
+
+func (ip *inputParser) feed(p []byte) []tea.KeyMsg {
+	data := append(append([]byte(nil), ip.held...), p...)
+	ip.held = nil
+	var out []tea.KeyMsg
+	for len(data) > 0 {
+		if ip.pasting {
+			j := bytes.Index(data, pasteEnd)
+			if j < 0 {
+				keep := partialSuffix(data, pasteEnd)
+				ip.paste = append(ip.paste, pasteRunes(data[:len(data)-keep])...)
+				ip.held = append([]byte(nil), data[len(data)-keep:]...)
+				return out
+			}
+			ip.paste = append(ip.paste, pasteRunes(data[:j])...)
+			out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: ip.paste, Paste: true})
+			ip.paste, ip.pasting = nil, false
+			data = data[j+len(pasteEnd):]
+			continue
+		}
+		j := bytes.Index(data, pasteStart)
+		if j < 0 {
+			keep := partialSuffix(data, pasteStart)
+			out = append(out, parseInput(data[:len(data)-keep])...)
+			ip.held = append([]byte(nil), data[len(data)-keep:]...)
+			return out
+		}
+		out = append(out, parseInput(data[:j])...)
+		ip.pasting = true
+		data = data[j+len(pasteStart):]
+	}
+	return out
+}
+
+func partialSuffix(data, marker []byte) int {
+	for n := min(len(marker)-1, len(data)); n >= 2; n-- {
+		if bytes.Equal(data[len(data)-n:], marker[:n]) {
+			return n
+		}
+	}
+	return 0
+}
+
+func pasteRunes(b []byte) []rune {
+	text := strings.ReplaceAll(strings.ReplaceAll(string(b), "\r\n", "\n"), "\r", "\n")
+	return []rune(text)
+}
 
 func parseInput(p []byte) []tea.KeyMsg {
 	var out []tea.KeyMsg
@@ -56,6 +115,9 @@ func parseEscape(p []byte) (*tea.KeyMsg, int) {
 	}
 	switch p[1] {
 	case '[':
+		if len(p) >= 3 && p[2] == 'M' {
+			return nil, min(len(p), 6)
+		}
 		return parseCSI(p)
 	case 'O':
 		if len(p) >= 3 {

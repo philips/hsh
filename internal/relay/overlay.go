@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -16,9 +17,10 @@ const (
 )
 
 type reviewState struct {
-	open  bool
-	model tea.Model
-	gen   int
+	open   bool
+	model  tea.Model
+	gen    int
+	parser inputParser
 }
 
 func (r *Relay) pollLocked() {
@@ -37,6 +39,7 @@ func (r *Relay) openReviewLocked() {
 	r.review.open = true
 	r.review.gen++
 	r.review.model = r.cfg.Overlay(r.cols, r.rows)
+	r.review.parser = inputParser{}
 	r.updateOverlayLocked(tea.WindowSizeMsg{Width: r.cols, Height: r.rows})
 	r.runCmdLocked(r.review.model.Init(), r.review.gen)
 	r.paintLocked()
@@ -96,7 +99,7 @@ func (r *Relay) reviewInputLocked(p []byte) []byte {
 		if idx >= 0 {
 			chunk = p[:idx]
 		}
-		for _, km := range parseInput(chunk) {
+		for _, km := range r.review.parser.feed(chunk) {
 			if !r.review.open {
 				break
 			}
@@ -150,6 +153,13 @@ func (r *Relay) statusLineLocked() string {
 	return sgr + padTo(text, r.cols) + "\x1b[0m"
 }
 
+func (r *Relay) pasteModeLocked() string {
+	if r.bracketedPaste {
+		return "\x1b[?2004h"
+	}
+	return "\x1b[?2004l"
+}
+
 func (r *Relay) cursorModeLocked() string {
 	if r.cursorHidden {
 		return "\x1b[?25l"
@@ -178,7 +188,7 @@ func (r *Relay) overlayFrameLocked() string {
 	for y := 0; y < r.rows; y++ {
 		line := ""
 		if y < len(lines) {
-			line = lines[y]
+			line = ansi.Truncate(strings.TrimRight(lines[y], "\r"), r.cols, "")
 		}
 		fmt.Fprintf(&b, "\x1b[%d;1H\x1b[0m%s\x1b[0m\x1b[K", y+1, line)
 	}
@@ -194,6 +204,7 @@ func (r *Relay) paintLocked() {
 			return
 		}
 		r.paused = true
+		r.writeOut([]byte("\x1b[?2004h"))
 	}
 	if !want && r.paused {
 		var b bytes.Buffer
@@ -201,6 +212,7 @@ func (r *Relay) paintLocked() {
 		r.repaintRowsLocked(&b, 1, r.rows)
 		b.WriteString("\x1b8")
 		b.WriteString(r.cursorModeLocked())
+		b.WriteString(r.pasteModeLocked())
 		if r.statusRows > 0 {
 			fmt.Fprintf(&b, "\x1b7\x1b[%d;1H%s\x1b8", r.rows+1, r.statusLineLocked())
 		}

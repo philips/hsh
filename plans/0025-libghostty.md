@@ -281,11 +281,27 @@ does not depend on this plan and can go first.
 
 ## Tests
 
-- Ensure mouse, bracketed paste, and kitty keyboard protocol passthrough while
-  a popover is up.
+- Paste, mouse, focus reports, and bracketed paste while the review screen is
+  open: implemented and tested. Pasted text reaches the monitor model as one
+  pasted value (so it fills the filter and never triggers a command), mouse
+  and focus reports are discarded, and the relay turns bracketed paste on for
+  the user's terminal while the screen is open and restores the session's own
+  setting on close. Lines the model draws are truncated to the screen width.
+- Terminal compatibility is checked by hand: see `docs/terminal-checks.md`.
 
 ## Future Work (out of scope)
 
-- Multiple simultaneous clients (the prototype detaches the previous
-  client, like `tmux attach -d`).
-- Scrollback restore on reattach (only the active screen is replayed).
+- Multiple simultaneous clients: resolved in 0026 (one at a time, with
+  `hsh detach` and `--take-over`); read-only observers are possible later.
+- Scrollback restore on reattach (only the active screen is replayed);
+  relevant only with the optional host daemon of 0026 Phase 4.
+- The remaining passthrough gaps: the relay's DECSC/DECRC use can overwrite a
+  program's own saved cursor; cursor visibility is tracked by scanning for
+  `?25h`/`?25l` rather than read from the emulator; terminal resets (`RIS`,
+  `DECSTR`) and other margin sequences are not modelled; mouse or keyboard
+  mode changes made while the output is paused are not modelled; the status
+  row flickers for up to one tick after the child clears the screen.
+- The in-band OSC hint (`ESC ] 7777 ; ... BEL`) is recognised and stripped,
+  but nothing in the sandbox emits it (the proxy cannot write to the
+  session's pty); the two-second poll does the work. It becomes useful if a
+  channel from the proxy to the pty is ever added.

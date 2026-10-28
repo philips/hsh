@@ -69,13 +69,29 @@ func (h *harness) modelLog() string {
 type userTerminal struct {
 	mu   sync.Mutex
 	term vt.Emulator
+	raw  []byte
 }
 
 func (u *userTerminal) Write(p []byte) (int, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.term.Write(p)
+	u.raw = append(u.raw, p...)
 	return len(p), nil
+}
+
+func (u *userTerminal) lastPasteMode() string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	on := strings.LastIndex(string(u.raw), "\x1b[?2004h")
+	off := strings.LastIndex(string(u.raw), "\x1b[?2004l")
+	switch {
+	case on > off:
+		return "on"
+	case off > on:
+		return "off"
+	}
+	return "unset"
 }
 
 func (u *userTerminal) lines() []string {
@@ -89,7 +105,7 @@ func (u *userTerminal) lines() []string {
 	return out
 }
 
-var ansi = regexp.MustCompile("\x1b\\[[0-9;?:]*[A-Za-z]")
+var csiRE = regexp.MustCompile("\x1b\\[[0-9;?:]*[A-Za-z]")
 
 func (u *userTerminal) screen() []string {
 	u.mu.Lock()
@@ -97,7 +113,7 @@ func (u *userTerminal) screen() []string {
 	var out []string
 	for y := 0; y < userRows; y++ {
 		row, _ := u.term.Row(y)
-		out = append(out, strings.TrimRight(ansi.ReplaceAllString(row, ""), " \r"))
+		out = append(out, strings.TrimRight(csiRE.ReplaceAllString(row, ""), " \r"))
 	}
 	return out
 }
@@ -543,4 +559,114 @@ func TestDetachKeyInKittyEncodingReachesTheChildAsTheLegacyByte(t *testing.T) {
 	if string(b) != "\x1dxy" {
 		t.Fatalf("child received %q, want the legacy Ctrl+] byte then xy", b)
 	}
+}
+
+func TestInputParserBracketedPasteAcrossReads(t *testing.T) {
+	var ip inputParser
+	feed := func(parts ...string) []string {
+		var got []string
+		for _, part := range parts {
+			for _, m := range ip.feed([]byte(part)) {
+				got = append(got, m.String())
+			}
+		}
+		return got
+	}
+	if got := feed("\x1b[200~hello\x1b[201~"); strings.Join(got, "|") != "[hello]" {
+		t.Errorf("single read: %q", got)
+	}
+	if got := feed("a\x1b[200~q\x1b[201~b"); strings.Join(got, "|") != "a|[q]|b" {
+		t.Errorf("surrounded: %q", got)
+	}
+	if got := feed("\x1b[20", "0~ab", "cd\x1b[2", "01~j"); strings.Join(got, "|") != "[abcd]|j" {
+		t.Errorf("markers and content split across reads: %q", got)
+	}
+	if got := feed("\x1b[200~line1\r\nline2\rline3\x1b[201~"); strings.Join(got, "|") != "[line1\nline2\nline3]" {
+		t.Errorf("newlines: %q", got)
+	}
+	if got := feed("\x1b[200~", "x", "\x1b[201~"); strings.Join(got, "|") != "[x]" {
+		t.Errorf("start and end in separate reads: %q", got)
+	}
+	if got := feed("\x1b[", "A"); strings.Join(got, "|") != "up" {
+		t.Errorf("an arrow split after the CSI introducer: %q", got)
+	}
+	if got := feed("\x1b"); strings.Join(got, "|") != "esc" {
+		t.Errorf("a lone Esc: %q", got)
+	}
+	if got := feed("\x1b[200~unterminated"); len(got) != 0 {
+		t.Errorf("an unterminated paste produced keys: %q", got)
+	}
+}
+
+func TestInputParserIgnoresMouseAndFocusReports(t *testing.T) {
+	cases := []string{"\x1b[<0;10;5M", "\x1b[<0;10;5m", "\x1b[M !!", "\x1b[32;10;5M", "\x1b[I", "\x1b[O"}
+	for _, in := range cases {
+		if got := parseInput([]byte(in)); len(got) != 0 {
+			t.Errorf("%q produced keys %v", in, got)
+		}
+	}
+	got := parseInput([]byte("\x1b[M !!j"))
+	if len(got) != 1 || got[0].String() != "j" {
+		t.Errorf("X10 mouse report was not consumed whole: %v", got)
+	}
+}
+
+func TestPastedTextInTheOverlayIsDataNotCommands(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run("echo hi")
+	h.press("\x00")
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("not open")
+	}
+	h.press("\x1b[200~qqq\x1b[201~")
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("pasted q characters closed the overlay")
+	}
+	if !strings.Contains(h.modelLog(), "key [qqq]") {
+		t.Fatalf("the paste did not reach the model as one pasted value: %s", h.modelLog())
+	}
+	big := strings.Repeat("x", 10000)
+	h.press("\x1b[200~" + big + "\x1b[201~")
+	h.waitFor("the large paste to arrive whole", func() bool { return strings.Contains(h.modelLog(), "key ["+big+"]") })
+	h.press("q")
+	h.waitFor("a typed q to still close the overlay", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+}
+
+func TestMouseAndFocusReportsDoNotReachTheOverlayModel(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.press("\x00")
+	h.press("\x1b[<0;10;5M\x1b[<0;10;5m\x1b[M !!\x1b[I\x1b[O")
+	h.press("j")
+	h.waitFor("the typed key after the reports", func() bool { return strings.Contains(h.modelLog(), "key j") })
+	log := h.modelLog()
+	if strings.Count(log, "key ") != 1 {
+		t.Fatalf("mouse or focus reports became keys: %s", log)
+	}
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("a report closed the overlay")
+	}
+}
+
+func TestBracketedPasteIsEnabledForTheOverlayAndRestoredAfterwards(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run("echo hi")
+	h.press("\x00")
+	if got := h.user.lastPasteMode(); got != "on" {
+		t.Fatalf("paste mode while the overlay is open: %s", got)
+	}
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return h.user.lastPasteMode() == "off" })
+
+	h.run(`printf '\033[?2004h'`)
+	h.press("\x00")
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	time.Sleep(200 * time.Millisecond)
+	if got := h.user.lastPasteMode(); got != "on" {
+		t.Fatalf("the session's own bracketed paste mode was not restored: %s", got)
+	}
+	h.run(`printf '\033[?2004l'`)
+	h.press("\x00")
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return h.user.lastPasteMode() == "off" })
 }

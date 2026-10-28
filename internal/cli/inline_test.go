@@ -75,6 +75,47 @@ func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 	_ = model
 }
 
+func TestPastingIntoTheMonitorFilterDoesNotTriggerCommands(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	dbPath := filepath.Join(dir, "denied.db")
+	db, err := denieddb.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range []string{"a.example", "b.example"} {
+		if err := denieddb.Record(db, "/ws", "s1", h, h+":443"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	db.Close()
+	src := &sessionDenials{dbPath: dbPath, session: "s1"}
+	defer src.Close()
+
+	model := src.Overlay(120, 30)
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	paste := func(text string) tea.KeyMsg {
+		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true}
+	}
+
+	model, cmd := model.Update(paste("qaiio"))
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("pasted text outside the filter quit the monitor")
+		}
+	}
+	if !strings.Contains(model.View(), "https://a.example") || !strings.Contains(model.View(), "https://b.example") {
+		t.Fatal("pasted text outside the filter changed the list")
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	model, _ = model.Update(paste("b.exa"))
+	view := model.View()
+	if !strings.Contains(view, "https://b.example") || strings.Contains(view, "https://a.example") {
+		t.Fatalf("pasting into the filter did not filter the list:\n%s", view)
+	}
+}
+
 func TestSessionDenialsWithoutADatabase(t *testing.T) {
 	src := &sessionDenials{dbPath: filepath.Join(t.TempDir(), "none.db"), session: "s", cfgPath: "x"}
 	n, err := src.Count()
@@ -91,5 +132,21 @@ func TestInlineMonitorIsOffWhenDisabledOrNotInteractive(t *testing.T) {
 	cfg.Monitor.Enabled = false
 	if im, warn := newInlineMonitor(cfg, "s", "db", "cfg", true); im != nil || warn != "" {
 		t.Fatalf("disabled monitor: %v %q", im, warn)
+	}
+}
+
+func TestCtrlCClosesTheMonitorOverlayInsteadOfInterruptingTheSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	src := &sessionDenials{dbPath: filepath.Join(dir, "denied.db"), session: "s1"}
+	defer src.Close()
+	model := src.Overlay(100, 30)
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("Ctrl+C returned no command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("Ctrl+C did not quit the overlay model")
 	}
 }

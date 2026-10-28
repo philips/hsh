@@ -102,3 +102,10 @@ sandbox reach the host through the pasta gateway, which does not forward to
 loopback-only listeners. The endpoint also serves its instance id at `/id`
 (and as the `X-Dummy-Id` header) so the test can detect another process
 already squatting on the port.
+
+## Manual terminal checks
+
+The relay writes escape sequences to the user's real terminal, which the
+automated tests only model. `docs/terminal-checks.md` is the checklist to run
+by hand per terminal (scroll region and scrollback, the review screen,
+paste, mouse, and keyboard protocols).

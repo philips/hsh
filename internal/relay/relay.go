@@ -36,26 +36,27 @@ type Config struct {
 type Relay struct {
 	cfg Config
 
-	mu           sync.Mutex
-	wake         *sync.Cond
-	term         vt.Emulator
-	cols, rows   int
-	statusRows   int
-	paused       bool
-	held         []byte
-	dirty        bool
-	closed       bool
-	detach       []Key
-	cursorHidden bool
-	hints        hintFilter
-	region       regionFilter
-	review       reviewState
-	pending      int
-	covTop       int
-	covRows      int
-	lastPoll     time.Time
-	pollNow      bool
-	done         chan struct{}
+	mu             sync.Mutex
+	wake           *sync.Cond
+	term           vt.Emulator
+	cols, rows     int
+	statusRows     int
+	paused         bool
+	held           []byte
+	dirty          bool
+	closed         bool
+	detach         []Key
+	cursorHidden   bool
+	bracketedPaste bool
+	hints          hintFilter
+	region         regionFilter
+	review         reviewState
+	pending        int
+	covTop         int
+	covRows        int
+	lastPoll       time.Time
+	pollNow        bool
+	done           chan struct{}
 }
 
 func New(cfg Config) (*Relay, error) {
@@ -224,6 +225,13 @@ func (r *Relay) processLocked(data []byte) {
 		r.cursorHidden = true
 	} else if show > hide {
 		r.cursorHidden = false
+	}
+	pasteOn := bytes.LastIndex(clean, []byte("\x1b[?2004h"))
+	pasteOff := bytes.LastIndex(clean, []byte("\x1b[?2004l"))
+	if pasteOn > pasteOff {
+		r.bracketedPaste = true
+	} else if pasteOff > pasteOn {
+		r.bracketedPaste = false
 	}
 	r.term.Write(clean)
 	r.writeOut(clean)
