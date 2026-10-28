@@ -10,6 +10,7 @@ const (
 	frameOutput = 'O'
 	frameResize = 'R'
 	frameEnd    = 'E'
+	frameMode   = 'M'
 )
 
 func writeFrame(w io.Writer, kind byte, payload []byte) error {

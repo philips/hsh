@@ -171,6 +171,61 @@ What building it showed:
   text, dialog contents, session content preserved around the dialog, and
   restoration after close.
 
+## Passthrough prototype
+
+`ptymux demo --mode passthrough` (same README) forwards the child's bytes
+to the user's terminal unchanged and keeps the status line and dialog.
+The pieces that make that work, and what they cost:
+
+- **Pause is "stop reading the pty".** While the review dialog or a prompt
+  bar is up the relay does not read the pty master; the child blocks in
+  `write()` once the kernel buffer fills. Nothing is dropped, and the
+  emulator, which is fed only what was forwarded, is exactly what the
+  user's terminal shows. Bytes that arrive between the keypress and the
+  pause are held and delivered on resume. Closing repaints only the rows
+  the overlay covered, one grid-ref selection per row, then flushes. A
+  detach while paused releases the pause.
+- **Only inject at ground state.** A read can end mid-escape-sequence;
+  writing a status line or dialog into the middle of it corrupts the
+  output. libghostty's `VTGround()` says whether the stream is between
+  sequences. Overlays and status redraws wait for it.
+- **The reserved row is a scroll region.** The pty is sized one row short
+  and the client terminal gets `DECSTBM 1;rows-1`. Children that reset the
+  region (`ESC[r`) would hand the status row back to the scroller, so the
+  relay rewrites DECSTBM to stay inside the region. `clear` and entering
+  the alternate screen wipe the row; it is repainted within one 25 ms
+  tick.
+- **Scrollback survives a partial region in Ghostty's terminal core.**
+  Tested by feeding scrolling output into libghostty with a top-anchored
+  region and counting history lines: all lines were kept. That is one
+  terminal's behavior; xterm-family terminals agree as far as I know, but
+  kitty, iTerm2, Terminal.app, tmux, and others must be checked before
+  relying on it.
+- **Attach restores scrollback.** The formatter output includes history,
+  so replaying it fills a fresh terminal's scrollback; the visible rows
+  are then repainted in place.
+
+Known gaps, all inherent to injecting into a live stream:
+
+- The relay uses DECSC/DECRC (`ESC 7` / `ESC 8`) around its drawing, which
+  clobbers a child's own saved cursor if it saves before a pause and
+  restores after.
+- Cursor visibility is tracked by scanning for `?25h/l`, not read from
+  the emulator, so combined mode sequences are missed.
+- Child terminal resets (`RIS`, `DECSTR`), other margin sequences, and
+  mouse or keyboard mode changes while paused are not modelled.
+- The status row flickers for up to one tick after the child clears the
+  screen.
+
+Compared with render mode, the same dialog, status line, and decision
+flow work in both. Render mode needs none of the above and has none of
+the gaps, but owns scrollback and selection; passthrough keeps the user's
+terminal behaviour and carries the gaps. The tests that back this are
+`TestPassthroughPauseLeavesTheClientTerminalIdenticalToTheEmulator` (the
+client terminal, a second libghostty fed only the relay's output, equals
+the emulator after a pause with 30 held lines) and
+`TestPassthroughStatusRowSurvivesScrollClearAndAltScreen`.
+
 ## Tests
 
 - Ensure mouse, bracketed paste, and kitty keyboard protocol passthrough while

@@ -218,7 +218,64 @@ if res.strip() != "timeout":
     fail("notify timeout gave %r" % res)
 print("PASS: notify times out when unanswered")
 
+mark = len(transcript)
 os.write(fd, b"\x1d")
+expect(fd, "[detached]", mark)
+os.waitpid(pid, 0)
+os.close(fd)
+pm("send", "--sock", SOCK, "exit\n")
+server.wait(timeout=5)
+
+SOCK = TMP + "/p.sock"
+server = subprocess.Popen([PM, "serve", "--mode", "passthrough", "--sock", SOCK, "--log", LOG, "--", "bash", "--norc", "--noprofile", "-i"],
+                          stdout=subprocess.PIPE, text=True, env=env)
+server.stdout.readline()
+wait_dump("SH$")
+transcript = ""
+pid, fd = attach()
+expect(fd, "SH$", 0)
+if "\x1b[?1049h" in transcript:
+    fail("passthrough mode switched the client to the alternate screen")
+if "\x1b[1;29r" not in transcript:
+    fail("passthrough mode did not reserve the bottom row with a scroll region")
+os.write(fd, b"echo raw-forwarded\r")
+expect(fd, "raw-forwarded", 0)
+print("PASS: passthrough keeps the client on its normal screen, reserves one row, and forwards output")
+
+mark = len(transcript)
+os.write(fd, b"\x00")
+expect(fd, "Proxy requests awaiting review", mark)
+if status() != "mode=review color=red pending=0":
+    fail("passthrough review status: %r" % status())
+mark = len(transcript)
+pm("send", "--sock", SOCK, "seq 1 300\n")
+time.sleep(1)
+pump(fd, 0.5)
+if "300" in transcript[mark:]:
+    fail("output reached the client while the dialog was up")
+if "300" in dump():
+    fail("the emulator advanced while the dialog was up")
+os.write(fd, b"\x1b")
+expect(fd, "300", mark)
+wait_dump("300")
+if status() != "mode=normal color=green pending=0":
+    fail("passthrough did not return to normal: %r" % status())
+print("PASS: while the dialog is up the pty is not read; closing it delivers the held output in order")
+
+os.write(fd, b"\x00")
+expect(fd, "nothing to review", len(transcript) - 1)
+pm("send", "--sock", SOCK, "seq 1 400\n")
+time.sleep(0.5)
+mark = len(transcript)
+os.write(fd, b"\x1d")
+expect(fd, "[detached]", mark)
+os.waitpid(pid, 0)
+os.close(fd)
+wait_dump("400")
+if status() != "mode=normal color=green pending=0":
+    fail("detaching with the dialog open left the session paused: %r" % status())
+print("PASS: detaching while the dialog is open releases the pause so the session keeps running")
+
 pm("send", "--sock", SOCK, "exit\n")
 server.wait(timeout=5)
 print("ALL LIBGHOSTTY PROTOTYPE CHECKS PASSED")

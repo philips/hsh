@@ -29,9 +29,26 @@ denials arriving every few seconds.
 
 The list is fake: nothing talks to the proxy or `denied.db`.
 
+## Try passthrough mode
+
+    GOEXPERIMENT=simd go run . demo --mode passthrough
+
+Same status line and dialog, but the session's bytes go to your terminal
+unchanged: your terminal's own scrollback, selection, and search keep
+working, and nothing is drawn on the alternate screen. Compare it with the
+default render mode (`demo`), where ptymux sends redrawn frames and your
+terminal's scrollback stays empty.
+
+In passthrough mode Ctrl+Space stops reading the pty, so the session
+blocks in `write()` instead of printing under the dialog; closing the
+dialog repaints the rows it covered from emulator state and delivers the
+held output. Try `seq 1 100000` in the shell, press Ctrl+Space while it
+runs, and close the dialog: no lines are lost and your scrollback is
+intact.
+
 ## Other commands
 
-    ptymux serve --sock S [--fake] -- bash     # session daemon
+    ptymux serve --sock S [--fake] [--mode passthrough] -- bash   # session daemon
     ptymux attach --sock S                     # Ctrl-] detaches
     ptymux deny --sock S HOST                  # pretend the proxy denied HOST
     ptymux status --sock S                     # mode=... color=... pending=N

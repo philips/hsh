@@ -208,12 +208,12 @@ func (s *session) statusLineLocked() string {
 	return sgr + padTo(text, cols) + "\x1b[0m"
 }
 
-func (s *session) dialogLocked() string {
+func (s *session) dialogLocked() (string, int, int) {
 	cols, rows := int(s.cols), int(s.rows)
 	r := &s.review
 	width := min(cols-4, 72)
 	if width < 30 {
-		return ""
+		return "", 0, 0
 	}
 	lines := []string{"Proxy requests awaiting review", ""}
 	if len(r.items) == 0 {
@@ -247,10 +247,10 @@ func (s *session) dialogLocked() string {
 		fmt.Fprintf(&b, "\x1b[%d;%dH%s|%s|", top+1+i, left, sgr, padTo(" "+ln, width-2))
 	}
 	fmt.Fprintf(&b, "\x1b[%d;%dH%s+%s+", top+1+len(lines), left, sgrBox, strings.Repeat("-", width-2))
-	return b.String()
+	return b.String(), top, height
 }
 
-func (s *session) promptBarLocked() string {
+func (s *session) promptBarLocked() (string, int, int) {
 	cols := int(s.cols)
 	text := " " + s.active.prompt + "   [y] approve   [n] deny "
 	blank := strings.Repeat(" ", cols)
@@ -259,10 +259,14 @@ func (s *session) promptBarLocked() string {
 		row = 1
 	}
 	return fmt.Sprintf("\x1b[?25l\x1b[%d;1H\x1b[0;7m%s\x1b[%d;1H%s\x1b[%d;1H%s\x1b[0m",
-		row, blank, row+1, padTo(text, cols), row+2, blank)
+		row, blank, row+1, padTo(text, cols), row+2, blank), row, 3
 }
 
 func (s *session) renderLocked() {
+	if s.pass {
+		s.paintPassLocked()
+		return
+	}
 	s.dirty = false
 	if s.client == nil {
 		return
@@ -282,9 +286,11 @@ func (s *session) renderLocked() {
 	b.WriteString("\x1b7\x1b[0m")
 	switch {
 	case s.review.open:
-		b.WriteString(s.dialogLocked())
+		d, _, _ := s.dialogLocked()
+		b.WriteString(d)
 	case s.active != nil:
-		b.WriteString(s.promptBarLocked())
+		p, _, _ := s.promptBarLocked()
+		b.WriteString(p)
 	}
 	fmt.Fprintf(&b, "\x1b[%d;1H%s", int(s.rows)+1, s.statusLineLocked())
 	b.WriteString("\x1b8")
@@ -312,13 +318,21 @@ func parseServeFlags(name string, args []string) (serveOptions, error) {
 	fs.StringVar(&o.sock, "sock", "", "unix socket path")
 	fs.StringVar(&o.logPath, "log", "", "file that records approval decisions")
 	fs.BoolVar(&o.fake, "fake", false, "raise a fake proxy denial every few seconds")
+	mode := fs.String("mode", "render", "render: send frames built from emulator state; passthrough: forward the child's bytes")
 	fs.StringVar(&o.name, "name", "session", "name shown in the status line")
 	fs.Parse(args)
 	o.args = fs.Args()
-	if name == "serve" && o.sock == "" {
-		return o, fmt.Errorf("serve --sock S [--log FILE] [--fake] -- CMD [ARG...]")
+	switch *mode {
+	case "render":
+	case "passthrough":
+		o.pass = true
+	default:
+		return o, fmt.Errorf("--mode must be render or passthrough")
 	}
-	if len(o.args) == 0 {
+	if name == "serve" && o.sock == "" {
+		return o, fmt.Errorf("serve --sock S [--log FILE] [--fake] [--mode M] -- CMD [ARG...]")
+	}
+	if name == "serve" && len(o.args) == 0 {
 		return o, fmt.Errorf("a command to run is required")
 	}
 	return o, nil

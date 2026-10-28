@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -47,18 +48,29 @@ type session struct {
 	queue   []*overlay
 	review  reviewState
 	logPath string
+
+	pass         bool
+	paused       bool
+	held         []byte
+	region       regionFilter
+	wake         *sync.Cond
+	cursorHidden bool
+	covTop       int
+	covRows      int
 }
 
 type serveOptions struct {
 	sock    string
 	logPath string
 	fake    bool
+	pass    bool
 	name    string
 	args    []string
 }
 
 func newSession(o serveOptions) (*session, error) {
-	s := &session{cols: 80, rows: 23, logPath: o.logPath, name: o.name}
+	s := &session{cols: 80, rows: 23, logPath: o.logPath, name: o.name, pass: o.pass}
+	s.wake = sync.NewCond(&s.mu)
 	var err error
 	s.term, err = libghostty.NewTerminal(libghostty.WithSize(s.cols, s.rows), libghostty.WithMaxScrollbackLines(10000))
 	if err != nil {
@@ -128,20 +140,46 @@ func cmdServe(args []string) error {
 func (s *session) pumpOutput() {
 	buf := make([]byte, 32*1024)
 	for {
+		s.mu.Lock()
+		for s.paused {
+			s.wake.Wait()
+		}
+		s.mu.Unlock()
 		n, err := s.ptmx.Read(buf)
 		if n > 0 {
 			s.mu.Lock()
-			clean, events := s.filter.feed(buf[:n])
-			s.term.VTWrite(clean)
-			s.dirty = true
-			for _, ev := range events {
-				s.inBandRequest(ev)
+			if s.paused {
+				s.held = append(s.held, buf[:n]...)
+			} else {
+				s.processOutputLocked(buf[:n])
 			}
 			s.mu.Unlock()
 		}
 		if err != nil {
 			return
 		}
+	}
+}
+
+func (s *session) processOutputLocked(data []byte) {
+	clean, events := s.filter.feed(data)
+	if s.pass {
+		clean = s.region.feed(clean, int(s.rows))
+		hide := bytes.LastIndex(clean, []byte("\x1b[?25l"))
+		show := bytes.LastIndex(clean, []byte("\x1b[?25h"))
+		if hide > show {
+			s.cursorHidden = true
+		} else if show > hide {
+			s.cursorHidden = false
+		}
+	}
+	s.term.VTWrite(clean)
+	s.dirty = true
+	if s.pass && s.client != nil && len(clean) > 0 {
+		writeFrame(s.client, frameOutput, clean)
+	}
+	for _, ev := range events {
+		s.inBandRequest(ev)
 	}
 }
 
@@ -305,6 +343,12 @@ func (s *session) serveClient(c net.Conn, r *bufio.Reader, h header) {
 	}
 	s.client = c
 	s.resizeLocked(h.Cols, h.Rows)
+	if s.pass {
+		writeFrame(c, frameMode, []byte("pass"))
+		s.attachPassLocked()
+	} else {
+		writeFrame(c, frameMode, []byte("render"))
+	}
 	s.renderLocked()
 	s.showNextLocked()
 	s.mu.Unlock()
@@ -313,6 +357,7 @@ func (s *session) serveClient(c net.Conn, r *bufio.Reader, h header) {
 		s.mu.Lock()
 		if s.client == c {
 			s.client = nil
+			s.releaseOverlaysLocked()
 		}
 		s.mu.Unlock()
 		c.Close()
@@ -327,6 +372,9 @@ func (s *session) serveClient(c net.Conn, r *bufio.Reader, h header) {
 		case frameResize:
 			if len(payload) == 4 {
 				s.resizeLocked(uint16(payload[0])<<8|uint16(payload[1]), uint16(payload[2])<<8|uint16(payload[3]))
+				if s.pass {
+					s.attachPassLocked()
+				}
 				s.renderLocked()
 			}
 		case frameInput:

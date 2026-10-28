@@ -40,8 +40,6 @@ func cmdAttach(args []string) error {
 		return err
 	}
 	defer c.Close()
-	os.Stdout.WriteString("\x1b[?1049h")
-	defer os.Stdout.WriteString("\x1b[?1049l")
 	old, err := term.MakeRaw(fd)
 	if err != nil {
 		return err
@@ -61,6 +59,7 @@ func cmdAttach(args []string) error {
 
 	done := make(chan struct{})
 	ended := false
+	altScreen := false
 	go func() {
 		defer close(done)
 		for {
@@ -71,7 +70,13 @@ func cmdAttach(args []string) error {
 			if err != nil || kind == frameEnd {
 				return
 			}
-			if kind == frameOutput {
+			switch kind {
+			case frameMode:
+				if string(payload) == "render" {
+					altScreen = true
+					os.Stdout.WriteString("\x1b[?1049h")
+				}
+			case frameOutput:
 				os.Stdout.Write(payload)
 			}
 		}
@@ -98,7 +103,12 @@ func cmdAttach(args []string) error {
 		}
 	}()
 	<-done
-	os.Stdout.WriteString("\x1b[0m\x1b[?1049l")
+	os.Stdout.WriteString("\x1b[0m\x1b[r\x1b[?25h")
+	if altScreen {
+		os.Stdout.WriteString("\x1b[?1049l")
+	} else if _, rows, err := term.GetSize(fd); err == nil {
+		fmt.Fprintf(os.Stdout, "\x1b[%d;1H\x1b[2K\x1b[%d;1H", rows, rows-1)
+	}
 	if ended {
 		fmt.Fprint(os.Stdout, "[session ended]\r\n")
 	} else {

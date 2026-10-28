@@ -9,14 +9,14 @@ import (
 func cmdDemo(args []string) error {
 	o, err := parseServeFlags("demo", args)
 	if err != nil {
+		return err
+	}
+	if len(o.args) == 0 {
 		shell := os.Getenv("SHELL")
 		if shell == "" {
 			shell = "/bin/sh"
 		}
-		o = serveOptions{args: []string{shell}, name: "demo"}
-		if len(args) > 0 {
-			return err
-		}
+		o.args = []string{shell}
 	}
 	o.fake = true
 	if o.name == "session" {
