@@ -92,7 +92,7 @@ func TestSecretAddWritesConfigEntry(t *testing.T) {
 	db := testStorePath(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.hsh")
-	body := "{\n  \"network\": { \"allow\": [\"api.mistral.ai\"] }\n}\n"
+	body := "{\n  \"version\": 1,\n  \"network\": { \"allow\": [\"api.mistral.ai\"] }\n}\n"
 	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestSecretRmWarnsOnDanglingRef(t *testing.T) {
 	db := testStorePath(t)
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.hsh")
-	body := `{ "secrets": { "API_KEY": { "from": "hsh://mistral-key", "hosts": ["api.mistral.ai"] } } }` + "\n"
+	body := `{ "version": 1, "secrets": { "API_KEY": { "from": "hsh://mistral-key", "hosts": ["api.mistral.ai"] } } }` + "\n"
 	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

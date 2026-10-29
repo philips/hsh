@@ -13,7 +13,7 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/state"
 )
 
 var (
@@ -126,7 +126,7 @@ func detachCommand() *ff.Command {
 		if !podExists("hsh-" + id) {
 			return fmt.Errorf("no session %s (see: hsh ls)", id)
 		}
-		attached, err := detachClient(denieddb.SessionDir(id), 10*time.Second)
+		attached, err := detachClient(state.SessionDir(id), 10*time.Second)
 		if err != nil {
 			return err
 		}

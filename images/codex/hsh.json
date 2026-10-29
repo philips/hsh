@@ -1,4 +1,5 @@
 {
+  "version": 1,
   "shell": "/bin/bash",
   "secrets": {
     "OPENAI_API_KEY": {

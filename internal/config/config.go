@@ -105,7 +105,40 @@ type OAuthProvider struct {
 	APIHosts           []string           `json:"api_hosts"`
 }
 
+const (
+	Version    = 1
+	MinVersion = 1
+)
+
+type VersionKind int
+
+const (
+	VersionMissing VersionKind = iota
+	VersionNewer
+	VersionOlder
+)
+
+type VersionError struct {
+	Source string
+	Kind   VersionKind
+	Have   int
+}
+
+func (e *VersionError) Error() string {
+	switch e.Kind {
+	case VersionMissing:
+		return fmt.Sprintf("%s: no \"version\" field (this hsh reads version %d)", e.Source, Version)
+	case VersionNewer:
+		return fmt.Sprintf("%s: config version %d is newer than this hsh reads (version %d); update hsh (hsh update)", e.Source, e.Have, Version)
+	default:
+		return fmt.Sprintf("%s: config version %d is no longer supported (this hsh reads version %d); regenerate it", e.Source, e.Have, Version)
+	}
+}
+
+func (e *VersionError) Stale() bool { return e.Kind != VersionNewer }
+
 type Config struct {
+	Version int                      `json:"version"`
 	Image   string                   `json:"image"`
 	Shell   string                   `json:"shell"`
 	Mounts  []string                 `json:"mounts"`
@@ -163,9 +196,10 @@ type Mount struct {
 
 func Default() *Config {
 	return &Config{
-		Image:  "docker.io/library/alpine:latest",
-		Shell:  "/bin/sh",
-		Mounts: []string{".:/workspace"},
+		Version: Version,
+		Image:   "docker.io/library/alpine:latest",
+		Shell:   "/bin/sh",
+		Mounts:  []string{".:/workspace"},
 
 		DetachKeys: DefaultDetachKeys,
 		Monitor:    Monitor{Enabled: true, StatusLine: true, Key: DefaultMonitorKey},
@@ -237,40 +271,64 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decode(data, path)
+}
+
+func peekVersion(data []byte, source string) error {
+	var head struct {
+		Version json.RawMessage `json:"version"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return fmt.Errorf("%s: %w", source, err)
+	}
+	if len(head.Version) == 0 {
+		return &VersionError{Source: source, Kind: VersionMissing}
+	}
+	var n int
+	if err := json.Unmarshal(head.Version, &n); err != nil {
+		return fmt.Errorf("%s: \"version\" must be an integer, got %s", source, head.Version)
+	}
+	switch {
+	case n > Version:
+		return &VersionError{Source: source, Kind: VersionNewer, Have: n}
+	case n < MinVersion:
+		return &VersionError{Source: source, Kind: VersionOlder, Have: n}
+	}
+	return nil
+}
+
+func decode(data []byte, source string) (*Config, error) {
+	if err := peekVersion(data, source); err != nil {
+		return nil, err
+	}
 	cfg := Default()
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(cfg); err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateMode(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateApprovalWait(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.validateSecretRefs(); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	return cfg, nil
 }
 
 func FromImageLabel(label string) (*Config, error) {
-	cfg := Default()
 	if label == "" {
-		return cfg, nil
+		return Default(), nil
 	}
-	if err := json.Unmarshal([]byte(label), cfg); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
+	cfg, err := decode([]byte(label), "org.ifup.hsh image label")
+	var ve *VersionError
+	if errors.As(err, &ve) && ve.Stale() {
+		return nil, fmt.Errorf("%w; rebuild the image", err)
 	}
-	if err := cfg.Network.ValidateMode(); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
-	}
-	if err := cfg.Network.ValidateApprovalWait(); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
-	}
-	if err := cfg.validateSecretRefs(); err != nil {
-		return nil, fmt.Errorf("org.ifup.hsh image label: %w", err)
-	}
-	return cfg, nil
+	return cfg, err
 }
 
 type ResolvedSecret struct {
@@ -348,6 +406,9 @@ func AddAllowedHosts(path string, hosts []string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := peekVersion(data, path); err != nil {
+		return nil, err
+	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -411,6 +472,9 @@ func SetApprovalWait(path, value string) error {
 	if err != nil {
 		return err
 	}
+	if err := peekVersion(data, path); err != nil {
+		return err
+	}
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
@@ -464,6 +528,9 @@ func AddSecret(path, name string, secret Secret) error {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
+		return err
+	}
+	if err := peekVersion(data, path); err != nil {
 		return err
 	}
 	var doc map[string]json.RawMessage

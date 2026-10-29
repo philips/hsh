@@ -8,7 +8,7 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/state"
 )
 
 func gcCommand() *ff.Command {
@@ -26,7 +26,7 @@ func gcCommand() *ff.Command {
 				}
 			}
 		}
-		base := denieddb.SessionsDir()
+		base := state.SessionsDir()
 		entries, err := os.ReadDir(base)
 		if err != nil {
 			if os.IsNotExist(err) {

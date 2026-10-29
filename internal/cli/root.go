@@ -9,7 +9,7 @@ import (
 	"github.com/peterbourgon/ff/v4"
 	"github.com/peterbourgon/ff/v4/ffhelp"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 	"hsh/internal/secretstore"
 	"hsh/internal/version"
 	"hsh/internal/vt"
@@ -172,7 +172,7 @@ func helpCommand(root *ff.Command) *ff.Command {
 	})
 }
 
-func sessionFilterFlags(fs *ff.FlagSet, f *denieddb.Filter) {
+func sessionFilterFlags(fs *ff.FlagSet, f *monitordb.Filter) {
 	fs.StringVar(&f.Session, 0, "session", "", "only this session (session id)")
 	fs.StringVar(&f.Workspace, 0, "workspace", "", "only this workspace (directory path)")
 }

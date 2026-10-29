@@ -9,16 +9,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 	"hsh/internal/tui/proxywatch"
 )
 
 func monitorCommand() *ff.Command {
 	var dbPath string
 	var all bool
-	var filter denieddb.Filter
+	var filter monitordb.Filter
 	return newCommand("monitor", "hsh monitor [FLAGS]", "interactively review denied hosts (TUI)", func(fs *ff.FlagSet) {
-		fs.StringVar(&dbPath, 0, "db", denieddb.DefaultPath(), "denial database path")
+		fs.StringVar(&dbPath, 0, "db", monitordb.DefaultPath(), "monitor database path")
 		fs.BoolVar(&all, 0, "all", "show ignored hosts")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
@@ -28,22 +28,22 @@ func monitorCommand() *ff.Command {
 		if fi, err := os.Stdout.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 			return errors.New("monitor requires a terminal; use 'hsh proxy denied' for a plain list")
 		}
-		if !denieddb.Exists(dbPath) {
+		if !monitordb.Exists(dbPath) {
 			fmt.Println("no denied hosts recorded")
 			return nil
 		}
-		db, err := denieddb.Open(dbPath)
+		db, err := monitordb.Open(dbPath)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
-		pending, err := denieddb.Pending(db, filter)
+		pending, err := monitordb.Pending(db, filter)
 		if err != nil {
 			return err
 		}
-		var ignored []denieddb.DeniedHost
+		var ignored []monitordb.DeniedHost
 		if all {
-			ignored, err = denieddb.Ignored(db, filter)
+			ignored, err = monitordb.Ignored(db, filter)
 			if err != nil {
 				return err
 			}

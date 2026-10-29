@@ -17,8 +17,9 @@ import (
 
 	"hsh/internal/attend"
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 	"hsh/internal/relay"
+	"hsh/internal/state"
 	"hsh/internal/tui/proxywatch"
 	"hsh/internal/vt"
 )
@@ -67,10 +68,10 @@ func (s *sessionDenials) open() (*sql.DB, error) {
 	if s.db != nil {
 		return s.db, nil
 	}
-	if !denieddb.Exists(s.dbPath) {
+	if !monitordb.Exists(s.dbPath) {
 		return nil, nil
 	}
-	db, err := denieddb.Open(s.dbPath)
+	db, err := monitordb.Open(s.dbPath)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +95,7 @@ func (s *sessionDenials) Count() (int, int, error) {
 	if err != nil || db == nil {
 		return 0, 0, err
 	}
-	rows, err := denieddb.Pending(db, denieddb.Filter{Session: s.session})
+	rows, err := monitordb.Pending(db, monitordb.Filter{Session: s.session})
 	held := 0
 	for _, r := range rows {
 		if r.Holding > 0 {
@@ -107,7 +108,7 @@ func (s *sessionDenials) Count() (int, int, error) {
 func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	db, err := denieddb.Open(s.dbPath)
+	db, err := monitordb.Open(s.dbPath)
 	if err != nil {
 		return errorModel{err: err}
 	}
@@ -115,12 +116,12 @@ func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 		s.db.Close()
 	}
 	s.db = db
-	filter := denieddb.Filter{Session: s.session}
-	pending, err := denieddb.Pending(db, filter)
+	filter := monitordb.Filter{Session: s.session}
+	pending, err := monitordb.Pending(db, filter)
 	if err != nil {
 		return errorModel{err: err}
 	}
-	ignored, err := denieddb.Ignored(db, filter)
+	ignored, err := monitordb.Ignored(db, filter)
 	if err != nil {
 		return errorModel{err: err}
 	}
@@ -137,7 +138,7 @@ func (m errorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 func (m errorModel) View() string {
-	return fmt.Sprintf("cannot open the denial database: %v\n\npress any key to close", m.err)
+	return fmt.Sprintf("cannot open the monitor database: %v\n\npress any key to close", m.err)
 }
 
 func attachWithRelay(name string, flags []string, running bool, im *inlineMonitor) (int, error) {
@@ -188,7 +189,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	inlineShutdown.Store(&restore)
 	defer inlineShutdown.Store(nil)
 
-	_ = attend.Touch(attend.Path(denieddb.SessionDir(im.session)))
+	_ = attend.Touch(attend.Path(state.SessionDir(im.session)))
 	if err := cmd.Start(); err != nil {
 		slave.Close()
 		return 0, err
@@ -213,7 +214,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	stopAttend := make(chan struct{})
 	attendDone := make(chan struct{})
 	go func() {
-		attend.Run(attend.Path(denieddb.SessionDir(im.session)), stopAttend)
+		attend.Run(attend.Path(state.SessionDir(im.session)), stopAttend)
 		close(attendDone)
 	}()
 	_ = r.Run()

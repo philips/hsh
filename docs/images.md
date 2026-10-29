@@ -46,7 +46,11 @@ $ podman build --build-arg "HSH_LABEL=$(jq -c . images/vibe/hsh.json)" images/vi
 
 Each image carries an `org.ifup.hsh` label whose value is a JSON config
 in the [config file](config.md) format (without `image`, which comes
-from the positional image argument). It provides the defaults the harness needs: the
+from the positional image argument). It starts with the config
+`"version"`, which is required: an image whose label has another version, or
+none, is refused (`rebuild the image`, or `update hsh` for a newer one) rather
+than half-applied, and unknown fields in the label are errors too (see
+[config versions](config.md#config-versions)). It provides the defaults the harness needs: the
 provider API hosts in `network.allow`, and the `secrets` that reference
 the [hsh secret store](config.md#the-hsh-secret-store) (`hsh://NAME`)
 for the provider's API key.

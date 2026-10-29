@@ -19,7 +19,8 @@ import (
 	"github.com/peterbourgon/ff/v4"
 
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
+	"hsh/internal/state"
 )
 
 const watchInterval = 2 * time.Second
@@ -65,7 +66,7 @@ func hostFromRef(ref string) string {
 }
 
 func sessionConfigPath(session string) (string, error) {
-	p := filepath.Join(denieddb.SessionDir(session), "config.json")
+	p := filepath.Join(state.SessionDir(session), "config.json")
 	if _, err := os.Stat(p); err != nil {
 		return "", fmt.Errorf("session %s has no config copy at %s (remove orphaned session state with: hsh gc)", session, p)
 	}
@@ -102,7 +103,7 @@ func applyAllow(db *sql.DB, session, cfgPath string, hosts []string) (added, alr
 			return nil, nil, err
 		}
 	}
-	return added, already, denieddb.MarkAllowed(db, session, unique)
+	return added, already, monitordb.MarkAllowed(db, session, unique)
 }
 
 func allowHosts(db *sql.DB, session, cfgPath string, hosts []string) error {
@@ -119,25 +120,25 @@ func allowHosts(db *sql.DB, session, cfgPath string, hosts []string) error {
 func proxyDeniedCommand() *ff.Command {
 	var dbPath string
 	var watch bool
-	var filter denieddb.Filter
+	var filter monitordb.Filter
 	return newCommand("denied", "hsh proxy denied [FLAGS]", "list hosts denied by the egress proxy (DNS lookups share this queue)", func(fs *ff.FlagSet) {
-		fs.StringVar(&dbPath, 0, "db", denieddb.DefaultPath(), "denial database path")
+		fs.StringVar(&dbPath, 0, "db", monitordb.DefaultPath(), "monitor database path")
 		fs.BoolVar(&watch, 0, "watch", "continuously output new denied requests")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
 		if len(args) > 0 {
 			return fmt.Errorf("proxy denied takes no positional arguments")
 		}
-		if !denieddb.Exists(dbPath) {
+		if !monitordb.Exists(dbPath) {
 			fmt.Println("no denied hosts recorded")
 			return nil
 		}
-		db, err := denieddb.Open(dbPath)
+		db, err := monitordb.Open(dbPath)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
-		printRows := func(rows []denieddb.DeniedHost) {
+		printRows := func(rows []monitordb.DeniedHost) {
 			if filter.Session != "" || filter.Workspace != "" {
 				for _, r := range rows {
 					fmt.Println(hostURL(r.Host))
@@ -151,7 +152,7 @@ func proxyDeniedCommand() *ff.Command {
 			}
 			w.Flush()
 		}
-		rows, err := denieddb.Pending(db, filter)
+		rows, err := monitordb.Pending(db, filter)
 		if err != nil {
 			return err
 		}
@@ -176,11 +177,11 @@ func proxyDeniedCommand() *ff.Command {
 			case <-ctx.Done():
 				return nil
 			case <-t.C:
-				rows, err := denieddb.Pending(db, filter)
+				rows, err := monitordb.Pending(db, filter)
 				if err != nil {
 					return err
 				}
-				var fresh []denieddb.DeniedHost
+				var fresh []monitordb.DeniedHost
 				for _, r := range rows {
 					k := r.Host + "@" + r.Session
 					if !seen[k] {
@@ -200,7 +201,7 @@ func proxyAllowCommand() *ff.Command {
 	var dbPath, session string
 	var all, watch bool
 	return newCommand("allow", "hsh proxy allow [FLAGS] [--all | URL]", "allow a session's denied hosts in its config (TOFU)", func(fs *ff.FlagSet) {
-		fs.StringVar(&dbPath, 0, "db", denieddb.DefaultPath(), "denial database path")
+		fs.StringVar(&dbPath, 0, "db", monitordb.DefaultPath(), "monitor database path")
 		fs.StringVar(&session, 0, "session", "", "the session whose config the hosts are allowed in")
 		fs.BoolVar(&all, 0, "all", "allow every host currently denied for the session")
 		fs.BoolVar(&watch, 0, "watch", "continuously approve new denied requests")
@@ -218,17 +219,17 @@ func proxyAllowCommand() *ff.Command {
 		if err != nil {
 			return err
 		}
-		if !denieddb.Exists(dbPath) {
+		if !monitordb.Exists(dbPath) {
 			fmt.Println("no denied hosts recorded")
 			return nil
 		}
-		db, err := denieddb.Open(dbPath)
+		db, err := monitordb.Open(dbPath)
 		if err != nil {
 			return err
 		}
 		defer db.Close()
 		if watch {
-			defer watchSessions(denieddb.Filter{Session: session})()
+			defer watchSessions(monitordb.Filter{Session: session})()
 		}
 		if !all {
 			host := hostFromRef(args[0])
@@ -248,7 +249,7 @@ func proxyAllowCommand() *ff.Command {
 		}
 		approved := map[string]bool{}
 		approve := func() error {
-			pending, err := denieddb.Pending(db, denieddb.Filter{Session: session})
+			pending, err := monitordb.Pending(db, monitordb.Filter{Session: session})
 			if err != nil {
 				return err
 			}

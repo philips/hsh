@@ -76,6 +76,7 @@ func writeConfig(t *testing.T, dir string, upstreamURL string) (configPath strin
 	t.Helper()
 	host := upstreamHost(upstreamURL)
 	cfg := fmt.Sprintf(`{
+  "version": 1,
   "network": {"mode": "allowlist", "allow": [%q]},
   "oauth": {"testprov": {
     "token_endpoint": {"host": %q, "path": "/token"},
@@ -125,7 +126,7 @@ func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, n
 		SecretsPath: filepath.Join(dir, "secrets.json"),
 		CACertPath:  filepath.Join(dir, "ca.crt"),
 		CAKeyPath:   filepath.Join(dir, "ca.key"),
-		DeniedDB:    "",
+		MonitorDB:   "",
 		OAuthStore:  storePath,
 		NetworkMode: networkMode,
 	}

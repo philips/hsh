@@ -1,11 +1,3 @@
-## config versioning
-
-version config schema so that `hsh` doesn't try to use container schema it doesn't understand
-
-## denied.db to monitor.db
-
-The denied.db should be renamed to monitor.db to match the subcommand and enable it to take on other roles like handling linux security models of ebpf or something in the future.
-
 ## create policy config files
 
 It would be good to create and maintain "policy" files for popular services like sr.ht, gitlab, github, etc. 

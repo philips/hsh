@@ -47,7 +47,7 @@ flowchart TB
         hshrun["hsh run (host process)<br/>resolves secrets, copies config,<br/>creates pod, passes --session/--workspace"]
         pasta["pasta process<br/>(per-pod, dies when the pod stops)"]
         subgraph STATE["state: $XDG_STATE_HOME/hsh/"]
-            denieddb[("denied.db<br/>global, attributed rows")]
+            monitordb[("monitor.db<br/>global, attributed rows")]
             subgraph SESDIR["sessions/&lt;session-id&gt;/"]
                 cfgcopy[("config.json<br/>the only writable config")]
                 cafiles[("ca.crt / ca.key<br/>MITM CA (0600)")]
@@ -65,7 +65,7 @@ flowchart TB
     hshrun -->|"copies config, resolves secrets,<br/>writes session state"| SESDIR
 
     class hshrun,pasta proc
-    class denieddb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
+    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
 ```
 
 ### Pod side
@@ -125,7 +125,7 @@ flowchart LR
             secretsjson[("secrets.json")]
             noticedir[("notice/")]
         end
-        denieddb[("denied.db")]
+        monitordb[("monitor.db")]
         caBundle["host CA bundle"]
         wsdir[("workspace directory")]
     end
@@ -141,7 +141,7 @@ flowchart LR
     secretsjson -.->|"ro → /hsh-session/secrets.json"| PROXY
     cafiles -.->|"ro → /hsh-session/ca.crt + ca.key"| PROXY
     caBundle -.->|"ro → /hsh-roots.pem"| PROXY
-    denieddb <-.->|"rw → /hsh-state/denied.db"| PROXY
+    monitordb <-.->|"rw → /hsh-state/monitor.db"| PROXY
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
     noticedir -.->|"ro → /hsh-run/notice"| WSC
     wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
@@ -150,7 +150,7 @@ flowchart LR
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
 
     class hshbin,pasta proc
-    class cfgcopy,cafiles,secretsjson,noticedir,denieddb,wsdir file
+    class cfgcopy,cafiles,secretsjson,noticedir,monitordb,wsdir file
     class PROXY,WSC ctr
 ```
 
@@ -243,7 +243,7 @@ the veth addresses.
 
 Every request is checked against `network.allow`:
 
-- **Denied**: the proxy records the host in the denial database and answers
+- **Denied**: the proxy records the host in the monitor database and answers
   `403 Forbidden`, as other agent sandboxes do. For `CONNECT` this surfaces
   in curl as `CONNECT tunnel failed, response 403`. The body is written for
   an agent: the block is on purpose and not an outage, the user has been
@@ -277,7 +277,7 @@ enabled per session with `network.approval_wait` (for example `"30s"`; at most
 `5m`; `off`/`0s` disables):
 
 - The denial is recorded first, so the host shows up in `hsh monitor` and
-  the inline status line at once, and `denied.db`'s `holding` column counts
+  the inline status line at once, and `monitor.db`'s `holding` column counts
   the requests currently held for that host (the monitor lists held hosts
   first with `HELD xN`; the status line says `(N held)`; the proxy zeroes
   its session's counts when it starts).
@@ -334,18 +334,28 @@ review queue, one approval per host (approving a host fixes the lookup
 and the egress together). A merged row is keyed by host + session, so
 `count` aggregates denial events of either kind and `target` keeps the
 first-seen form (`host:443` from a CONNECT, `name:53` from a lookup).
-Databases from before the merge are migrated on open: `dns_denied` rows
-fold into `denied` (counts bumped on collision) and the table is
-dropped.
 
-### Denial database
+### Monitor database
 
-Every denial is recorded in a SQLite database (modernc.org/sqlite — pure Go,
-so the `CGO_ENABLED=0` static build is unaffected) at
-`$XDG_STATE_HOME/hsh/denied.db` (default `~/.local/state/hsh/denied.db`,
-override with `hsh run --denied-db PATH`). The database is opened in WAL
+Everything the monitor shows is recorded in one SQLite database
+(modernc.org/sqlite — pure Go, so the `CGO_ENABLED=0` static build is
+unaffected) at `$XDG_STATE_HOME/hsh/monitor.db` (default
+`~/.local/state/hsh/monitor.db`, override with `hsh run --monitor-db PATH`).
+Today it holds the `denied` table below; the file is named for `hsh monitor`
+so later monitor state can live beside it. The database is opened in WAL
 mode with a busy timeout, so the proxy (writer) and the CLI (reader) can use
 it concurrently, including across simultaneous sessions.
+
+The schema version is `PRAGMA user_version`. `internal/dbschema` checks it
+inside one `BEGIN IMMEDIATE` transaction on every open: a file with version 0
+(new, or an existing file created without a version) gets the
+`CREATE TABLE IF NOT EXISTS` schema and the current version, so several
+proxies and a monitor starting at once agree on one schema; a file with a newer
+version is refused (`monitor.db has schema version N, newer than this hsh
+reads (version V); update hsh`) and an older one too (`remove PATH`); there are
+no migrations. `session.db` and `secrets.db` use the same check. A proxy
+container started from an older hsh than the database therefore fails to
+start with that message instead of writing rows it does not understand.
 
 The database is global: rows from every session and workspace land in one
 review queue, attributed per row — `hsh run` passes the session id and the
@@ -514,6 +524,13 @@ is picked up.
 
 Mounts, image, and shell changes require a restart.
 
+A reload that fails (invalid JSON, a field hsh does not know, a `version`
+this binary does not read) is logged as `configuration reload failed` and the
+proxy keeps its previous in-memory policy, so a proxy older than its config
+(a detached session that outlived an `hsh update`) keeps enforcing the last
+config it understood. `hsh run` and the proxy fail at startup on an unreadable
+config instead. See [config versions](config.md#config-versions).
+
 ## Reaching servers inside the session
 
 A server the agent starts on its loopback (`localhost:8000`) lives in the
@@ -652,8 +669,8 @@ workspace     file with the absolute path of the workspace
 session.db    append-only event log: the hsh version of every entry
 ```
 
-`session.db` is a sqlite database (same driver and open pattern as the
-host-side state databases) whose `events` table records one row per
+`session.db` is a sqlite database (same driver, open pattern, and
+`user_version` schema check as the other host-side databases) whose `events` table records one row per
 `hsh run` entry — `created` when the session is created, `resumed` on
 every `--resume` — with an RFC3339 timestamp and the full
 `hsh version` string of the binary that ran it. Because the update flow
@@ -715,7 +732,7 @@ sessions per workspace.
   session; the relay drives it directly (key parsing, running its commands,
   drawing its `View()` over every row) instead of starting a second
   program, so no terminal modes change. Opening it pauses the session by
-  not reading the pty. Denial data comes from `denied.db` and approvals use
+  not reading the pty. Denial data comes from `monitor.db` and approvals use
   the same code as `hsh monitor`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
   session is stripped and only triggers an immediate poll of that queue.
   On `--resume` the relay briefly changes the pty width by one column and

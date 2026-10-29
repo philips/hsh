@@ -13,8 +13,8 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/denieddb"
 	"hsh/internal/netsetup"
+	"hsh/internal/state"
 )
 
 func oauthCommand() *ff.Command {
@@ -143,7 +143,7 @@ type storedPhantom struct {
 }
 
 func OAuthStoreDefaultPath() string {
-	return filepath.Join(denieddb.StateDir(), "oauth-tokens.json")
+	return filepath.Join(state.Dir(), "oauth-tokens.json")
 }
 
 func oauthFingerprint(s string) string {

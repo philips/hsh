@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"hsh/internal/attend"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 )
 
 const (
@@ -52,19 +52,19 @@ func (p *Proxy) acquireHold() bool {
 func (p *Proxy) releaseHold() { p.holds.active.Add(-1) }
 
 func (p *Proxy) recordDenial(host, target string) {
-	if p.deniedDB == nil {
+	if p.monitorDB == nil {
 		return
 	}
-	if err := denieddb.Record(p.deniedDB, p.opts.Workspace, p.opts.Session, host, target); err != nil {
+	if err := monitordb.Record(p.monitorDB, p.opts.Workspace, p.opts.Session, host, target); err != nil {
 		log.Printf("recording denial of %s: %v", host, err)
 	}
 }
 
 func (p *Proxy) ignoredByUser(host string) bool {
-	if p.deniedDB == nil {
+	if p.monitorDB == nil {
 		return false
 	}
-	d, err := denieddb.LookupDecision(p.deniedDB, p.opts.Session, host)
+	d, err := monitordb.LookupDecision(p.monitorDB, p.opts.Session, host)
 	return err == nil && d.Found && d.Ignored
 }
 
@@ -79,9 +79,9 @@ func (p *Proxy) awaitApproval(ctx context.Context, host, target, kind string, al
 		return false
 	}
 	defer p.releaseHold()
-	if p.deniedDB != nil {
-		_ = denieddb.AdjustHolding(p.deniedDB, p.opts.Session, host, 1)
-		defer func() { _ = denieddb.AdjustHolding(p.deniedDB, p.opts.Session, host, -1) }()
+	if p.monitorDB != nil {
+		_ = monitordb.AdjustHolding(p.monitorDB, p.opts.Session, host, 1)
+		defer func() { _ = monitordb.AdjustHolding(p.monitorDB, p.opts.Session, host, -1) }()
 	}
 	log.Printf("%s %s: holding for approval (up to %s)", kind, host, maxWait)
 	deadline := time.NewTimer(maxWait)

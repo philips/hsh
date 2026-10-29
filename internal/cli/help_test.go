@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 )
 
 func captureStdout(t *testing.T, f func()) string {
@@ -67,8 +67,8 @@ func TestGroupUnknownSubcommand(t *testing.T) {
 }
 
 func TestProxyDeniedWatchStopsOnInterrupt(t *testing.T) {
-	db := t.TempDir() + "/denied.db"
-	h, err := denieddb.Open(db)
+	db := t.TempDir() + "/monitor.db"
+	h, err := monitordb.Open(db)
 	if err != nil {
 		t.Fatal(err)
 	}

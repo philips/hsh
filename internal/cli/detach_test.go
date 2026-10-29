@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/state"
 )
 
 func TestDetachClientIgnoresMissingAndForeignClients(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := denieddb.SessionDir("abc123")
+	dir := state.SessionDir("abc123")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}

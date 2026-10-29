@@ -7,17 +7,17 @@ import (
 	"testing"
 
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/state"
 )
 
 func TestProxyHoldCommand(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	dir := denieddb.SessionDir("s1")
+	dir := state.SessionDir("s1")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(cfgPath, []byte(`{"image":"x","network":{"mode":"allowlist","allow":["keep.example"]}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, []byte(`{"version":1,"image":"x","network":{"mode":"allowlist","allow":["keep.example"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := func(args ...string) (string, error) {

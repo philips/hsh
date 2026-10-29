@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/state"
 )
 
 type podInfo struct {
@@ -98,7 +98,7 @@ func latestPod(pods []podInfo) (podInfo, bool) {
 }
 
 func sessionDirFor(podName string) string {
-	return filepath.Join(denieddb.StateDir(), "sessions", strings.TrimPrefix(podName, "hsh-"))
+	return filepath.Join(state.Dir(), "sessions", strings.TrimPrefix(podName, "hsh-"))
 }
 
 func removeSessionDir(podName string) (bool, error) {
@@ -113,7 +113,7 @@ func removeSessionDir(podName string) (bool, error) {
 }
 
 func sweepSessionDirs() (int, error) {
-	base := filepath.Join(denieddb.StateDir(), "sessions")
+	base := filepath.Join(state.Dir(), "sessions")
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		if os.IsNotExist(err) {

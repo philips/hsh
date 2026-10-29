@@ -1,4 +1,4 @@
-package denieddb
+package monitordb
 
 import (
 	"database/sql"
@@ -9,7 +9,12 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"hsh/internal/dbschema"
+	"hsh/internal/state"
 )
+
+const SchemaVersion = 1
 
 const schema = `
 CREATE TABLE IF NOT EXISTS denied (
@@ -64,27 +69,8 @@ func (f Filter) where(extra ...string) (string, []any) {
 	return " WHERE " + strings.Join(conds, " AND "), args
 }
 
-func StateDir() string {
-	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
-		return filepath.Join(v, "hsh")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "hsh-state"
-	}
-	return filepath.Join(home, ".local", "state", "hsh")
-}
-
-func SessionsDir() string {
-	return filepath.Join(StateDir(), "sessions")
-}
-
-func SessionDir(session string) string {
-	return filepath.Join(SessionsDir(), session)
-}
-
 func DefaultPath() string {
-	return filepath.Join(StateDir(), "denied.db")
+	return filepath.Join(state.Dir(), "monitor.db")
 }
 
 func Open(path string) (*sql.DB, error) {
@@ -97,62 +83,11 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := dbschema.Apply(db, "monitor.db", path, SchemaVersion, schema); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("initialize denial database: %w", err)
-	}
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate denial database: %w", err)
+		return nil, fmt.Errorf("monitor database: %w", err)
 	}
 	return db, nil
-}
-
-func migrate(db *sql.DB) error {
-	hasSession, hasWorkspace, hasIgnored, err := columns(db, "denied")
-	if err != nil {
-		return err
-	}
-	if !hasIgnored {
-		if _, err := db.Exec("ALTER TABLE denied ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return err
-		}
-	}
-	if !hasSession || !hasWorkspace {
-		if err := rebuild(db, "denied"); err != nil {
-			return err
-		}
-	}
-	if err := mergeLegacyDNS(db); err != nil {
-		return err
-	}
-	return ensureHoldingColumn(db)
-}
-
-func ensureHoldingColumn(db *sql.DB) error {
-	rows, err := db.Query("PRAGMA table_info(denied)")
-	if err != nil {
-		return err
-	}
-	has := false
-	for rows.Next() {
-		var cid, notNull, pk int
-		var name, ctype string
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			rows.Close()
-			return err
-		}
-		if name == "holding" {
-			has = true
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil || has {
-		return err
-	}
-	_, err = db.Exec("ALTER TABLE denied ADD COLUMN holding INTEGER NOT NULL DEFAULT 0")
-	return err
 }
 
 func AdjustHolding(db *sql.DB, session, host string, delta int) error {
@@ -163,123 +98,6 @@ func AdjustHolding(db *sql.DB, session, host string, delta int) error {
 func ResetHolding(db *sql.DB, session string) error {
 	_, err := db.Exec(`UPDATE denied SET holding = 0 WHERE session = ?`, session)
 	return err
-}
-
-func mergeLegacyDNS(db *sql.DB) error {
-	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'dns_denied'")
-	if err != nil {
-		return err
-	}
-	hasTable := rows.Next()
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if !hasTable {
-		return nil
-	}
-	hasSession, hasWorkspace, hasIgnored, err := columns(db, "dns_denied")
-	if err != nil {
-		return err
-	}
-	sessionCol := "''"
-	if hasSession {
-		sessionCol = "session"
-	}
-	workspaceCol := "''"
-	if hasWorkspace {
-		workspaceCol = "workspace"
-	}
-	ignoredCol := "0"
-	if hasIgnored {
-		ignoredCol = "COALESCE(ignored, 0)"
-	}
-	merge := `INSERT INTO denied (host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored)
-		SELECT host, ` + sessionCol + `, ` + workspaceCol + `, target, count, first_seen, last_seen, allowed, allowed_at, ` + ignoredCol + ` FROM dns_denied WHERE true
-		ON CONFLICT(host, session) DO UPDATE SET
-			count = denied.count + excluded.count,
-			last_seen = MAX(denied.last_seen, excluded.last_seen),
-			allowed = MAX(denied.allowed, excluded.allowed)`
-	if _, err := db.Exec(merge); err != nil {
-		return fmt.Errorf("merge dns_denied into denied: %w", err)
-	}
-	if _, err := db.Exec("DROP TABLE dns_denied"); err != nil {
-		return err
-	}
-	return nil
-}
-
-func columns(db *sql.DB, table string) (session, workspace, ignored bool, err error) {
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
-	if err != nil {
-		return false, false, false, err
-	}
-	defer rows.Close()
-	var names []string
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notNull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dflt, &pk); err != nil {
-			return false, false, false, err
-		}
-		names = append(names, name)
-	}
-	if err := rows.Err(); err != nil {
-		return false, false, false, err
-	}
-	for _, n := range names {
-		switch n {
-		case "session":
-			session = true
-		case "workspace":
-			workspace = true
-		case "ignored":
-			ignored = true
-		}
-	}
-	return session, workspace, ignored, nil
-}
-
-func rebuild(db *sql.DB, table string) error {
-	tmp := table + "_new"
-	queries := []string{
-		`CREATE TABLE ` + tmp + ` (
-			host       TEXT NOT NULL,
-			session    TEXT NOT NULL DEFAULT '',
-			workspace  TEXT NOT NULL DEFAULT '',
-			target     TEXT NOT NULL,
-			count      INTEGER NOT NULL,
-			first_seen TEXT NOT NULL,
-			last_seen  TEXT NOT NULL,
-			allowed    INTEGER NOT NULL DEFAULT 0,
-			allowed_at TEXT,
-			ignored    INTEGER NOT NULL DEFAULT 0,
-			PRIMARY KEY (host, session)
-		)`,
-		`INSERT INTO ` + tmp + ` (host, session, workspace, target, count, first_seen, last_seen, allowed, allowed_at, ignored)
-			SELECT host, '', '', target, count, first_seen, last_seen, allowed, allowed_at, COALESCE(ignored, 0) FROM ` + table,
-		`DROP TABLE ` + table,
-		`ALTER TABLE ` + tmp + ` RENAME TO ` + table,
-	}
-	for _, q := range queries {
-		if _, err := db.Exec(q); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func OpenReadOnly(path string) (*sql.DB, error) {
-	if _, err := os.Stat(path); err != nil {
-		return nil, err
-	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
-	if err != nil {
-		return nil, err
-	}
-	return db, nil
 }
 
 func Exists(path string) bool {

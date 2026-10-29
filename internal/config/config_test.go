@@ -141,6 +141,7 @@ func writeConfig(t *testing.T, body string) string {
 
 func TestLoadRejectsUnknownScheme(t *testing.T) {
 	path := writeConfig(t, `{
+  "version": 1,
   "secrets": { "API_KEY": { "from": "keyring://icloud", "hosts": ["a.example"] } }
 }`)
 	_, err := Load(path)
@@ -150,7 +151,7 @@ func TestLoadRejectsUnknownScheme(t *testing.T) {
 }
 
 func TestFromImageLabelRejectsUnknownScheme(t *testing.T) {
-	_, err := FromImageLabel(`{"secrets":{"K":{"from":"keyring://icloud"}}}`)
+	_, err := FromImageLabel(`{"version":1,"secrets":{"K":{"from":"keyring://icloud"}}}`)
 	if err == nil {
 		t.Fatal("expected label parsing to fail on an unknown secret scheme")
 	}
@@ -158,6 +159,7 @@ func TestFromImageLabelRejectsUnknownScheme(t *testing.T) {
 
 func TestAddSecretPreservesOtherFields(t *testing.T) {
 	path := writeConfig(t, `{
+  "version": 1,
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "network": { "mode": "allowlist", "allow": ["api.mistral.ai"] }
@@ -200,6 +202,7 @@ func TestAddSecretPreservesOtherFields(t *testing.T) {
 
 func TestAddSecretUpdatesExisting(t *testing.T) {
 	path := writeConfig(t, `{
+  "version": 1,
   "secrets": { "API_KEY": { "from": "env://OLD", "hosts": ["a.example"], "header": "X-Old" } }
 }
 `)
@@ -218,6 +221,7 @@ func TestAddSecretUpdatesExisting(t *testing.T) {
 
 func TestFindSecretRefs(t *testing.T) {
 	path := writeConfig(t, `{
+  "version": 1,
   "secrets": {
     "API_KEY": { "from": "hsh://my-key", "hosts": ["a.example"] },
     "OTHER": { "from": "hsh://other-key", "hosts": ["b.example"] }
@@ -278,24 +282,24 @@ func TestApprovalWaitLoadsValidatesAndRoundTrips(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(`{"network":{"mode":"allowlist"}}`)
+	write(`{"version":1,"network":{"mode":"allowlist"}}`)
 	cfg, err := Load(path)
 	if err != nil || cfg.Network.ApprovalWaitDuration() != DefaultApprovalWait {
 		t.Fatalf("default: %v %v", cfg, err)
 	}
-	write(`{"network":{"approval_wait":"off"}}`)
+	write(`{"version":1,"network":{"approval_wait":"off"}}`)
 	if cfg, err = Load(path); err != nil || cfg.Network.ApprovalWaitDuration() != 0 {
 		t.Fatalf("off: %v %v", cfg, err)
 	}
-	write(`{"network":{"approval_wait":"10m"}}`)
+	write(`{"version":1,"network":{"approval_wait":"10m"}}`)
 	if _, err = Load(path); err == nil {
 		t.Fatal("an over-limit wait was accepted")
 	}
-	if _, err = FromImageLabel(`{"network":{"approval_wait":"nope"}}`); err == nil {
+	if _, err = FromImageLabel(`{"version":1,"network":{"approval_wait":"nope"}}`); err == nil {
 		t.Fatal("a bad wait in an image label was accepted")
 	}
 
-	write(`{"image":"x","network":{"mode":"allowlist","allow":["a.example"]},"secrets":{}}`)
+	write(`{"version":1,"image":"x","network":{"mode":"allowlist","allow":["a.example"]},"secrets":{}}`)
 	if err := SetApprovalWait(path, "45s"); err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +326,7 @@ func TestApprovalWaitLoadsValidatesAndRoundTrips(t *testing.T) {
 }
 
 func TestNoticeAndContextFilesFromLabel(t *testing.T) {
-	cfg, err := FromImageLabel(`{"agent":{"launch":["pi","--append-system-prompt","{network_policy}"],"context_files":["~/.codex/AGENTS.md"]}}`)
+	cfg, err := FromImageLabel(`{"version":1,"agent":{"launch":["pi","--append-system-prompt","{network_policy}"],"context_files":["~/.codex/AGENTS.md"]}}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,7 +339,7 @@ func TestNoticeAndContextFilesFromLabel(t *testing.T) {
 	if cfg.Agent.Launch[2] != "{network_policy}" {
 		t.Fatalf("launch = %q", cfg.Agent.Launch)
 	}
-	cfg, err = FromImageLabel(`{"network":{"notice":false}}`)
+	cfg, err = FromImageLabel(`{"version":1,"network":{"notice":false}}`)
 	if err != nil || cfg.Network.NoticeEnabled() {
 		t.Fatalf("notice:false not honoured: %v", err)
 	}

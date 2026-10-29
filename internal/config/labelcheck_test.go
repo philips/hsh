@@ -35,6 +35,9 @@ func TestHarnessImageLabels(t *testing.T) {
 			t.Errorf("%s: label does not parse or validate: %v", cf, err)
 			continue
 		}
+		if cfg.Version != Version {
+			t.Errorf("%s: label version is %d, want %d", cf, cfg.Version, Version)
+		}
 		if cfg.Shell != "/bin/bash" {
 			t.Errorf("%s: label shell is %q", cf, cfg.Shell)
 		}

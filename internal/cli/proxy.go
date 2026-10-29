@@ -16,8 +16,8 @@ func Proxy(args []string) error {
 	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	caKey := fs.String("ca-key", "/hsh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
-	deniedDB := fs.String("denied-db", "", "denial database path (empty disables recording)")
-	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the denial database)")
+	monitorDB := fs.String("monitor-db", "", "monitor database path (empty disables recording)")
+	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the monitor database)")
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	session := fs.String("session", "", "session id recorded with each denial")
 	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
@@ -26,8 +26,8 @@ func Proxy(args []string) error {
 		return err
 	}
 	storePath := *oauthStore
-	if storePath == "" && *deniedDB != "" {
-		storePath = filepath.Join(filepath.Dir(*deniedDB), "oauth-tokens.json")
+	if storePath == "" && *monitorDB != "" {
+		storePath = filepath.Join(filepath.Dir(*monitorDB), "oauth-tokens.json")
 	}
 	p, err := proxy.New(proxy.Options{
 		ListenAddr:   *listen,
@@ -36,7 +36,7 @@ func Proxy(args []string) error {
 		CACertPath:   *caCert,
 		CAKeyPath:    *caKey,
 		RootsPath:    *roots,
-		DeniedDB:     *deniedDB,
+		MonitorDB:    *monitorDB,
 		OAuthStore:   storePath,
 		NetworkMode:  *networkMode,
 		Session:      *session,

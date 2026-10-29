@@ -9,8 +9,11 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"hsh/internal/dbschema"
 	"hsh/internal/version"
 )
+
+const SchemaVersion = 1
 
 const schema = `
 CREATE TABLE IF NOT EXISTS events (
@@ -32,7 +35,7 @@ func Append(sessionDir, kind string) error {
 	}
 	defer db.Close()
 	insert := func() error {
-		if _, err := db.Exec(schema); err != nil {
+		if err := dbschema.Apply(db, "session.db", path, SchemaVersion, schema); err != nil {
 			return err
 		}
 		_, err := db.Exec(

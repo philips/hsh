@@ -3,7 +3,7 @@ package proxywatch
 import (
 	"time"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 )
 
 const refreshInterval = 2 * time.Second
@@ -11,8 +11,8 @@ const refreshInterval = 2 * time.Second
 type tickMsg time.Time
 
 type refreshMsg struct {
-	pending []denieddb.DeniedHost
-	ignored []denieddb.DeniedHost
+	pending []monitordb.DeniedHost
+	ignored []monitordb.DeniedHost
 	holds   map[string]string
 	err     error
 }
@@ -33,6 +33,6 @@ const (
 
 type actionMsg struct {
 	kind action
-	rows []denieddb.DeniedHost
+	rows []monitordb.DeniedHost
 	err  error
 }

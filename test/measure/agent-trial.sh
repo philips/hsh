@@ -74,6 +74,7 @@ config() {
 	esac
 	cat >"$OUT/config.hsh" <<EOC
 {
+  "version": 1,
   "image": "$IMAGE",
   "shell": "/bin/bash",
   "mounts": ["$WS:/workspace"],
@@ -150,7 +151,7 @@ for variant in ${VARIANTS:-v0 v1 v2 v3 v4}; do
 		(cd "$WS" && timeout "$TIMEOUT" "$HSHBIN" run --pull=never --config "$OUT/config.hsh" --tasks "$TASKS" >"$log" 2>"$log.err")
 		echo "exit=$? ($variant run $i)"
 		summarize "$log" "$variant run $i"
-		HSH_NO_UPDATE_CHECK=1 "$HSHBIN" proxy denied --db "$XDG_STATE_HOME/hsh/denied.db" 2>/dev/null | tail -n +2 | awk '{ print "   denied:", $3, "count=" $4 }'
+		HSH_NO_UPDATE_CHECK=1 "$HSHBIN" proxy denied --db "$XDG_STATE_HOME/hsh/monitor.db" 2>/dev/null | tail -n +2 | awk '{ print "   denied:", $3, "count=" $4 }'
 	done
 done
 cleanup_pods

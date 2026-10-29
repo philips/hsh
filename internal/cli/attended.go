@@ -5,11 +5,12 @@ import (
 	"time"
 
 	"hsh/internal/attend"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
+	"hsh/internal/state"
 )
 
-func touchSessions(f denieddb.Filter) {
-	entries, err := os.ReadDir(denieddb.SessionsDir())
+func touchSessions(f monitordb.Filter) {
+	entries, err := os.ReadDir(state.SessionsDir())
 	if err != nil {
 		return
 	}
@@ -20,7 +21,7 @@ func touchSessions(f denieddb.Filter) {
 		if f.Session != "" && e.Name() != f.Session {
 			continue
 		}
-		dir := denieddb.SessionDir(e.Name())
+		dir := state.SessionDir(e.Name())
 		if f.Workspace != "" && readWorkspaceFile(dir) != f.Workspace {
 			continue
 		}
@@ -28,7 +29,7 @@ func touchSessions(f denieddb.Filter) {
 	}
 }
 
-func watchSessions(f denieddb.Filter) func() {
+func watchSessions(f monitordb.Filter) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {

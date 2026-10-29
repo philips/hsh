@@ -1,9 +1,12 @@
 package secretstore
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +121,61 @@ func TestReopenNotCreated(t *testing.T) {
 	defer db.Close()
 	if created {
 		t.Fatal("second open should not report the store as newly created")
+	}
+}
+
+func TestStoreWithoutASchemaVersionIsAdoptedWithItsSecrets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`INSERT INTO secrets (name, value, created_at, updated_at) VALUES ('k', 'v', 'x', 'y')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	db, created, err := Open(path)
+	if err != nil || created {
+		t.Fatalf("open: created=%v err=%v", created, err)
+	}
+	defer db.Close()
+	if v, err := db.Get("k"); err != nil || v != "v" {
+		t.Fatalf("adopted store lost its secret: %q %v", v, err)
+	}
+	raw, err = sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var ver int
+	if err := raw.QueryRow("PRAGMA user_version").Scan(&ver); err != nil || ver != SchemaVersion {
+		t.Fatalf("user_version = %d, %v", ver, err)
+	}
+}
+
+func TestStoreWithANewerSchemaIsRefusedAndLeftAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.db")
+	db, _, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Set("k", "v", false); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion+1)); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	_, _, err = Open(path)
+	if err == nil || !strings.Contains(err.Error(), "secret store: secrets.db has schema version 2, newer than this hsh reads (version 1); update hsh") {
+		t.Fatalf("open: %v", err)
 	}
 }

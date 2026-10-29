@@ -20,7 +20,7 @@ import (
 
 	"hsh/internal/certs"
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 )
 
 type Options struct {
@@ -30,7 +30,7 @@ type Options struct {
 	CACertPath   string
 	CAKeyPath    string
 	RootsPath    string
-	DeniedDB     string
+	MonitorDB    string
 	OAuthStore   string
 	NetworkMode  string
 	Session      string
@@ -51,7 +51,7 @@ type Proxy struct {
 	ca        *certs.CA
 	roots     *x509.CertPool
 	transport *http.Transport
-	deniedDB  *sql.DB
+	monitorDB *sql.DB
 	store     *tokenStore
 	holds     holdState
 
@@ -87,17 +87,17 @@ func New(opts Options) (*Proxy, error) {
 		ResponseHeaderTimeout: 120 * time.Second,
 	}
 	var db *sql.DB
-	if opts.DeniedDB != "" {
+	if opts.MonitorDB != "" {
 		var err error
-		db, err = denieddb.Open(opts.DeniedDB)
+		db, err = monitordb.Open(opts.MonitorDB)
 		if err != nil {
-			return nil, fmt.Errorf("open denial database: %w", err)
+			return nil, fmt.Errorf("open monitor database: %w", err)
 		}
 		if opts.Session != "" {
-			_ = denieddb.ResetHolding(db, opts.Session)
+			_ = monitordb.ResetHolding(db, opts.Session)
 		}
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, deniedDB: db, store: loadTokenStore(opts.OAuthStore)}, nil
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, monitorDB: db, store: loadTokenStore(opts.OAuthStore)}, nil
 }
 
 func (p *Proxy) Run() error {

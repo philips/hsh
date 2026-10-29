@@ -12,7 +12,7 @@ import (
 
 func writeModeConfig(t *testing.T, dir, mode string) string {
 	t.Helper()
-	cfg := fmt.Sprintf(`{"network": {"mode": %q, "allow": []}}`, mode)
+	cfg := fmt.Sprintf(`{"version": 1, "network": {"mode": %q, "allow": []}}`, mode)
 	p := filepath.Join(dir, "config.hsh")
 	if err := os.WriteFile(p, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)

@@ -14,19 +14,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
+	"hsh/internal/state"
 )
 
 type Model struct {
 	db          *sql.DB
-	filter      denieddb.Filter
+	filter      monitordb.Filter
 	showIgnored bool
 	status      string
 
 	table       table.Model
-	pendingRows []denieddb.DeniedHost
-	ignoredRows []denieddb.DeniedHost
-	rows        []denieddb.DeniedHost
+	pendingRows []monitordb.DeniedHost
+	ignoredRows []monitordb.DeniedHost
+	rows        []monitordb.DeniedHost
 	selected    map[string]bool
 	holds       map[string]string
 
@@ -37,7 +38,7 @@ type Model struct {
 	height int
 }
 
-func rowKey(h denieddb.DeniedHost) string {
+func rowKey(h monitordb.DeniedHost) string {
 	return h.Host + "@" + h.Session
 }
 
@@ -75,7 +76,7 @@ func defaultColumns(width int) []table.Column {
 	}
 }
 
-func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedHost, showIgnored bool) Model {
+func New(db *sql.DB, filter monitordb.Filter, pending, ignored []monitordb.DeniedHost, showIgnored bool) Model {
 	m := Model{
 		db:          db,
 		filter:      filter,
@@ -109,8 +110,8 @@ func New(db *sql.DB, filter denieddb.Filter, pending, ignored []denieddb.DeniedH
 	return m
 }
 
-func (m Model) allRows() []denieddb.DeniedHost {
-	var rows []denieddb.DeniedHost
+func (m Model) allRows() []monitordb.DeniedHost {
+	var rows []monitordb.DeniedHost
 	rows = append(rows, m.pendingRows...)
 	sort.Slice(rows, func(a, b int) bool {
 		if (rows[a].Holding > 0) != (rows[b].Holding > 0) {
@@ -127,7 +128,7 @@ func (m Model) allRows() []denieddb.DeniedHost {
 	return rows
 }
 
-func (m Model) tableRows(rows []denieddb.DeniedHost) []table.Row {
+func (m Model) tableRows(rows []monitordb.DeniedHost) []table.Row {
 	out := make([]table.Row, 0, len(rows))
 	for _, h := range rows {
 		sel := ""
@@ -174,13 +175,13 @@ func (m Model) filterText() string {
 	return strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
 }
 
-func (m Model) visibleRows() []denieddb.DeniedHost {
+func (m Model) visibleRows() []monitordb.DeniedHost {
 	all := m.allRows()
 	f := m.filterText()
 	if f == "" {
 		return all
 	}
-	var rows []denieddb.DeniedHost
+	var rows []monitordb.DeniedHost
 	for _, h := range all {
 		if strings.Contains(strings.ToLower(h.Session), f) ||
 			strings.Contains(strings.ToLower(h.Workspace), f) ||
@@ -355,8 +356,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) selectedRows() []denieddb.DeniedHost {
-	var out []denieddb.DeniedHost
+func (m Model) selectedRows() []monitordb.DeniedHost {
+	var out []monitordb.DeniedHost
 	for _, h := range m.rows {
 		if !h.Ignored && m.selected[rowKey(h)] {
 			out = append(out, h)
@@ -403,7 +404,7 @@ func (m Model) ignore() (tea.Model, tea.Cmd) {
 	return m, m.actionCmd(actionIgnore, rows)
 }
 
-func (m Model) actionCmd(kind action, rows []denieddb.DeniedHost) tea.Cmd {
+func (m Model) actionCmd(kind action, rows []monitordb.DeniedHost) tea.Cmd {
 	db := m.db
 	return func() tea.Msg {
 		bySession := map[string][]string{}
@@ -414,15 +415,15 @@ func (m Model) actionCmd(kind action, rows []denieddb.DeniedHost) tea.Cmd {
 			switch kind {
 			case actionApprove:
 				if session != "" {
-					if _, err := config.AddAllowedHosts(denieddb.SessionDir(session)+"/config.json", hosts); err != nil {
+					if _, err := config.AddAllowedHosts(state.SessionDir(session)+"/config.json", hosts); err != nil {
 						return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
 					}
 				}
-				if err := denieddb.MarkAllowed(db, session, hosts); err != nil {
+				if err := monitordb.MarkAllowed(db, session, hosts); err != nil {
 					return actionMsg{kind: kind, err: err}
 				}
 			case actionIgnore:
-				if err := denieddb.MarkIgnored(db, session, hosts); err != nil {
+				if err := monitordb.MarkIgnored(db, session, hosts); err != nil {
 					return actionMsg{kind: kind, err: err}
 				}
 			}
@@ -453,7 +454,7 @@ func (m Model) applyAction(msg actionMsg) (tea.Model, tea.Cmd) {
 		handled[rowKey(r)] = true
 		delete(m.selected, rowKey(r))
 	}
-	var kept []denieddb.DeniedHost
+	var kept []monitordb.DeniedHost
 	for _, h := range m.pendingRows {
 		if handled[rowKey(h)] {
 			if msg.kind == actionIgnore {
@@ -481,11 +482,11 @@ func (m Model) refreshCmd() tea.Cmd {
 	db := m.db
 	filter := m.filter
 	return func() tea.Msg {
-		pending, err := denieddb.Pending(db, filter)
+		pending, err := monitordb.Pending(db, filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		ignored, err := denieddb.Ignored(db, filter)
+		ignored, err := monitordb.Ignored(db, filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
@@ -494,10 +495,10 @@ func (m Model) refreshCmd() tea.Cmd {
 }
 
 func sessionConfigFile(session string) string {
-	return denieddb.SessionDir(session) + "/config.json"
+	return state.SessionDir(session) + "/config.json"
 }
 
-func loadHolds(f denieddb.Filter, rows ...[]denieddb.DeniedHost) map[string]string {
+func loadHolds(f monitordb.Filter, rows ...[]monitordb.DeniedHost) map[string]string {
 	sessions := map[string]bool{}
 	if f.Session != "" {
 		sessions[f.Session] = true
@@ -580,7 +581,7 @@ func (m Model) holdTitle() string {
 	return summary + " (session " + session + ")"
 }
 
-func title(showIgnored bool, f denieddb.Filter) string {
+func title(showIgnored bool, f monitordb.Filter) string {
 	t := "denied hosts awaiting review"
 	if showIgnored {
 		t = "denied hosts — pending and ignored"

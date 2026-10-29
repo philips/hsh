@@ -11,7 +11,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
+	"hsh/internal/state"
 )
 
 type testEnv struct {
@@ -36,29 +37,29 @@ func newTestEnv(t *testing.T, hosts ...string) *testEnv {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	db, err := denieddb.Open(filepath.Join(dir, "denied.db"))
+	db, err := monitordb.Open(filepath.Join(dir, "monitor.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	session := "testsess"
-	sessionDir := denieddb.SessionDir(session)
+	sessionDir := state.SessionDir(session)
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	configPath := filepath.Join(sessionDir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"network": {"allow": ["already.example.com"]}}`), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte(`{"version": 1, "network": {"allow": ["already.example.com"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	env := &testEnv{db: db, configPath: configPath, dir: dir, session: session}
 	for i, h := range hosts {
 		recordAt(t, db, h, h+":443", time.Now().UTC().Add(-time.Duration(len(hosts)-i)*time.Hour), session)
 	}
-	pending, err := denieddb.Pending(db, denieddb.Filter{})
+	pending, err := monitordb.Pending(db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env.model = New(db, denieddb.Filter{}, pending, nil, false)
+	env.model = New(db, monitordb.Filter{}, pending, nil, false)
 	return env
 }
 
@@ -134,11 +135,11 @@ func TestApproveSelected(t *testing.T) {
 	if got := allowlist(t, env.configPath); !hasHost(got, "beta.example.com") {
 		t.Errorf("approved host missing from network.allow: %v", got)
 	}
-	all, err := denieddb.All(env.db, denieddb.Filter{})
+	all, err := monitordb.All(env.db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var row *denieddb.DeniedHost
+	var row *monitordb.DeniedHost
 	for i := range all {
 		if all[i].Host == "beta.example.com" {
 			row = &all[i]
@@ -168,7 +169,7 @@ func TestIgnoreSelected(t *testing.T) {
 	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
 		t.Errorf("ignored host was added to the allowlist: %v", got)
 	}
-	ignored, err := denieddb.Ignored(env.db, denieddb.Filter{})
+	ignored, err := monitordb.Ignored(env.db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,15 +213,15 @@ func TestShowIgnoredToggle(t *testing.T) {
 		t.Errorf("unexpected status %q", m.status)
 	}
 
-	pending, err := denieddb.Pending(env.db, denieddb.Filter{})
+	pending, err := monitordb.Pending(env.db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := denieddb.Ignored(env.db, denieddb.Filter{})
+	ignored, err := monitordb.Ignored(env.db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m2 := New(env.db, denieddb.Filter{}, pending, ignored, true)
+	m2 := New(env.db, monitordb.Filter{}, pending, ignored, true)
 	if !hasHost(listHosts(m2), "beta.example.com") {
 		t.Error("New with showIgnored=true does not list ignored hosts")
 	}
@@ -295,7 +296,7 @@ func TestApproveConfigFailure(t *testing.T) {
 	if !strings.Contains(m.status, "error") {
 		t.Errorf("config failure not surfaced: %q", m.status)
 	}
-	pending, err := denieddb.Pending(env.db, denieddb.Filter{})
+	pending, err := monitordb.Pending(env.db, monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,12 +385,12 @@ func TestFilterTabCompletion(t *testing.T) {
 func TestRefreshEmptyQueueDoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	db, err := denieddb.Open(filepath.Join(dir, "denied.db"))
+	db, err := monitordb.Open(filepath.Join(dir, "monitor.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	m := New(db, denieddb.Filter{}, nil, nil, false)
+	m := New(db, monitordb.Filter{}, nil, nil, false)
 	msg := runCmd(m.refreshCmd())
 	updated, _ := send(m, msg)
 	if len(updated.rows) != 0 {
@@ -415,8 +416,8 @@ func TestRefreshToEmptyPreservesNoCursor(t *testing.T) {
 	}
 }
 
-func (e *testEnv) pendingSnapshot() []denieddb.DeniedHost {
-	pending, err := denieddb.Pending(e.db, denieddb.Filter{})
+func (e *testEnv) pendingSnapshot() []monitordb.DeniedHost {
+	pending, err := monitordb.Pending(e.db, monitordb.Filter{})
 	if err != nil {
 		return nil
 	}
@@ -487,17 +488,17 @@ func TestToggleHoldNeedsASession(t *testing.T) {
 
 func TestToggleHoldActsOnTheSelectedRowsSession(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
-	other := denieddb.SessionDir("othersess")
+	other := state.SessionDir("othersess")
 	if err := os.MkdirAll(other, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	otherCfg := filepath.Join(other, "config.json")
-	if err := os.WriteFile(otherCfg, []byte(`{"network":{"allow":[]}}`), 0o644); err != nil {
+	if err := os.WriteFile(otherCfg, []byte(`{"version":1,"network":{"allow":[]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	recordAt(t, env.db, "zeta.example.com", "zeta.example.com:443", time.Now().UTC().Add(time.Hour), "othersess")
-	pending, _ := denieddb.Pending(env.db, denieddb.Filter{})
-	m := New(env.db, denieddb.Filter{}, pending, nil, false)
+	pending, _ := monitordb.Pending(env.db, monitordb.Filter{})
+	m := New(env.db, monitordb.Filter{}, pending, nil, false)
 	if m.rows[0].Session != "othersess" {
 		t.Fatalf("expected the most recent row (othersess) first, got %s", m.rows[0].Session)
 	}
@@ -532,11 +533,11 @@ func TestTypingWInTheFilterDoesNotToggleHolding(t *testing.T) {
 
 func TestHeldHostsAreListedFirstAndMarked(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
-	if err := denieddb.AdjustHolding(env.db, env.session, "alpha.example.com", 2); err != nil {
+	if err := monitordb.AdjustHolding(env.db, env.session, "alpha.example.com", 2); err != nil {
 		t.Fatal(err)
 	}
-	pending, _ := denieddb.Pending(env.db, denieddb.Filter{})
-	m := New(env.db, denieddb.Filter{}, pending, nil, false)
+	pending, _ := monitordb.Pending(env.db, monitordb.Filter{})
+	m := New(env.db, monitordb.Filter{}, pending, nil, false)
 	m, _ = send(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 	if m.rows[0].Host != "alpha.example.com" {
 		t.Fatalf("the held host is not first: %v", listHosts(m))

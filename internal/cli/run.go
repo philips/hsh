@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,13 +20,14 @@ import (
 
 	"hsh/internal/certs"
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
 	"hsh/internal/forward"
 	"hsh/internal/imageRef"
+	"hsh/internal/monitordb"
 	"hsh/internal/netsetup"
 	"hsh/internal/notice"
 	"hsh/internal/secretstore"
 	"hsh/internal/sessiondb"
+	"hsh/internal/state"
 	"hsh/internal/update"
 )
 
@@ -33,7 +35,7 @@ type runOptions struct {
 	configPath   string
 	workdir      string
 	workspaceSel string
-	deniedDB     string
+	monitorDB    string
 	secretDB     string
 	tasksPath    string
 	networkMode  string
@@ -48,15 +50,15 @@ type runOptions struct {
 
 func runCommand() *ff.Command {
 	ro := runOptions{
-		deniedDB: denieddb.DefaultPath(),
-		secretDB: secretstore.DefaultPath(),
-		pull:     "newer",
+		monitorDB: monitordb.DefaultPath(),
+		secretDB:  secretstore.DefaultPath(),
+		pull:      "newer",
 	}
 	fs := ff.NewFlagSet("run")
 	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
 	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point)")
 	fs.StringVar(&ro.workspaceSel, 0, "workspace", "", "with --resume: select the session by host workspace directory")
-	fs.StringVar(&ro.deniedDB, 0, "denied-db", denieddb.DefaultPath(), "proxy denial database")
+	fs.StringVar(&ro.monitorDB, 0, "monitor-db", monitordb.DefaultPath(), "monitor database")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
 	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
@@ -213,7 +215,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		sessionID = newSessionID()
 	}
 	podName := "hsh-" + sessionID
-	sessionDir := denieddb.SessionDir(sessionID)
+	sessionDir := state.SessionDir(sessionID)
 	sessionConfig := filepath.Join(sessionDir, "config.json")
 
 	var cfg *config.Config
@@ -223,7 +225,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if resumeSession {
 		cfg, err = config.Load(sessionConfig)
 		if err != nil {
-			return fmt.Errorf("session %s: %w (remove orphaned session state with: hsh gc)", sessionID, err)
+			return sessionConfigError(sessionID, err)
 		}
 		if !podExists(podName) {
 			return fmt.Errorf("session %s has no pod (remove orphaned session state with: hsh gc)", sessionID)
@@ -243,7 +245,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			ro.fresh = false
 			sessionID = newSessionID()
 			podName = "hsh-" + sessionID
-			sessionDir = denieddb.SessionDir(sessionID)
+			sessionDir = state.SessionDir(sessionID)
 			sessionConfig = filepath.Join(sessionDir, "config.json")
 		}
 	}
@@ -451,7 +453,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
-	stateDir := filepath.Dir(ro.deniedDB)
+	stateDir := filepath.Dir(ro.monitorDB)
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -474,7 +476,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--secrets", "/hsh-session/secrets.json",
 		"--ca-cert", "/hsh-session/ca.crt",
 		"--ca-key", "/hsh-session/ca.key",
-		"--denied-db", "/hsh-state/"+filepath.Base(ro.deniedDB),
+		"--monitor-db", "/hsh-state/"+filepath.Base(ro.monitorDB),
 		"--session", sessionID,
 		"--workspace", workspaceSource,
 		"--attended", "/hsh-session/attended",
@@ -589,7 +591,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	var inline *inlineMonitor
 	if detachable {
 		var warn string
-		inline, warn = newInlineMonitor(cfg, sessionID, ro.deniedDB, sessionConfig, interactive)
+		inline, warn = newInlineMonitor(cfg, sessionID, ro.monitorDB, sessionConfig, interactive)
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
@@ -683,6 +685,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 	}
 	return exitWith(code)
+}
+
+func sessionConfigError(sessionID string, err error) error {
+	var ve *config.VersionError
+	switch {
+	case errors.As(err, &ve) && ve.Stale():
+		return fmt.Errorf("session %s: %w; remove the session with: hsh rm %s", sessionID, err, sessionID)
+	case errors.As(err, &ve):
+		return fmt.Errorf("session %s: %w", sessionID, err)
+	}
+	return fmt.Errorf("session %s: %w (remove orphaned session state with: hsh gc)", sessionID, err)
 }
 
 func resolveImage(ref string, pull string) (string, error) {

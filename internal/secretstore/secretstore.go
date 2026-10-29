@@ -3,13 +3,17 @@ package secretstore
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"hsh/internal/config"
+	"hsh/internal/dbschema"
 	"os"
 	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
+
+const SchemaVersion = 1
 
 const schema = `
 CREATE TABLE IF NOT EXISTS secrets (
@@ -76,9 +80,9 @@ func Open(path string) (*DB, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if err := dbschema.Apply(db, "secrets.db", path, SchemaVersion, schema); err != nil {
 		db.Close()
-		return nil, false, err
+		return nil, false, fmt.Errorf("secret store: %w", err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		db.Close()

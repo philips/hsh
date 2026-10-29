@@ -14,6 +14,7 @@ as the config - see [pre-built harness images](images.md).
 
 ```json
 {
+  "version": 1,
   "image": "docker.io/library/alpine:latest",
   "shell": "/bin/sh",
   "mounts": [".:/workspace"],
@@ -31,10 +32,42 @@ as the config - see [pre-built harness images](images.md).
 }
 ```
 
+## Config versions
+
+Every config has a top-level `"version"` integer: the seed file, the session's
+config copy, and the `org.ifup.hsh` image label. It is required. An hsh reads
+only the versions it understands (today, exactly `1`) and refuses anything
+else with a message that says what to do:
+
+- no `version`: `no "version" field (this hsh reads version 1)`
+- a newer version (an image or session from a newer hsh):
+  `config version N is newer than this hsh reads (version 1); update hsh (hsh update)`
+- an older, unsupported version: `config version N is no longer supported
+  (this hsh reads version 1); regenerate it`, plus `rebuild the image` for a
+  label and `remove the session with: hsh rm ID` for a session. Nothing is
+  migrated: configs are rewritten, images rebuilt, sessions recreated.
+
+After the version check the config is decoded strictly: a field hsh does not
+know is an error that names it (a typo such as `"approval_wiat"` never silently
+changes the policy). The commands that edit a session's config
+(`hsh proxy allow`, `hsh proxy hold`, `hsh secret add --config`, and the
+monitor) apply the same version check first and leave a file they cannot read
+untouched.
+
+A proxy that is running when its session config becomes unreadable (for
+example a newer hsh rewrote it) keeps enforcing the last config it could read
+and logs `configuration reload failed` with the reason.
+
+`internal/config`'s `Version` changes whenever the set of config fields
+changes (added, removed, renamed, or changed meaning); a test fails if the
+schema changes without a bump, so images and configs are regenerated on each
+bump.
+
 ## Fields
 
 | Field | Default | Description |
 |---|---|---|
+| `version` | required | config schema version, `1` ([versions](#config-versions)) |
 | `image` | `docker.io/library/alpine:latest` | container image for both the proxy and workspace containers |
 | `shell` | `/bin/sh` | shell to exec in the workspace |
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
@@ -373,13 +406,14 @@ session through a relay in the `hsh run` process, outside the sandbox:
 
 Binaries built without `GOEXPERIMENT=simd` have no terminal emulator
 (`hsh version` says so) and attach directly. The review list comes from the
-proxy's denial database, never from what the session prints.
+proxy's monitor database, never from what the session prints.
 
 ## Managing the allowlist
 
-Denied egress attempts are answered with `403 Forbidden` and recorded in a SQLite
-database (`$XDG_STATE_HOME/hsh/denied.db`, default
-`~/.local/state/hsh/denied.db`). Two subcommands manage it:
+Denied egress attempts are answered with `403 Forbidden` and recorded in the
+monitor database, a SQLite file (`$XDG_STATE_HOME/hsh/monitor.db`, default
+`~/.local/state/hsh/monitor.db`, override with `hsh run --monitor-db PATH`).
+Two subcommands manage it:
 
 ```
 hsh proxy denied [--session ID] [--watch]   # list the review queue
@@ -517,6 +551,7 @@ Minimal dev sandbox with an API key:
 
 ```json
 {
+  "version": 1,
   "mounts": [".:/workspace"],
   "secrets": {
     "API_KEY": {"from": "env://OPENAI_API_KEY", "hosts": ["api.openai.com"]}

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -85,5 +86,28 @@ func TestAppendCorruptDB(t *testing.T) {
 	}
 	if err := Append(dir, "created"); err == nil {
 		t.Fatal("appending to a corrupt database should fail")
+	}
+}
+
+func TestAppendRefusesANewerSchemaAndKeepsTheLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := Append(dir, "created"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "session.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec("PRAGMA user_version = 2"); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	err = Append(dir, "resumed")
+	if err == nil || !strings.Contains(err.Error(), "session.db has schema version 2, newer than this hsh reads (version 1); update hsh") {
+		t.Fatalf("append: %v", err)
+	}
+	if got := rows(t, path); len(got) != 1 || got[0].kind != "created" {
+		t.Fatalf("the log changed: %+v", got)
 	}
 }

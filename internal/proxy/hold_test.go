@@ -16,7 +16,7 @@ import (
 	"hsh/internal/attend"
 	"hsh/internal/certs"
 	"hsh/internal/config"
-	"hsh/internal/denieddb"
+	"hsh/internal/monitordb"
 )
 
 type holdEnv struct {
@@ -33,7 +33,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
 	writeCfg := func(allow string) {
-		doc := fmt.Sprintf(`{"network": {"mode": %q, "allow": [%s]%s}}`, mode, allow, waitJSON(wait))
+		doc := fmt.Sprintf(`{"version": 1, "network": {"mode": %q, "allow": [%s]%s}}`, mode, allow, waitJSON(wait))
 		if err := os.WriteFile(cfgPath, []byte(doc), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -48,7 +48,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 			t.Fatal(err)
 		}
 	}
-	e := &holdEnv{t: t, cfgPath: cfgPath, attended: filepath.Join(dir, "attended"), db: filepath.Join(dir, "denied.db")}
+	e := &holdEnv{t: t, cfgPath: cfgPath, attended: filepath.Join(dir, "attended"), db: filepath.Join(dir, "monitor.db")}
 	if attended {
 		if err := attend.Touch(e.attended); err != nil {
 			t.Fatal(err)
@@ -57,7 +57,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	p, err := New(Options{
 		ListenAddr: "127.0.0.1:0", ConfigPath: cfgPath, SecretsPath: filepath.Join(dir, "secrets.json"),
 		CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"),
-		DeniedDB: e.db, OAuthStore: filepath.Join(dir, "tokens.json"),
+		MonitorDB: e.db, OAuthStore: filepath.Join(dir, "tokens.json"),
 		Session: "s1", Workspace: "/ws", AttendedPath: e.attended,
 	})
 	if err != nil {
@@ -161,12 +161,12 @@ func (e *holdEnv) allow(hosts ...string) {
 
 func (e *holdEnv) ignore(host string) {
 	e.t.Helper()
-	db, err := denieddb.Open(e.db)
+	db, err := monitordb.Open(e.db)
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	defer db.Close()
-	if err := denieddb.MarkIgnored(db, "s1", []string{host}); err != nil {
+	if err := monitordb.MarkIgnored(db, "s1", []string{host}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -422,12 +422,12 @@ func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
 	req := e.send(connectTo("blocked.test:443"))
 	time.Sleep(500 * time.Millisecond)
 	holding := func() int {
-		db, err := denieddb.Open(e.db)
+		db, err := monitordb.Open(e.db)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer db.Close()
-		rows, err := denieddb.All(db, denieddb.Filter{Session: "s1"})
+		rows, err := monitordb.All(db, monitordb.Filter{Session: "s1"})
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("%+v %v", rows, err)
 		}
@@ -446,27 +446,27 @@ func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
 
 func TestProxyStartClearsStaleHoldingCounts(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "denied.db")
-	db, err := denieddb.Open(dbPath)
+	dbPath := filepath.Join(dir, "monitor.db")
+	db, err := monitordb.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := denieddb.Record(db, "/ws", "s1", "stale.test", "stale.test:443"); err != nil {
+	if err := monitordb.Record(db, "/ws", "s1", "stale.test", "stale.test:443"); err != nil {
 		t.Fatal(err)
 	}
-	if err := denieddb.AdjustHolding(db, "s1", "stale.test", 4); err != nil {
+	if err := monitordb.AdjustHolding(db, "s1", "stale.test", 4); err != nil {
 		t.Fatal(err)
 	}
 	db.Close()
 	ca, _ := certs.NewCA()
 	os.WriteFile(filepath.Join(dir, "ca.crt"), ca.CertPEM(), 0o600)
 	os.WriteFile(filepath.Join(dir, "ca.key"), ca.KeyPEM(), 0o600)
-	if _, err := New(Options{CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"), DeniedDB: dbPath, Session: "s1"}); err != nil {
+	if _, err := New(Options{CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"), MonitorDB: dbPath, Session: "s1"}); err != nil {
 		t.Fatal(err)
 	}
-	db, _ = denieddb.Open(dbPath)
+	db, _ = monitordb.Open(dbPath)
 	defer db.Close()
-	rows, _ := denieddb.Pending(db, denieddb.Filter{Session: "s1"})
+	rows, _ := monitordb.Pending(db, monitordb.Filter{Session: "s1"})
 	if len(rows) != 1 || rows[0].Holding != 0 {
 		t.Fatalf("stale counts survived the proxy start: %+v", rows)
 	}

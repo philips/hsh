@@ -3,14 +3,15 @@
 ## Functional test
 
 `test/functional.sh` runs an end-to-end test of the sandbox, the egress
-proxy, the denial database, and the example image:
+proxy, the monitor database, and the example image:
 
 - builds `hsh` and the dummy OpenAI-compatible endpoint
   (`test/dummyopenai`)
 - ensures the fixture image exists (builds it with
   `podman build -t hsh-example test/fixtures/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
-  denied with 403 and recorded in a throwaway denial database, attributed
+  denied with 403 and recorded in a throwaway `monitor.db` (which carries a
+  schema version, with no `denied.db` beside it), attributed
   with the session id and workspace; the session state directory holds
   the config copy and workspace file
 - **step 2**: `hsh proxy allow --all --session ID` adds the denied host to
@@ -105,6 +106,14 @@ proxy, the denial database, and the example image:
   listeners go away with their process. `internal/forward` has Go tests for
   spec parsing, explicit and automatic forwarding (including release and
   re-pickup), busy local ports, dial-failure warnings, and a closing session
+- **step 26**: schema versions — a seed config with no version, a newer one,
+  or an unknown field, and an image label with no version or a newer one,
+  are refused with the documented message and create no session; `secrets.db`
+  and `monitor.db` with a newer `user_version` are refused; in a live session
+  the session config is replaced by a newer-version file, `hsh proxy allow`
+  refuses and leaves it unchanged, the running proxy keeps denying a host the
+  new file would allow and logs the failed reload, `--resume` explains and
+  names `hsh rm`, and `hsh rm` still removes the session
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,
@@ -127,16 +136,24 @@ Run it with:
 
 `internal/proxy/oauth_test.go` covers the OAuth capture over both the
 plain-HTTP and the TLS MITM path as Go unit tests.
-`internal/denieddb` covers the single-table record lifecycle and the
-`dns_denied` merge migration; `internal/secretstore` covers the store CRUD, overwrite semantics, and
-file/directory permissions; `internal/config` covers secret reference
+`internal/monitordb` covers the single-table record lifecycle, the schema
+version, and concurrent first opens; `internal/dbschema` covers the
+`user_version` check (new, adopted, newer, older, concurrent) shared by
+`monitor.db`, `session.db`, and `secrets.db`; `internal/secretstore` covers the
+store CRUD, overwrite semantics, file/directory permissions, and adopting an
+unversioned store with its secrets; `internal/config` covers secret reference
 parsing (`env://`, `hsh://`, bare, unknown schemes), resolution through
-a fake store, and the config rewrite for `secret add`; `internal/cli`
+a fake store, the config rewrite for `secret add`, the version rules (missing,
+newer, older, unknown fields, editors refusing unreadable versions), and a
+schema test (`testdata/schema-v<N>.txt`) that fails when the config fields
+change without a `Version` bump (update it with `go test ./internal/config
+-run TestSchemaMatchesVersion -update-schema`); `internal/proxy` covers a
+reload with a newer config keeping the old policy; `internal/cli`
 covers `secret add`/`rm`/`ls` behavior via `--value-stdin`.
 
 Requirements: Go, rootless podman, network access (for `api.mistral.ai` and
 the image build), and port 8899 free on the host. The test is hermetic: it
-uses a temporary config, workspace, and denial database, and cleans up after
+uses a temporary config, workspace, and monitor database, and cleans up after
 itself. When a step fails, the artifacts are kept in a temp directory (the
 path is printed) for debugging.
 
