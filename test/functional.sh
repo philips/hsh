@@ -1178,6 +1178,11 @@ CMDS
 	done
 	[ -n "$SSH_POD" ] || fail "the ssh test session never started: $(cat "$TMP/ssh-run.out")"
 	for _ in $(seq 1 60); do
+		[ "$(podman inspect --format '{{.State.Status}}' "$SSH_POD-ws" 2>/dev/null)" = "running" ] && break
+		sleep 0.5
+	done
+	[ "$(podman inspect --format '{{.State.Status}}' "$SSH_POD-ws" 2>/dev/null)" = "running" ] || fail "the ssh test session's workspace container never ran: $(cat "$TMP/ssh-run.out")"
+	for _ in $(seq 1 60); do
 		[ "$(podman inspect --format '{{.State.Running}}' "$SSH_POD-ws" 2>/dev/null)" = "true" ] && break
 		sleep 0.5
 	done
