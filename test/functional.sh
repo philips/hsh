@@ -1239,7 +1239,13 @@ rm_test_sessions
 if [ -n "$(test_pods)" ]; then
 	fail "sessions were left behind after the final sweep: $(test_pods)"
 fi
-[ -z "$(ls -A "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null)" ] || fail "session state was left behind after the final sweep"
+if [ -n "$(ls -A "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null)" ]; then
+	for d in "$XDG_STATE_HOME"/hsh/sessions/*/; do
+		echo "leftover: $d: $(ls -A "$d" | tr '\n' ' ') workspace=$(cat "$d/workspace" 2>/dev/null)" >&2
+	done
+	podman pod ls --format '{{.Name}} {{.Status}} {{.Labels}}' >&2
+	fail "session state was left behind after the final sweep"
+fi
 pass "hsh rm removes every session the test created and its state"
 
 echo
