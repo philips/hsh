@@ -31,16 +31,6 @@ strongest first: the system prompt, instruction files (`AGENTS.md`,
 - nono uses 403: https://github.com/nolabs-ai/nono/blob/be579e79d1471122ea165b8cccbecf54362d9d70/crates/nono-proxy/src/server.rs#L6507
 - sbx uses 403: https://github.com/docker/sbx-releases/issues/525
 
-## Where agents see things today
-
-- The 407 body from the proxy already carries the instruction text (0027).
-  But for HTTPS the denied request is a `CONNECT`, and most clients surface
-  only the status line: curl prints `CONNECT tunnel failed, response 407`
-  and never shows the body. Python and Go clients show the reason phrase
-  (`Proxy Authentication Required`); I expect but have not verified that
-  more clients show a custom one.
-- DNS refusals carry no text.
-- Nothing in the agent's instructions mentions the sandbox.
 
 ## Phase 1 results
 
@@ -72,7 +62,7 @@ all. The body only reaches the agent for plain HTTP (and when it runs
 403 and 503 gave nothing over 407: curl and git show only the number for
 CONNECT; npm appends generic "you or one of your dependencies" text on 403;
 npm retries a 503 (three requests, ignoring `Retry-After: 60`); wget2 retries
-a plain-HTTP 407 once; every client ignored `Retry-After`. **Keep 407.**
+a plain-HTTP 407 once; every client ignored `Retry-After`.
 
 Later check of an unusual code: 400 and 511 render like 407 in every client
 (curl and git show only the number for CONNECT; the reason phrase appears where
@@ -82,7 +72,7 @@ three runs each) neither helped: status 511 made 9, 20, and 3 tool calls
 (24k, 67k, 7k tokens) and status 400 made 7, 16, and 33 calls (15k, 48k, 123k
 tokens), against 10, 3, and 3 for 407. A generic 400 reads as a malformed
 request to retry with variations, and 511 (captive portal) invites attempts to
-authenticate. **Keep 407.**
+authenticate.
 
 ### The agent trial
 
@@ -120,6 +110,15 @@ What the runs show:
   gap is the solid one (V4 was identical in all three runs). Re-run against
   other models and harnesses before treating the numbers as general.
 
+## Decision 
+
+Because of the prior art of other agent sandbox tools using 403 we are going to
+use 403. The measurements showed no difference between 403 and 407 below.
+
+We are going to just make the reason phrase "Forbidden" and rely on the system
+prompt to save tokens. A custom reason phrase introduces uncertainty because we
+can't test all of the tools an agent and user might use.
+
 ## What changes in the design
 
 - The notice is **static text that does not enumerate allowed hosts** (V4
@@ -127,8 +126,6 @@ What the runs show:
   the first iteration, and with it the regeneration and mount-freshness
   questions; the notice is written once per session into a read-only mounted
   file and referenced through `{network_policy}`.
-- The reason phrase is still worth doing (it reaches wget, Python, npm, Go) but
-  is secondary to the notice.
 - DNS Extended DNS Errors are unmeasured (none of the clients above show them)
   and are dropped.
 - New idea from V2 and V3: a notice that is too good suppresses the very
@@ -145,7 +142,7 @@ A short, imperative, static text (about 100 words; weaker models ignore long
 prose). The wording measured as V4:
 
 ```
-# Network access (hsh sandbox)
+# Network access (sandbox)
 Some network requests are blocked on purpose by an egress proxy. A blocked
 request fails with HTTP 403 or a refused DNS lookup. The user is notified
 automatically. When a request is blocked, stop, tell the user which host you
