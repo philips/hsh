@@ -95,7 +95,7 @@ What the runs show:
 - A notice that describes what a block looks like and what to do, without
   naming the reachable hosts (V4), gives two calls every time (the request and
   one `curl -v` to look), no workaround attempts, a recorded denial, and a clear
-  report to the user. This is the wording to ship.
+  report to the user. 
 - Caveats: three runs per variant, one task, one model, one harness; V0 and V1
   vary widely run to run, so the V0-to-V1 gap is suggestive and the V1-to-V4
   gap is the solid one (V4 was identical in all three runs). Re-run against
@@ -130,11 +130,11 @@ A short static text (about 100 words; weaker models ignore long prose).
 # Network access (sandbox)
 
 Some network requests are blocked on purpose by a security egress proxy. A
-blocked request fails with HTTP 403 or a refused DNS lookup. This is not an
+blocked request fails with HTTP 403 Forbidden or a refused DNS lookup. This is not an
 outage. The user is notified automatically of the requested hostname. When a
-request is blocked, stop, tell the user which host you need and why. Continue
-with what you can without access don't try other tools, mirrors, proxies, DNS
-tricks.
+request is blocked, stop, tell the user which host you need and why, then
+continue with what you can without access don't try other tools, mirrors,
+proxies, DNS tricks.
 ```
 
 It deliberately does not say which hosts are reachable as this may change
@@ -142,7 +142,7 @@ during an agent run and the measurements show it might stop an agent from
 attempting connections at all. `network.notice: false` disables the feature;
 the text lives in one Go template.
 
-With none mode this notice is not inserted.
+With none network mode this notice is not inserted.
 
 ### 2. Where the notice file lives
 
@@ -186,6 +186,8 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 | Mistral Vibe | to research |
 | Muse Code | to research |
 
+With none network mode this notice is not inserted.
+
 ## Config surface
 
 - `network.notice` (default `true`): write the notice file and deliver it.
@@ -199,21 +201,20 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 1. **Measure** (done): the client matrix, the status-code comparison, and the
    agent trial for pi with a Mistral model; results above.
 2. **Switch to 403**: Currently the proxy returns 407
-2. **Notice and delivery**: template, notice file and mount, placeholder
+3. **Notice and delivery**: template, notice file and mount, placeholder
    substitution, managed blocks, config fields.
-3. **Images**: pi first (flag), then the others after their mechanisms are
+4. **Images**: pi first (flag), then the others after their mechanisms are
    verified; the labelcheck test pins the new fields.
-4. **Docs**: `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
+5. **Docs**: `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
    `docs/testing.md`.
 
 ## Tests
 
-- Disabled notice and the launch flag: with network.notice: false,
-  {network_policy} has to remove the whole --append-system-prompt flag, not
-  leave an empty value. Add a test for this.
+- with network.notice: false, {network_policy} has to remove the whole
+  --append-system-prompt flag, not leave an empty value. Add a test for this.
 - Leftover blocks: when the notice is disabled, any existing managed block in
   the persistent home directory should be removed.
-- Over-caution check: run V4 on a task whose host is allowed, in https mode, to
+- Over-caution check: run a task whose host is allowed, in https mode, to
   confirm the notice doesn't stop the agent from using the network.
 - Config: label parsing of `agent.context_files` and the placeholder; labelcheck
   covers each image.
