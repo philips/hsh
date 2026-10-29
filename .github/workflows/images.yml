@@ -36,6 +36,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: compute org.ifup.hsh label
+        id: label
+        run: |
+          {
+            echo 'hsh<<HSH_EOF'
+            jq -c . images/${{ matrix.name }}/hsh.json
+            echo HSH_EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: build image
         uses: docker/build-push-action@v6
         with:
@@ -43,6 +52,8 @@ jobs:
           file: images/${{ matrix.name }}/Containerfile
           platforms: linux/amd64
           push: false
+          build-args: |
+            HSH_LABEL=${{ steps.label.outputs.hsh }}
           cache-from: type=gha,scope=${{ matrix.name }}
 
   publish:
@@ -69,6 +80,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: compute org.ifup.hsh label
+        id: label
+        run: |
+          {
+            echo 'hsh<<HSH_EOF'
+            jq -c . images/${{ matrix.name }}/hsh.json
+            echo HSH_EOF
+          } >> "$GITHUB_OUTPUT"
+
       - name: build and push image
         uses: docker/build-push-action@v6
         with:
@@ -77,5 +97,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/hsh-${{ matrix.name }}:latest
+          build-args: |
+            HSH_LABEL=${{ steps.label.outputs.hsh }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,scope=${{ matrix.name }},mode=max

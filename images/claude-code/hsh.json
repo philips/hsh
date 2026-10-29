@@ -1,0 +1,36 @@
+{
+  "shell": "/bin/bash",
+  "secrets": {
+    "ANTHROPIC_API_KEY": {
+      "from": "hsh://anthropic-api-key",
+      "hosts": [
+        "api.anthropic.com"
+      ],
+      "header": "x-api-key"
+    }
+  },
+  "network": {
+    "allow": [
+      "api.anthropic.com",
+      "claude.ai",
+      "downloads.claude.ai",
+      "github.com",
+      "http-intake.logs.us5.datadoghq.com",
+      "mcp-proxy.anthropic.com",
+      "platform.claude.com",
+      "raw.githubusercontent.com",
+      "statsig.anthropic.com"
+    ],
+    "mode": "allowlist"
+  },
+  "agent": {
+    "command": [
+      "claude",
+      "-p",
+      "{prompt}"
+    ],
+    "launch": [
+      "claude"
+    ]
+  }
+}

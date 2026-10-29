@@ -1,0 +1,32 @@
+{
+  "shell": "/bin/bash",
+  "secrets": {
+    "META_API_KEY": {
+      "from": "hsh://meta-api-key",
+      "hosts": [
+        "api.meta.ai"
+      ],
+      "header": "Authorization",
+      "prefix": "Bearer "
+    }
+  },
+  "network": {
+    "allow": [
+      "api.meta.ai",
+      "auth.meta.com",
+      "accountscenter.meta.com",
+      "dev.meta.ai"
+    ],
+    "mode": "allowlist"
+  },
+  "agent": {
+    "command": [
+      "muse",
+      "exec",
+      "{prompt}"
+    ],
+    "launch": [
+      "muse"
+    ]
+  }
+}

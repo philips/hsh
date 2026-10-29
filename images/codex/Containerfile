@@ -3,7 +3,8 @@ FROM registry.fedoraproject.org/fedora:latest
 LABEL org.opencontainers.image.title="hsh OpenAI Codex workspace" \
       org.opencontainers.image.description="Fedora workspace image with the OpenAI Codex CLI pre-installed, for use as the hsh workspace image"
 
-LABEL org.ifup.hsh='{"shell":"/bin/bash","secrets":{"OPENAI_API_KEY":{"from":"hsh://openai-api-key","hosts":["api.openai.com"],"header":"Authorization","prefix":"Bearer "}},"network":{"allow":["ab.chatgpt.com","api.github.com","api.openai.com","auth.openai.com","chatgpt.com","files.openai.com","github.com","raw.githubusercontent.com"],"mode":"allowlist"},"agent":{"command":["codex","exec","{prompt}"],"launch":["codex"]}}'
+ARG HSH_LABEL
+LABEL org.ifup.hsh="${HSH_LABEL}"
 
 ENV HOME=/home/hsh
 RUN dnf install -y bash curl git fd-find ripgrep procps-ng bubblewrap && dnf clean all

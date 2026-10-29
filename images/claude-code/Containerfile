@@ -3,7 +3,8 @@ FROM registry.fedoraproject.org/fedora:latest
 LABEL org.opencontainers.image.title="hsh Claude Code workspace" \
       org.opencontainers.image.description="Fedora workspace image with Claude Code pre-installed, for use as the hsh workspace image"
 
-LABEL org.ifup.hsh='{"shell":"/bin/bash","secrets":{"ANTHROPIC_API_KEY":{"from":"hsh://anthropic-api-key","hosts":["api.anthropic.com"],"header":"x-api-key"}},"network":{"allow":["api.anthropic.com","claude.ai","downloads.claude.ai","github.com","http-intake.logs.us5.datadoghq.com","mcp-proxy.anthropic.com","platform.claude.com","raw.githubusercontent.com","statsig.anthropic.com"],"mode":"allowlist"},"agent":{"command":["claude","-p","{prompt}"],"launch":["claude"]}}'
+ARG HSH_LABEL
+LABEL org.ifup.hsh="${HSH_LABEL}"
 
 ENV HOME=/home/hsh
 RUN dnf install -y bash curl git fd-find ripgrep && dnf clean all

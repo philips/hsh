@@ -2,7 +2,15 @@
 
 hsh ships pre-built workspace images for popular coding agents, each
 with the agent pre-installed and a default hsh config baked in as a
-container label. Published to ghcr.io by two workflows:
+container label. Each image lives in `images/<name>/`:
+
+- `Containerfile` — the build recipe.
+- `hsh.json` — the pretty-printed `org.ifup.hsh` config (see below). It
+  is version-controlled as readable JSON and compacted into the label
+  at build time, so you never hand-edit a minified one-liner.
+- any extra files the image copies in (e.g. `images/pi/auth.json`).
+
+Published to ghcr.io by two workflows:
 
 - `.github/workflows/release.yml` publishes `:latest` plus a version tag
   (matching the release tag) on every `v*` release.
@@ -19,7 +27,20 @@ container label. Published to ghcr.io by two workflows:
 | `ghcr.io/<owner>/hsh-codex` | OpenAI Codex | `https://chatgpt.com/codex/install.sh` |
 | `ghcr.io/<owner>/hsh-muse-code` | Meta Muse Code | `https://dev.meta.ai/install.sh` |
 
-Build one locally with `podman build -t hsh-vibe images/vibe/`.
+Build one locally with the helper, which reads `hsh.json`, compacts it
+with `jq`, and passes it as the `HSH_LABEL` build arg:
+
+```
+$ images/build.sh vibe -t hsh-vibe
+```
+
+Extra arguments are forwarded to `docker`/`podman build`. Set
+`CONTAINER_ENGINE` to force an engine. To build by hand, pass the arg
+yourself:
+
+```
+$ podman build --build-arg "HSH_LABEL=$(jq -c . images/vibe/hsh.json)" images/vibe/
+```
 
 ## The `org.ifup.hsh` label
 
@@ -73,12 +94,20 @@ Precedence: `--config PATH` wins when given; otherwise the image label
 is used. The image overrides the config's `image` field when a config
 file is present.
 
-The label JSON must be quoted in the Containerfile so the Dockerfile
-parser preserves its double quotes:
+The config is edited as `images/<name>/hsh.json` (pretty-printed) and
+flows into the label through a build arg, so the Containerfile stays
+agnostic to the config contents:
 
 ```dockerfile
-LABEL org.ifup.hsh='{"shell":"/bin/bash","network":{"allow":["api.mistral.ai"]}}'
+ARG HSH_LABEL
+LABEL org.ifup.hsh="${HSH_LABEL}"
 ```
+
+The build (`images/build.sh` locally, the `compute org.ifup.hsh label`
+step in CI) compacts `hsh.json` with `jq -c` and passes it as
+`HSH_LABEL`. Docker substitutes the variable after tokenizing the
+instruction, so the JSON's double quotes are preserved in the label
+value.
 
 ## Headless task runs
 
@@ -118,6 +147,11 @@ sandbox. `--tasks -` reads the task list from stdin.
     parses and resends the access token as-is, so it cannot be
     phantomized); the long-lived credential still never enters the
     workspace.
+
+  The image bakes `images/pi/auth.json` into
+  `/home/hsh/.pi/agent/auth.json` with a placeholder Mistral key (the
+  proxy swaps in the store's real key on matching hosts — the
+  [placeholder key pattern](config.md#secrets)).
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai`,

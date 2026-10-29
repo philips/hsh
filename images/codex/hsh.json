@@ -1,0 +1,36 @@
+{
+  "shell": "/bin/bash",
+  "secrets": {
+    "OPENAI_API_KEY": {
+      "from": "hsh://openai-api-key",
+      "hosts": [
+        "api.openai.com"
+      ],
+      "header": "Authorization",
+      "prefix": "Bearer "
+    }
+  },
+  "network": {
+    "allow": [
+      "ab.chatgpt.com",
+      "api.github.com",
+      "api.openai.com",
+      "auth.openai.com",
+      "chatgpt.com",
+      "files.openai.com",
+      "github.com",
+      "raw.githubusercontent.com"
+    ],
+    "mode": "allowlist"
+  },
+  "agent": {
+    "command": [
+      "codex",
+      "exec",
+      "{prompt}"
+    ],
+    "launch": [
+      "codex"
+    ]
+  }
+}

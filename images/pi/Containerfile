@@ -3,7 +3,8 @@ FROM registry.fedoraproject.org/fedora:latest
 LABEL org.opencontainers.image.title="hsh Pi workspace" \
       org.opencontainers.image.description="Fedora workspace image with the Pi coding agent pre-installed, for use as the hsh workspace image"
 
-LABEL org.ifup.hsh='{"shell":"/bin/bash","secrets":{"MISTRAL_API_KEY":{"from":"hsh://mistral-api-key","hosts":["api.mistral.ai"],"header":"Authorization","prefix":"Bearer "},"ANTHROPIC_API_KEY":{"from":"hsh://anthropic-api-key","hosts":["api.anthropic.com"],"header":"x-api-key"},"OPENAI_API_KEY":{"from":"hsh://openai-api-key","hosts":["api.openai.com"],"header":"Authorization","prefix":"Bearer "}},"network":{"allow":["ab.chatgpt.com","api.anthropic.com","api.mistral.ai","api.openai.com","auth.openai.com","chatgpt.com"],"mode":"allowlist"},"oauth":{"openai":{"token_endpoint":{"host":"auth.openai.com","path":"/api/accounts/oauth/token"},"request_nonce_fields":["refresh_token"],"api_hosts":["api.openai.com"]},"openai-codex":{"token_endpoint":{"host":"auth.openai.com","path":"/oauth/token"},"response_fields":["refresh_token"],"request_nonce_fields":["refresh_token"],"api_hosts":["ab.chatgpt.com","chatgpt.com"]}},"agent":{"command":["pi","-p","{prompt}"],"launch":["pi"]}}'
+ARG HSH_LABEL
+LABEL org.ifup.hsh="${HSH_LABEL}"
 
 ENV HOME=/home/hsh
 ENV PI_OFFLINE=1
@@ -11,3 +12,5 @@ RUN dnf install -y bash nodejs npm curl git fd-find ripgrep && dnf clean all
 RUN mkdir -p /home/hsh && curl -fsSL https://pi.dev/install.sh | sh
 ENV PATH="/home/hsh/.pi/agent/bin:${PATH}"
 RUN PI_OFFLINE= pi install npm:pi-openai-codex-device-login@0.1.0
+RUN mkdir -p /home/hsh/.pi/agent
+COPY auth.json /home/hsh/.pi/agent/auth.json

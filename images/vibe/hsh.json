@@ -1,0 +1,29 @@
+{
+  "shell": "/bin/bash",
+  "secrets": {
+    "MISTRAL_API_KEY": {
+      "from": "hsh://mistral-api-key",
+      "hosts": [
+        "api.mistral.ai"
+      ],
+      "header": "Authorization",
+      "prefix": "Bearer "
+    }
+  },
+  "network": {
+    "allow": [
+      "api.mistral.ai"
+    ],
+    "mode": "allowlist"
+  },
+  "agent": {
+    "command": [
+      "vibe",
+      "-p",
+      "{prompt}"
+    ],
+    "launch": [
+      "vibe"
+    ]
+  }
+}

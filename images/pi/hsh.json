@@ -1,0 +1,79 @@
+{
+  "shell": "/bin/bash",
+  "secrets": {
+    "MISTRAL_API_KEY": {
+      "from": "hsh://mistral-api-key",
+      "hosts": [
+        "api.mistral.ai"
+      ],
+      "header": "Authorization",
+      "prefix": "Bearer "
+    },
+    "ANTHROPIC_API_KEY": {
+      "from": "hsh://anthropic-api-key",
+      "hosts": [
+        "api.anthropic.com"
+      ],
+      "header": "x-api-key"
+    },
+    "OPENAI_API_KEY": {
+      "from": "hsh://openai-api-key",
+      "hosts": [
+        "api.openai.com"
+      ],
+      "header": "Authorization",
+      "prefix": "Bearer "
+    }
+  },
+  "network": {
+    "allow": [
+      "ab.chatgpt.com",
+      "api.anthropic.com",
+      "api.mistral.ai",
+      "api.openai.com",
+      "auth.openai.com",
+      "chatgpt.com"
+    ],
+    "mode": "allowlist"
+  },
+  "oauth": {
+    "openai": {
+      "token_endpoint": {
+        "host": "auth.openai.com",
+        "path": "/api/accounts/oauth/token"
+      },
+      "request_nonce_fields": [
+        "refresh_token"
+      ],
+      "api_hosts": [
+        "api.openai.com"
+      ]
+    },
+    "openai-codex": {
+      "token_endpoint": {
+        "host": "auth.openai.com",
+        "path": "/oauth/token"
+      },
+      "response_fields": [
+        "refresh_token"
+      ],
+      "request_nonce_fields": [
+        "refresh_token"
+      ],
+      "api_hosts": [
+        "ab.chatgpt.com",
+        "chatgpt.com"
+      ]
+    }
+  },
+  "agent": {
+    "command": [
+      "pi",
+      "-p",
+      "{prompt}"
+    ],
+    "launch": [
+      "pi"
+    ]
+  }
+}
