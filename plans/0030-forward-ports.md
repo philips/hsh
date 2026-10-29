@@ -203,12 +203,15 @@ Functional (`test/functional.sh`, new step):
 7. nothing listens on the host without `hsh forward` (no ports opened by
    `hsh run`)
 
-## Open questions
+## Future Work
 
 - Does `podman exec -i` propagate stdin EOF promptly enough for half-close on
   every supported podman version? Phase 1 checks; the multiplexer avoids the
   question.
 - UDP is out of scope (servers under test are almost always TCP).
+
+## Decisions
+
 - Should `hsh forward` be callable from inside the sandbox by the agent
   (e.g. an in-sandbox command that asks the host to open a port)? No: that
   would let the sandbox choose host listeners. The user keeps the control.
