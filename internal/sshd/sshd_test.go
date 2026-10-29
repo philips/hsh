@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os/exec"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -250,5 +253,163 @@ func TestFormatParseListRoundTrip(t *testing.T) {
 	}
 	if n := len(ParseList([]byte("junk\n0 x\n99999 y\n8 \n"))); n != 0 {
 		t.Fatalf("parsed %d bad lines", n)
+	}
+}
+
+type spawnRecord struct {
+	mu       sync.Mutex
+	commands []string
+	ptys     []bool
+	terms    []string
+}
+
+func (r *spawnRecord) record(req SpawnRequest) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.commands = append(r.commands, req.Command)
+	r.ptys = append(r.ptys, req.Pty)
+	r.terms = append(r.terms, req.Term)
+}
+
+func testSpawn(rec *spawnRecord) func(SpawnRequest) (SpawnResult, error) {
+	return func(req SpawnRequest) (SpawnResult, error) {
+		if rec != nil {
+			rec.record(req)
+		}
+		cmd := exec.Command("/bin/sh", "-c", req.Command)
+		if req.Command == "" {
+			cmd = exec.Command("/bin/sh")
+		}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if req.Pty {
+			cmd.Stdin = req.Slave
+			cmd.Stdout = req.Slave
+			cmd.Stderr = req.Slave
+		} else {
+			cmd.Stdin = req.Stdin
+			cmd.Stdout = req.Stdout
+			cmd.Stderr = req.Stderr
+		}
+		if err := cmd.Start(); err != nil {
+			return SpawnResult{}, err
+		}
+		pid := cmd.Process.Pid
+		return SpawnResult{
+			Signal: func(sig syscall.Signal) error { return syscall.Kill(-pid, sig) },
+			Wait:   func() int { return ExitCode(cmd.Wait()) },
+		}, nil
+	}
+}
+
+func TestSessionExecOutputAndExitStatus(t *testing.T) {
+	rec := &spawnRecord{}
+	h := startServer(t, Config{Dial: loopbackDial, Spawn: testSpawn(rec)})
+	ses, err := h.client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	var out bytes.Buffer
+	ses.Stdout = &out
+	var errOut bytes.Buffer
+	ses.Stderr = &errOut
+	err = ses.Run("printf hi-stdout; printf hi-stderr >&2; exit 7")
+	var exitErr *ssh.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitStatus() != 7 {
+		t.Fatalf("err = %v, want exit status 7", err)
+	}
+	if out.String() != "hi-stdout" {
+		t.Fatalf("stdout = %q", out.String())
+	}
+	if errOut.String() != "hi-stderr" {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.commands) != 1 || rec.commands[0] != "printf hi-stdout; printf hi-stderr >&2; exit 7" {
+		t.Fatalf("commands = %v", rec.commands)
+	}
+}
+
+func TestSessionPtyRunsOnTerminal(t *testing.T) {
+	if master, slave, err := openPty(); err != nil {
+		t.Skipf("pty allocation is unavailable here: %v", err)
+	} else {
+		master.Close()
+		slave.Close()
+	}
+	rec := &spawnRecord{}
+	h := startServer(t, Config{Dial: loopbackDial, Spawn: testSpawn(rec)})
+	ses, err := h.client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if err := ses.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	ses.Stdout = &out
+	if err := ses.Run("stty size < /dev/tty 2>/dev/null || stty size"); err != nil {
+		t.Fatalf("run: %v (%q)", err, out.String())
+	}
+	if !strings.HasPrefix(out.String(), "24 80") {
+		t.Fatalf("pty output = %q, want the requested winsize", out.String())
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.ptys) != 1 || !rec.ptys[0] {
+		t.Fatalf("ptys = %v", rec.ptys)
+	}
+	if len(rec.terms) != 1 || rec.terms[0] != "xterm-256color" {
+		t.Fatalf("terms = %v", rec.terms)
+	}
+}
+
+func TestSessionSignal(t *testing.T) {
+	h := startServer(t, Config{Dial: loopbackDial, Spawn: testSpawn(nil)})
+	ses, err := h.client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	if err := ses.Start("sleep 30"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if err := ses.Signal(ssh.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	err = ses.Wait()
+	var exitErr *ssh.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitStatus() != 128+15 {
+		t.Fatalf("err = %v, want exit status 143", err)
+	}
+}
+
+func TestSessionRejectedWithoutSpawn(t *testing.T) {
+	h := startServer(t, Config{Dial: loopbackDial})
+	ses, err := h.client.NewSession()
+	if err == nil {
+		ses.Close()
+		t.Fatal("session channel was accepted without a Spawn handler")
+	}
+}
+
+func TestSessionPipesGiveStdinEOF(t *testing.T) {
+	h := startServer(t, Config{Dial: loopbackDial, Spawn: testSpawn(nil)})
+	ses, err := h.client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ses.Close()
+	ses.Stdin = strings.NewReader("echo piped-input")
+	var out bytes.Buffer
+	ses.Stdout = &out
+	if err := ses.Run("read line; echo got:$line"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if out.String() != "got:echo piped-input\n" {
+		t.Fatalf("output = %q", out.String())
 	}
 }

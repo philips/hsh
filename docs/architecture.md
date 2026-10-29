@@ -543,11 +543,24 @@ laptop ssh -L 8000:localhost:8000 hsh-<id>
   the machine that runs podman, and nothing listens on the host. The host key is
   ephemeral, so `hsh ssh config` prints a stanza with host-key checking off.
 - **What it accepts**: `direct-tcpip` channels whose destination is
-  `localhost`, `127.0.0.1`, or `::1`; the destination host is a name for the
-  sandbox's loopback, not an address to dial. Everything else is refused
-  without a dial: other destinations (so the relay is never an egress path
-  around the proxy), `tcpip-forward` (`ssh -R`), streamlocal, agent, X11, and
-  `session` channels. Use `ssh -N`.
+  `localhost`, `127.0.0.1`, or `::1` (the destination host is a name for the
+  sandbox's loopback, not an address to dial), and `session` channels: `ssh
+  hsh-<id>` opens a shell inside the session, `ssh hsh-<id> CMD` runs a
+  command, `ssh -tt` gives it a pty, and `scp` works through exec requests.
+  Everything else is refused without a dial: other destinations (so the relay
+  is never an egress path around the proxy), `tcpip-forward` (`ssh -R`),
+  streamlocal, agent, X11, `env` requests, and `subsystem` (no sftp server in
+  the image).
+- **The shell path**: for each session the server execs the mounted binary
+  once more (`/hsh-workspace-inner --ssh-session`); the helper finds the
+  inner netns by scanning `/proc/*/ns/net`, takes the shell, working
+  directory, and environment from the process that holds it, `setns`s into
+  the inner netns, drops all capabilities but CAP_DAC_OVERRIDE, sets
+  NO_NEW_PRIVS, makes fd 0 the controlling terminal for pty sessions, and
+  execs the shell. The result has the inner shell's isolation and
+  environment (proxy variables, CA bundle, home) without plumbing
+  configuration into the pod. A disconnected client does not kill the
+  shell; it is reaped when the session stops.
 - **`hsh ssh proxy`** resolves the session (the host name `hsh-<id>`, or
   `--session`, or the workspace directory's only session), checks the
   workspace container is running, and execs into it. It refuses to run with a

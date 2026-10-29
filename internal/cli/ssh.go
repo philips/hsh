@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 
 	"github.com/peterbourgon/ff/v4"
 
@@ -32,7 +33,46 @@ func serveSSHStdio() error {
 			}
 			return out, nil
 		},
+		Spawn: spawnSSHSession,
 	})
+}
+
+func spawnSSHSession(r sshd.SpawnRequest) (sshd.SpawnResult, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return sshd.SpawnResult{}, err
+	}
+	args := []string{"--ssh-session"}
+	if r.Pty {
+		args = append(args, "--pty")
+	}
+	if r.Term != "" {
+		args = append(args, "--term", r.Term)
+	}
+	if r.Command != "" {
+		args = append(args, "--command", r.Command)
+	}
+	cmd := exec.Command(self, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if r.Pty {
+		cmd.Stdin = r.Slave
+		cmd.Stdout = r.Slave
+		cmd.Stderr = r.Slave
+	} else {
+		cmd.Stdin = r.Stdin
+		cmd.Stdout = r.Stdout
+		cmd.Stderr = r.Stderr
+	}
+	if err := cmd.Start(); err != nil {
+		return sshd.SpawnResult{}, err
+	}
+	pgid := cmd.Process.Pid
+	return sshd.SpawnResult{
+		Signal: func(sig syscall.Signal) error { return syscall.Kill(-pgid, sig) },
+		Wait: func() int {
+			return sshd.ExitCode(cmd.Wait())
+		},
+	}, nil
 }
 
 var sshProxyCmd *ff.Command
@@ -57,7 +97,7 @@ func sshCommand() *ff.Command {
 func sshProxyCommand() *ff.Command {
 	var session string
 	return newCommand("proxy", "hsh ssh proxy [FLAGS] [hsh-SESSION]",
-		"speak SSH on stdin/stdout for port forwards into a session (use as an ssh ProxyCommand)", func(fs *ff.FlagSet) {
+		"speak SSH on stdin/stdout for port forwards and shells into a session (use as an ssh ProxyCommand)", func(fs *ff.FlagSet) {
 			fs.StringVar(&session, 0, "session", "", "the session to connect to (default: the host name argument, else the current workspace's only session)")
 		}, func(ctx context.Context, args []string) error {
 			if len(args) > 1 {

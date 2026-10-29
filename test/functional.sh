@@ -1237,6 +1237,19 @@ CMDS
 	fi
 	pass "ssh -R is refused"
 
+	OUT="$(ssh -F "$TMP/ssh_config" "$SSH_POD" 'echo shell-ok; echo $HOME' 2>&1)"
+	echo "$OUT" | grep -q "^shell-ok$" || fail "ssh into the session did not run a command: $OUT"
+	echo "$OUT" | grep -q "^/home/hsh$" || fail "the ssh shell did not inherit the session environment: $OUT"
+	ssh -F "$TMP/ssh_config" "$SSH_POD" 'cat /proc/net/dev' >"$TMP/ssh-netdev.out" 2>/dev/null || fail "ssh shell could not read /proc/net/dev"
+	grep -q "hsh1" "$TMP/ssh-netdev.out" || fail "the ssh shell did not run in the session's inner network namespace: $(cat "$TMP/ssh-netdev.out")"
+	ssh -F "$TMP/ssh_config" "$SSH_POD" 'exit 42' >/dev/null 2>&1 && RC=0 || RC=$?
+	[ "$RC" = "42" ] || fail "the ssh shell's exit status did not propagate: $RC"
+	OUT="$(ssh -tt -F "$TMP/ssh_config" "$SSH_POD" 'echo pty-ok' 2>/dev/null | tr -d '\r\n')"
+	[ "$OUT" = "pty-ok" ] || fail "a pty session over ssh did not work: '$OUT'"
+	ssh -F "$TMP/ssh_config" "$SSH_POD" 'env | grep -c "^http_proxy=http://10.77.0.1:8080$"' >"$TMP/ssh-env.out" 2>/dev/null
+	grep -q "^1$" "$TMP/ssh-env.out" || fail "the ssh shell does not use the egress proxy: $(cat "$TMP/ssh-env.out")"
+	pass "ssh into the session runs commands in the sandbox's shell environment"
+
 	kill "$SSH_FWD_PID" 2>/dev/null || true
 	touch "$TMP/sshws/done"
 	wait "$SSH_SESSION_PID" 2>/dev/null || true

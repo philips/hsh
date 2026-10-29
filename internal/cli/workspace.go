@@ -70,6 +70,10 @@ func WorkspaceInner(args []string) error {
 		return nil
 	})
 	sshStdio := fs.Bool("ssh-stdio", false, "internal: serve SSH port forwards into the session on stdin/stdout")
+	sshSession := fs.Bool("ssh-session", false, "internal: replace this process with a shell inside the session's network namespace")
+	sshPty := fs.Bool("pty", false, "internal: make fd 0 the controlling terminal of the shell")
+	sshTerm := fs.String("term", "", "internal: TERM for the shell")
+	sshCommand := fs.String("command", "", "internal: command to run with the session's shell instead of an interactive shell")
 	httpEcho := fs.String("http-echo", "", "internal: listen once on 127.0.0.1:PORT, print the request line, answer 200")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -82,6 +86,13 @@ func WorkspaceInner(args []string) error {
 	}
 	if *sshStdio {
 		return serveSSHStdio()
+	}
+	if *sshSession {
+		return workspace.RunSSHSession(workspace.SSHSessionOptions{
+			Pty:     *sshPty,
+			Term:    *sshTerm,
+			Command: *sshCommand,
+		})
 	}
 	if *httpEcho != "" {
 		return workspace.HTTPEcho(*httpEcho)

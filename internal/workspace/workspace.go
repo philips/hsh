@@ -269,6 +269,7 @@ func buildEnv(opts InnerOptions) []string {
 	env := os.Environ()
 	env = setEnv(env, "HOME", opts.Home)
 	env = setEnv(env, "SHELL", opts.Shell)
+	env = setEnv(env, "HSH_SHELL", opts.Shell)
 	if os.Getenv("USER") == "" {
 		env = setEnv(env, "USER", "root")
 	}

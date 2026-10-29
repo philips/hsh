@@ -77,12 +77,18 @@ proxy, the denial database, and the example image:
   a 5 MiB response and eight concurrent connections cross one ssh
   connection; a closed sandbox port fails only that connection; a forward to
   `example.com` and `ssh -R` are refused and nothing reaches the egress
-  proxy; no listeners outlive the ssh client. Skipped without an `ssh`
+  proxy; `ssh hsh-<id> CMD` runs commands in the session's shell environment
+  (HOME, the egress proxy in the environment, `/proc/net/dev` showing the
+  inner netns's `hsh1`, exit status propagation) and `ssh -tt` runs them on
+  a pty; no listeners outlive the ssh client. Skipped without an `ssh`
   client. `internal/sshd` has Go tests (in-process client over loopback TCP)
   for the destination restriction, every rejected channel and request type,
-  large transfers with half-close, concurrency, and recovery after a failed
-  dial; `internal/workspace` tests the relay (`DIAL`, `LIST`, `PORT`, source
-  refusal, half-close) and the `/proc/net/tcp` parser
+  large transfers with half-close, concurrency, recovery after a failed
+  dial, and session channels (exec output and exit status, stderr as
+  extended data, pty winsize via `stty size`, signals, stdin EOF, rejection
+  without a spawn handler); `internal/workspace` tests the relay (`DIAL`,
+  `LIST`, `PORT`, source refusal, half-close) and the `/proc/net/tcp`
+  parser
 - **step 24**: the network notice — a `--tasks` run whose agent command
   contains `{network_policy}` gets the read-only notice path; the managed block
   is created in a missing `~/` instruction file and, in a pre-existing file in

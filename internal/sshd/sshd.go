@@ -24,8 +24,9 @@ type Listener struct {
 }
 
 type Config struct {
-	Dial func(port int) (net.Conn, error)
-	List func() ([]Listener, error)
+	Dial  func(port int) (net.Conn, error)
+	List  func() ([]Listener, error)
+	Spawn func(SpawnRequest) (SpawnResult, error)
 }
 
 type directTCPIP struct {
@@ -120,8 +121,12 @@ func SandboxLoopback(host string) bool {
 }
 
 func handleChannel(newCh ssh.NewChannel, cfg Config) {
+	if newCh.ChannelType() == "session" {
+		handleSession(newCh, cfg)
+		return
+	}
 	if newCh.ChannelType() != "direct-tcpip" {
-		_ = newCh.Reject(ssh.UnknownChannelType, "only port forwards to the session's loopback are supported")
+		_ = newCh.Reject(ssh.UnknownChannelType, "only port forwards and shells into the session are supported")
 		return
 	}
 	var d directTCPIP
