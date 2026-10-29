@@ -1,11 +1,5 @@
 # Telling agents about the network restrictions
 
-> **Status: phase 1 (measurement) done; the results below change the design.
-> Phases 2 to 5 are not started.** Follows plans/0027-approval-hold.md, whose
-> experience showed that the denial message is the main lever: agents that
-> read it stop hunting for workarounds, agents that don't ("pi with
-> Mistral tries really hard") burn tokens.
-
 ## Goal
 
 An agent running in an hsh sandbox should know, before it hits a wall and
@@ -13,16 +7,15 @@ again when it does, that:
 
 1. egress is restricted on purpose (not an outage or a bug to engineer
    around)
-2. which hosts it can reach
-3. that a blocked host needs the user's approval, which the user has been
+2. that a blocked host needs the user's approval, which the user has been
    asked for
-4. what to do: say which host is needed and why, wait a minute or two, retry
+3. what to do: say which host is needed and why, wait a minute or two, retry
    the same request once, and not try other tools, mirrors, proxies, DNS
    tricks, or changes to proxy settings
 
 There is no formal standard for this. The channels agents actually read,
 strongest first: the system prompt, instruction files (`AGENTS.md`,
-`CLAUDE.md`), and the text of the failure. This plan uses all three.
+`CLAUDE.md`), and the text of the failure.
 
 ## Prior Art
 
@@ -121,25 +114,19 @@ can't test all of the tools an agent and user might use.
 
 ## What changes in the design
 
-- The notice is **static text that does not enumerate allowed hosts** (V4
-  wording below). The generated policy file with the allowlist is dropped from
-  the first iteration, and with it the regeneration and mount-freshness
-  questions; the notice is written once per session into a read-only mounted
-  file and referenced through `{network_policy}`.
+- The notice is **static text that does not enumerate allowed hosts**. The
+  generated policy file with the allowlist is dropped from the first iteration,
+  and with it the regeneration and mount-freshness questions; the notice is
+  written once per session into a read-only mounted file and referenced through
+  `{network_policy}`.
 - DNS Extended DNS Errors are unmeasured (none of the clients above show them)
   and are dropped.
-- New idea from V2 and V3: a notice that is too good suppresses the very
-  request that would notify the user. A sanctioned way to ask, for example a
-  `hsh-request HOST "why"` command in the sandbox that records the denial with
-  the agent's reason through the proxy, would let the notice say "to get a host,
-  run this" instead of relying on a probe request. Listed under future work.
 
 ## Design
 
 ### 1. The notice
 
-A short, imperative, static text (about 100 words; weaker models ignore long
-prose). The wording measured as V4:
+A short static text (about 100 words; weaker models ignore long prose).
 
 ```
 # Network access (sandbox)
@@ -150,11 +137,9 @@ need and why. Continue with what you can without access. After the user
 approves the host, retry the same request.
 ```
 
-It deliberately does not say which hosts are reachable (see the V2 and V3
-results). Variants for `none` mode (no network at all: say so, and that nothing
-can be approved) and `https` mode (HTTPS on 443 works; plaintext HTTP and other
-ports are blocked on purpose). `network.notice: false` disables the feature;
-the text lives in one Go template.
+It deliberately does not say which hosts are reachable as this may change
+during an agent run. `network.notice: false` disables the feature; the text
+lives in one Go template.
 
 ### 2. Where the notice file lives
 
@@ -198,47 +183,23 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 | Mistral Vibe | to research |
 | Muse Code | to research |
 
-### 4. Better failure text from the proxy
-
-- **Body.** Keeps the instruction text and adds the current allowed hosts
-  (capped at 20, with "and N more").
-
-### 5. Find out what actually reaches the agent (phase 1, done)
-
-Before choosing wording or status codes, measure (results above).
-
-- **Client matrix.** A script runs curl, wget, Python (`requests`, `urllib`),
-  Node (`fetch`, `https`), Go `net/http`, git, npm, and pip against a blocked
-  host (HTTPS and plain HTTP, `https` and `allowlist` modes) inside the
-  example image and records the exact error text each one prints. The result
-  goes in `docs/` as a table and decides how much weight the reason phrase,
-  body, and header carry.
-- **Status code.** Compare 403 with 407 and 503+`Retry-After` for how clients
-  and agents react (fail fast, retry with backoff, show text). 403 is the
-  correct proxy status, so it only changes if another code is clearly better.
-- **Agent trial.** Run pi with Mistral through a fixed blocked-host task
-  (`hsh run --tasks`) four ways: baseline, 403 text only, plus the notice via
-  flag, plus both phrase and notice. Count tool calls and tokens until it
-  gives up or reports to the user. Needs a Mistral key, so it is a manual
-  benchmark with a written procedure, not CI.
-
 ## Config surface
 
 - `network.notice` (default `true`): write the notice file and deliver it.
 - `agent.launch` / `agent.command`: the `{network_policy}` placeholder.
 - `agent.context_files`: paths for the managed block.
-- Image labels updated per harness once the mechanism is confirmed.
+- Image labels updated per harness once the mechanism that works for each agent
+  is confirmed.
 
 ## Phases
 
 1. **Measure** (done): the client matrix, the status-code comparison, and the
    agent trial for pi with a Mistral model; results above.
-2. **Proxy text**: reason phrase, body with the allowlist, header.
-3. **Notice and delivery**: template, notice file and mount, placeholder
+2. **Notice and delivery**: template, notice file and mount, placeholder
    substitution, managed blocks, config fields.
-4. **Images**: pi first (flag), then the others after their mechanisms are
+3. **Images**: pi first (flag), then the others after their mechanisms are
    verified; the labelcheck test pins the new fields.
-5. **Docs**: `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
+4. **Docs**: `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
    `docs/testing.md`.
 
 ## Tests
@@ -271,6 +232,14 @@ allowlist shown to the agent is already visible to it through behavior.
   (see V2 and V3).
 - Re-run the trial with other models and harnesses (Claude Code, Codex, Vibe)
   and other tasks (package installs, git clones) before generalising.
+- Attempt to measure if an error body reaches tools: A script runs curl, wget,
+  Python (`requests`, `urllib`), Node (`fetch`, `https`), Go `net/http`, git,
+  npm, and pip against a blocked host (HTTPS and plain HTTP, `https` and
+  `allowlist` modes) inside the example image and records the exact error text
+  each one prints. The result goes in `docs/` as a table and decides how much
+  weight the reason phrase, body, and header carry.
+
+
 
 ## Open questions
 
