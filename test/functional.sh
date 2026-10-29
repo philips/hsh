@@ -89,6 +89,9 @@ cat >"$TMP/config.hsh" <<EOF
 }
 EOF
 
+mkdir -p "$TMP/cwd"
+cd "$TMP/cwd"
+
 export HSH_TEST_SECRET=test-secret-value-123
 HSH="$TMP/hsh"
 DB="$TMP/denied.db"
