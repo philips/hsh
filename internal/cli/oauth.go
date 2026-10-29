@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
+	"hsh/internal/denieddb"
 	"hsh/internal/netsetup"
 )
 
@@ -22,6 +24,7 @@ func oauthCommand() *ff.Command {
 		Flags:     ff.NewFlagSet("oauth"),
 		Subcommands: []*ff.Command{
 			oauthCallbackCommand(),
+			oauthStatusCommand(),
 		},
 	}
 	cmd.Exec = groupExec(&cmd)
@@ -71,6 +74,70 @@ func oauthCallbackCommand() *ff.Command {
 			fmt.Printf("delivered the callback to session %s: %s\n", sessionID, status)
 			return nil
 		})
+}
+
+func oauthStatusCommand() *ff.Command {
+	var store string
+	return newCommand("status", "hsh oauth status [FLAGS]",
+		"show captured OAuth providers and phantom counts (never token values)", func(fs *ff.FlagSet) {
+			fs.StringVar(&store, 0, "store", "", "oauth token store path (default: "+OAuthStoreDefaultPath()+")")
+		}, func(ctx context.Context, args []string) error {
+			path := store
+			if path == "" {
+				path = OAuthStoreDefaultPath()
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Printf("%s: no captured tokens (no login has completed yet)\n", path)
+					return nil
+				}
+				return err
+			}
+			var m map[string]storedPhantom
+			if err := json.Unmarshal(data, &m); err != nil {
+				return fmt.Errorf("parse %s: %w", path, err)
+			}
+			type key struct{ provider, field string }
+			counts := map[key]int{}
+			newest := map[key]string{}
+			for _, t := range m {
+				k := key{t.Provider, t.Field}
+				counts[k]++
+				if t.Created > newest[k] {
+					newest[k] = t.Created
+				}
+			}
+			if len(counts) == 0 {
+				fmt.Printf("%s: no captured tokens\n", path)
+				return nil
+			}
+			fmt.Printf("%s: %d phantom(s)\n", path, len(m))
+			providers := map[string]bool{}
+			for k := range counts {
+				providers[k.provider] = true
+			}
+			for prov := range providers {
+				fmt.Printf("  %s:\n", prov)
+				for k, n := range counts {
+					if k.provider != prov {
+						continue
+					}
+					fmt.Printf("    %-14s %d  newest captured %s\n", k.field, n, newest[k])
+				}
+			}
+			return nil
+		})
+}
+
+type storedPhantom struct {
+	Provider string `json:"provider"`
+	Field    string `json:"field"`
+	Created  string `json:"created"`
+}
+
+func OAuthStoreDefaultPath() string {
+	return filepath.Join(denieddb.StateDir(), "oauth-tokens.json")
 }
 
 func isLoopbackHost(host string) bool {

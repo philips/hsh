@@ -83,6 +83,66 @@ and start a fresh login (new browser round-trip) rather than replaying
 an old callback URL. The harness's `state` check makes mis-delivery
 fail safe, and non-loopback URLs are refused.
 
+## Debugging a login
+
+The egress proxy log is the primary diagnostic - the login's HTTP traffic
+all crosses it. While the session runs:
+
+```
+server$ hsh ls -q                      # find the session id
+server$ podman logs -f hsh-<session>-proxy
+```
+
+What a healthy browser-redirect login looks like, in order:
+
+- `CONNECT auth.openai.com:443 ... will intercept for oauth` - the
+  provider config reached this session's proxy. If you instead see
+  `denied auth.openai.com (not in network.allow)` or
+  `dns: denied auth.openai.com`, the session is running a stale image or
+  config - the allowlist and `oauth` section must both be present.
+- `POST auth.openai.com/api/accounts/oauth/token -> oauth token exchange (openai)`
+- `oauth: openai token exchange: upstream 200 OK (application/json, N bytes)`
+- `oauth: captured openai access_token (sandbox sees a phantom)` - one line
+  per captured field.
+- Later API calls: `oauth: redeemed openai access_token token for api.openai.com`.
+
+Failure signatures:
+
+- `oauth: token endpoint refused the exchange: invalid_grant` (with the
+  upstream status line just above it) - the provider refused the code:
+  expired or already redeemed (see
+  [Browser-redirect logins](#browser-redirect-logins)).
+- `token response is not JSON` / `contained none of the declared fields` -
+  the `token_endpoint` host+path does not match what the client actually
+  calls; check the path against the CONNECT/POST lines above it.
+- `TLS handshake with client for auth.openai.com: ...` - the client does
+  not trust the session CA bundle (check the `*_CA_*` env vars inside the
+  workspace).
+- `unknown phantom presented` - the client sent a phantom the store has
+  no mapping for (store deleted or written by another host).
+- `writing the token store ... :` - the capture could not be persisted;
+  phantoms stop resolving after a restart.
+
+`hsh oauth status` lists what is captured host-side - providers, phantom
+counts, and capture times, never token values:
+
+```
+server$ hsh oauth status
+~/.local/state/hsh/oauth-tokens.json: 2 phantom(s)
+  openai:
+    access_token   1  newest captured 2025-06-11T18:02:14Z
+    refresh_token  1  newest captured 2025-06-11T18:02:14Z
+```
+
+Inside the sandbox, `curl -sS https://auth.openai.com/` checks the full
+path (DNS, proxy env, CA trust) independently of the client.
+
+Client-side: most agent CLIs print the upstream status and response body
+when the exchange fails, and pi's login runs in its Bun binary whose
+`fetch` honors the proxy environment variables - so there is no separate
+client debug switch to turn on; the proxy log above shows the same
+exchange from the other side.
+
 ## Token store
 
 Captured tokens live in `oauth-tokens.json` next to the denial

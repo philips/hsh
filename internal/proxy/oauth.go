@@ -105,9 +105,12 @@ func (s *tokenStore) put(phantom string, t storedToken) {
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		log.Printf("oauth: writing the token store %s: %v (captured tokens will not resolve after a restart)", s.path, err)
 		return
 	}
-	_ = os.Rename(tmp, s.path)
+	if err := os.Rename(tmp, s.path); err != nil {
+		log.Printf("oauth: renaming the token store %s: %v", s.path, err)
+	}
 }
 
 func newPhantom() (string, error) {
@@ -163,6 +166,7 @@ func (p *Proxy) redeemBearerHeader(h http.Header, host string) bool {
 	phantom := strings.TrimPrefix(auth, "Bearer ")
 	t, ok := p.store.lookup(phantom)
 	if !ok {
+		log.Printf("oauth: unknown phantom presented for %s; passing it through unresolved (is the oauth store missing the mapping?)", host)
 		return false
 	}
 	h.Set("Authorization", "Bearer "+t.Value)
@@ -232,6 +236,7 @@ func (p *Proxy) redeemRequestBody(body []byte, prov *oauthProvider) []byte {
 func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 	var doc map[string]any
 	if err := json.Unmarshal(body, &doc); err != nil {
+		log.Printf("oauth: %s token response is not JSON; passing it through unchanged (check token_endpoint path and content type)", prov.name)
 		return body
 	}
 	changed := false
@@ -253,6 +258,7 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f)
 	}
 	if !changed {
+		log.Printf("oauth: %s token response contained none of the declared fields %v; passing it through unchanged", prov.name, prov.fields)
 		return body
 	}
 	out, err := json.Marshal(doc)
@@ -260,6 +266,28 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 		return body
 	}
 	return out
+}
+
+func oauthErrorSummary(body []byte) string {
+	var doc struct {
+		Error            string `json:"error"`
+		ErrorDescription string `json:"error_description"`
+	}
+	if err := json.Unmarshal(body, &doc); err == nil {
+		switch {
+		case doc.Error != "" && doc.ErrorDescription != "":
+			return doc.Error + ": " + doc.ErrorDescription
+		case doc.Error != "":
+			return doc.Error
+		case doc.ErrorDescription != "":
+			return doc.ErrorDescription
+		}
+	}
+	s := strings.TrimSpace(string(body))
+	if len(s) > 200 {
+		s = s[:200] + "..."
+	}
+	return s
 }
 
 func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Response, []byte, error) {
@@ -292,6 +320,10 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 	respBody, err := readLimited(resp.Body, oauthBodyLimit)
 	if err != nil {
 		return nil, nil, err
+	}
+	log.Printf("oauth: %s token exchange: upstream %s (%s, %d bytes)", prov.name, resp.Status, resp.Header.Get("Content-Type"), len(respBody))
+	if resp.StatusCode >= 400 {
+		log.Printf("oauth: token endpoint refused the exchange: %s", oauthErrorSummary(respBody))
 	}
 	respBody = p.captureTokenResponse(respBody, prov)
 	return resp, respBody, nil
