@@ -350,7 +350,7 @@ func TestSessionPtyRunsOnTerminal(t *testing.T) {
 	}
 	var out bytes.Buffer
 	ses.Stdout = &out
-	if err := ses.Run("stty size < /dev/tty 2>/dev/null || stty size"); err != nil {
+	if err := ses.Run("stty size"); err != nil {
 		t.Fatalf("run: %v (%q)", err, out.String())
 	}
 	if !strings.HasPrefix(out.String(), "24 80") {
