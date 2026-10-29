@@ -278,7 +278,7 @@ grep -q "no session to resume" "$TMP/resume-none.out" || fail "resume without se
 pass "hsh run --resume with no session fails clearly"
 
 cp "$TMP/config.hsh" "$TMP/workspace/config.hsh"
-(cd "$TMP/workspace" && "$HSH" run) >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/workspace" && "$HSH" run --config config.hsh) >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
 echo resume-marker > /home/hsh/marker.txt
 echo "launch1-marker-written"
 exit
@@ -313,7 +313,7 @@ pass "proxy works after re-entry"
 grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+host\.containers\.internal' "$TMP/resume2.out" || fail "DNS not working after re-entry"
 pass "DNS works after re-entry"
 
-(cd "$TMP/workspace" && "$HSH" run --rm) >"$TMP/resume-rm.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/workspace" && "$HSH" run --config config.hsh --rm) >"$TMP/resume-rm.out" 2>&1 <<'CMDS' || true
 echo ephemeral > /home/hsh/ephemeral.txt
 exit
 CMDS
@@ -321,7 +321,7 @@ LEFTOVER="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format
 [ "$LEFTOVER" = "1" ] || fail "--rm run left $LEFTOVER pods for the workspace, want only the persistent session"
 pass "hsh run --rm removes its pod and state at exit"
 
-(cd "$TMP/workspace" && "$HSH" run) >"$TMP/resume-second.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/workspace" && "$HSH" run --config config.hsh) >"$TMP/resume-second.out" 2>&1 <<'CMDS' || true
 echo second > /home/hsh/second.txt
 exit
 CMDS
@@ -454,7 +454,7 @@ echo label-secret-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretst
 if (cd "$TMP/labelws" && "$HSH" run >"$TMP/label-noimg.out" 2>&1); then
 	fail "hsh run without a config file or an image succeeded"
 fi
-grep -q "no config file" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
+grep -q "no image given" "$TMP/label-noimg.out" || fail "hsh run did not explain the missing config: $(cat "$TMP/label-noimg.out")"
 (cd "$TMP/labelws" && "$HSH" run --secret-db "$TMP/secretstore/secrets.db" localhost/hsh-label-test:latest >"$TMP/label.out" 2>&1 <<'CMDS' || true
 cat /workspace/marker.txt
 curl -sS -o /dev/null -w 'allowed=%{http_code}\n' http://host.containers.internal:8899/v1/models

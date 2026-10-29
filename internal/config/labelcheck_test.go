@@ -3,30 +3,23 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestHarnessImageLabels(t *testing.T) {
-	files, err := filepath.Glob("../../images/*/Containerfile")
+	files, err := filepath.Glob("../../images/*/hsh.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(files) == 0 {
-		t.Fatal("no Containerfiles found under images/")
+		t.Fatal("no hsh.json files found under images/")
 	}
 	for _, cf := range files {
 		data, err := os.ReadFile(cf)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := string(data)
-		start := strings.Index(s, "org.ifup.hsh='")
-		end := strings.Index(s, "'\n")
-		if start < 0 || end <= start {
-			t.Fatalf("%s: no org.ifup.hsh label found", cf)
-		}
-		label := s[start+len("org.ifup.hsh='") : end]
+		label := string(data)
 		cfg, err := FromImageLabel(label)
 		if err != nil {
 			t.Errorf("%s: label does not parse or validate: %v", cf, err)
