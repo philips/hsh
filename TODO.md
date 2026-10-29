@@ -16,6 +16,14 @@ Policies could be managed with the `hsh policy` subcommand like
 hsh policy add github.com https://gist.githubusercontent.com/philips/2f755b38577e41acbb94a75b153a9fb4/raw/f4e064e86c7e189311fbdbefd9fa5c0447e2161e/gistfile1.txt
 ```
 
+An example policy might be Go access
+
+```
+"go.dev",
+"dl.google.com",
+"proxy.golang.org"
+```
+
 Which would add a file to `~/.config/hsh/policy/network/github.com.json`
 
 Then a user could do something like `hsh policy list` and `hsh session apply-policy <session-id> <policy-id>`. Policies could also be referenced from config.json files.
