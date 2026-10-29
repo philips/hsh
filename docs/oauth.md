@@ -101,17 +101,35 @@ What a healthy browser-redirect login looks like, in order:
   `dns: denied auth.openai.com`, the session is running a stale image or
   config - the allowlist and `oauth` section must both be present.
 - `POST auth.openai.com/api/accounts/oauth/token -> oauth token exchange (openai)`
+- `oauth: openai exchange request: grant_type=authorization_code
+  code=<12 hex>(len 96) code_verifier(len 43)
+  redirect_uri=http://127.0.0.1:1455/auth/callback client_id=oaiapp_...` -
+  the request shape the provider received (codes and verifiers are
+  fingerprinted, never logged).
 - `oauth: openai token exchange: upstream 200 OK (application/json, N bytes)`
 - `oauth: captured openai access_token (sandbox sees a phantom)` - one line
   per captured field.
 - Later API calls: `oauth: redeemed openai access_token token for api.openai.com`.
+
+`hsh oauth callback` prints the same code fingerprint it delivered
+(`(code 9f2a41c77b1e, 96 chars)`), so the delivery and the exchange can
+be correlated: the same fingerprint in the exchange means pi sent the
+code you delivered; a repeated fingerprint across two exchanges means a
+retried (already consumed) code; a fresh fingerprint that still fails
+means the provider rejected it on its own merits.
 
 Failure signatures:
 
 - `oauth: token endpoint refused the exchange: invalid_grant` (with the
   upstream status line just above it) - the provider refused the code:
   expired or already redeemed (see
-  [Browser-redirect logins](#browser-redirect-logins)).
+  [Browser-redirect logins](#browser-redirect-logins)). If the code was
+  fresh and promptly delivered, check whether the browser showed a
+  **success** page instead of the expected connection-refused error:
+  that means something on the browsing machine consumed the callback
+  (an unfinished `pi` or Codex CLI login holding `127.0.0.1:1455`) and
+  exchanged the single-use code first - kill it (`lsof -i :1455`) and
+  start a fresh login.
 - `token response is not JSON` / `contained none of the declared fields` -
   the `token_endpoint` host+path does not match what the client actually
   calls; check the path against the CONNECT/POST lines above it.

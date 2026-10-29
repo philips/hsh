@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -71,7 +73,11 @@ func oauthCallbackCommand() *ff.Command {
 			if strings.HasPrefix(status, "ERR") {
 				return fmt.Errorf("session %s: %s (is the login still waiting on port %s?)", sessionID, status, port)
 			}
-			fmt.Printf("delivered the callback to session %s: %s\n", sessionID, status)
+			if code := u.Query().Get("code"); code != "" {
+				fmt.Printf("delivered the callback to session %s: %s (code %s, %d chars)\n", sessionID, status, oauthFingerprint(code), len(code))
+			} else {
+				fmt.Printf("delivered the callback to session %s: %s\n", sessionID, status)
+			}
 			return nil
 		})
 }
@@ -138,6 +144,11 @@ type storedPhantom struct {
 
 func OAuthStoreDefaultPath() string {
 	return filepath.Join(denieddb.StateDir(), "oauth-tokens.json")
+}
+
+func oauthFingerprint(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func isLoopbackHost(host string) bool {

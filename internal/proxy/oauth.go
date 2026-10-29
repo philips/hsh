@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -176,6 +177,36 @@ func (p *Proxy) redeemBearerHeader(h http.Header, host string) bool {
 
 const oauthBodyLimit = 1 << 20
 
+func oauthFingerprint(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+func logExchangeRequest(prov *oauthProvider, body []byte) {
+	vals, err := url.ParseQuery(string(body))
+	if err != nil {
+		log.Printf("oauth: %s exchange request is not form-encoded; request fields not logged", prov.name)
+		return
+	}
+	parts := []string{"grant_type=" + vals.Get("grant_type")}
+	if c := vals.Get("code"); c != "" {
+		parts = append(parts, fmt.Sprintf("code=%s(len %d)", oauthFingerprint(c), len(c)))
+	}
+	if v := vals.Get("code_verifier"); v != "" {
+		parts = append(parts, fmt.Sprintf("code_verifier(len %d)", len(v)))
+	}
+	if r := vals.Get("redirect_uri"); r != "" {
+		parts = append(parts, "redirect_uri="+r)
+	}
+	if id := vals.Get("client_id"); id != "" {
+		parts = append(parts, "client_id="+id)
+	}
+	if rt := vals.Get("refresh_token"); rt != "" {
+		parts = append(parts, fmt.Sprintf("refresh_token=%s(len %d)", oauthFingerprint(rt), len(rt)))
+	}
+	log.Printf("oauth: %s exchange request: %s", prov.name, strings.Join(parts, " "))
+}
+
 func readLimited(r io.Reader, limit int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, limit))
 	if err != nil {
@@ -300,6 +331,7 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 		}
 		req.Body.Close()
 	}
+	logExchangeRequest(prov, body)
 	body = p.redeemRequestBody(body, prov)
 	if len(body) > 0 {
 		req.Body = io.NopCloser(bytes.NewReader(body))
