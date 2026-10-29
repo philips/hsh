@@ -1177,8 +1177,12 @@ CMDS
 		sleep 0.5
 	done
 	[ -n "$SSH_POD" ] || fail "the ssh test session never started: $(cat "$TMP/ssh-run.out")"
-	sed "s|ProxyCommand hsh|ProxyCommand $HSH|" < <("$HSH" ssh-config) >"$TMP/ssh_config"
-	grep -q "ProxyCommand $HSH ssh-proxy %h" "$TMP/ssh_config" || fail "hsh ssh-config did not produce the ProxyCommand: $(cat "$TMP/ssh_config")"
+	for _ in $(seq 1 60); do
+		[ "$(podman inspect --format '{{.State.Running}}' "$SSH_POD-ws" 2>/dev/null)" = "true" ] && break
+		sleep 0.5
+	done
+	sed "s|ProxyCommand hsh|ProxyCommand $HSH|" < <("$HSH" ssh config) >"$TMP/ssh_config"
+	grep -q "ProxyCommand $HSH ssh proxy %h" "$TMP/ssh_config" || fail "hsh ssh config did not produce the ProxyCommand: $(cat "$TMP/ssh_config")"
 	SSH_FWD_PID=""
 	ssh -F "$TMP/ssh_config" -N -o ExitOnForwardFailure=yes \
 		-L 18000:localhost:8000 -L 18001:localhost:8001 -L 18002:example.com:443 "$SSH_POD" >"$TMP/ssh-fwd.out" 2>&1 &

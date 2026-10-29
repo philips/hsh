@@ -73,7 +73,7 @@ proxy, the denial database, and the example image:
   default being off, the concurrency cap, client disconnects, the `holding`
   counts, and held DNS queries
 - **step 23**: ssh into a session — `ssh -N -L` through the `hsh
-  ssh-config` ProxyCommand reaches a node server on the sandbox's loopback;
+  ssh config` ProxyCommand reaches a node server on the sandbox's loopback;
   a 5 MiB response and eight concurrent connections cross one ssh
   connection; a closed sandbox port fails only that connection; a forward to
   `example.com` and `ssh -R` are refused and nothing reaches the egress

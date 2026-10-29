@@ -513,7 +513,7 @@ interface.
 
 ```
 laptop ssh -L 8000:localhost:8000 hsh-<id>
-  └─ ProxyCommand: [ssh server] hsh ssh-proxy hsh-<id>
+  └─ ProxyCommand: [ssh server] hsh ssh proxy hsh-<id>
        └─ podman exec -i <pod>-ws /hsh-workspace-inner --ssh-stdio
             (pod netns; an SSH server on stdin/stdout)
             └─ direct-tcpip "localhost:8000" → "DIAL 8000" over the veth
@@ -531,14 +531,14 @@ laptop ssh -L 8000:localhost:8000 hsh-<id>
 - **The SSH server** (`internal/sshd`) is started per connection by `podman
   exec` and uses no authentication: the transport is the user's own login to
   the machine that runs podman, and nothing listens on the host. The host key is
-  ephemeral, so `hsh ssh-config` prints a stanza with host-key checking off.
+  ephemeral, so `hsh ssh config` prints a stanza with host-key checking off.
 - **What it accepts**: `direct-tcpip` channels whose destination is
   `localhost`, `127.0.0.1`, or `::1`; the destination host is a name for the
   sandbox's loopback, not an address to dial. Everything else is refused
   without a dial: other destinations (so the relay is never an egress path
   around the proxy), `tcpip-forward` (`ssh -R`), streamlocal, agent, X11, and
   `session` channels. Use `ssh -N`.
-- **`hsh ssh-proxy`** resolves the session (the host name `hsh-<id>`, or
+- **`hsh ssh proxy`** resolves the session (the host name `hsh-<id>`, or
   `--session`, or the workspace directory's only session), checks the
   workspace container is running, and execs into it. It refuses to run with a
   terminal on stdout and skips the auto-update hooks so stdout stays clean.

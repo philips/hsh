@@ -35,17 +35,36 @@ func serveSSHStdio() error {
 	})
 }
 
+var sshProxyCmd *ff.Command
+
+func sshCommand() *ff.Command {
+	var cmd *ff.Command
+	sshProxyCmd = sshProxyCommand()
+	cmd = &ff.Command{
+		Name:      "ssh",
+		Usage:     "hsh ssh SUBCOMMAND",
+		ShortHelp: "reach servers inside a session with your ssh client",
+		Flags:     ff.NewFlagSet("ssh"),
+		Subcommands: []*ff.Command{
+			sshConfigCommand(),
+			sshProxyCmd,
+		},
+	}
+	cmd.Exec = groupExec(&cmd)
+	return cmd
+}
+
 func sshProxyCommand() *ff.Command {
 	var session string
-	return newCommand("ssh-proxy", "hsh ssh-proxy [FLAGS] [hsh-SESSION]",
+	return newCommand("proxy", "hsh ssh proxy [FLAGS] [hsh-SESSION]",
 		"speak SSH on stdin/stdout for port forwards into a session (use as an ssh ProxyCommand)", func(fs *ff.FlagSet) {
 			fs.StringVar(&session, 0, "session", "", "the session to connect to (default: the host name argument, else the current workspace's only session)")
 		}, func(ctx context.Context, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("ssh-proxy takes at most one session name")
+				return fmt.Errorf("ssh proxy takes at most one session name")
 			}
 			if isTerminal(os.Stdout) {
-				return fmt.Errorf("ssh-proxy speaks the SSH protocol on stdin/stdout; use it as a ProxyCommand (see: hsh ssh-config)")
+				return fmt.Errorf("ssh proxy speaks the SSH protocol on stdin/stdout; use it as a ProxyCommand (see: hsh ssh config)")
 			}
 			if len(args) == 1 {
 				if session != "" {
@@ -53,7 +72,7 @@ func sshProxyCommand() *ff.Command {
 				}
 				session = args[0]
 			}
-			sessionID, err := resolveSession(session, "hsh ssh-proxy --session <id>")
+			sessionID, err := resolveSession(session, "hsh ssh proxy --session <id>")
 			if err != nil {
 				return err
 			}
@@ -71,13 +90,13 @@ func sshProxyCommand() *ff.Command {
 
 func sshConfigCommand() *ff.Command {
 	var host, hshPath string
-	return newCommand("ssh-config", "hsh ssh-config [FLAGS]",
+	return newCommand("config", "hsh ssh config [FLAGS]",
 		"print the ~/.ssh/config stanza that makes `ssh hsh-SESSION` reach a session", func(fs *ff.FlagSet) {
 			fs.StringVar(&host, 0, "host", "", "ssh destination of the machine that runs hsh (default: hsh runs on this machine)")
 			fs.StringVar(&hshPath, 0, "hsh-path", "hsh", "path of the hsh binary on the machine that runs it")
 		}, func(ctx context.Context, args []string) error {
 			if len(args) > 0 {
-				return fmt.Errorf("ssh-config takes no arguments")
+				return fmt.Errorf("ssh config takes no arguments")
 			}
 			fmt.Print(sshConfigStanza(host, hshPath))
 			return nil
@@ -85,9 +104,9 @@ func sshConfigCommand() *ff.Command {
 }
 
 func sshConfigStanza(host, hshPath string) string {
-	proxy := hshPath + " ssh-proxy %h"
+	proxy := hshPath + " ssh proxy %h"
 	if host != "" {
-		proxy = "ssh -T -q " + host + " " + hshPath + " ssh-proxy %h"
+		proxy = "ssh -T -q " + host + " " + hshPath + " ssh proxy %h"
 	}
 	var b strings.Builder
 	b.WriteString("Host hsh-*\n")

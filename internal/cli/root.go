@@ -78,8 +78,7 @@ func Root() *ff.Command {
 			proxyCommand(),
 			monitorCommand(),
 			oauthCommand(),
-			sshProxyCommand(),
-			sshConfigCommand(),
+			sshCommand(),
 			lsCommand(),
 			rmCommand(),
 			gcCommand(),
@@ -97,7 +96,7 @@ func Run(args []string) error {
 	if err := root.Parse(args); err != nil {
 		return runResult(root, err)
 	}
-	if sel := root.GetSelected(); sel != nil && sel != root && sel.Name != "update" && sel.Name != "ssh-proxy" {
+	if sel := root.GetSelected(); sel != nil && sel != root && sel.Name != "update" && (sshProxyCmd == nil || sel != sshProxyCmd) {
 		autoUpdateHook()
 		spawnCheckHook()
 	}
