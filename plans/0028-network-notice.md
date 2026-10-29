@@ -24,6 +24,13 @@ There is no formal standard for this. The channels agents actually read,
 strongest first: the system prompt, instruction files (`AGENTS.md`,
 `CLAUDE.md`), and the text of the failure. This plan uses all three.
 
+## Prior Art
+
+- Substrate uses 403: https://ate.dev/docs/guides/egress-traffic/
+- Smokescreen uses 407: https://github.com/stripe/smokescreen
+- nono uses 403: https://github.com/nolabs-ai/nono/blob/be579e79d1471122ea165b8cccbecf54362d9d70/crates/nono-proxy/src/server.rs#L6507
+- sbx uses 403: https://github.com/docker/sbx-releases/issues/525
+
 ## Where agents see things today
 
 - The 407 body from the proxy already carries the instruction text (0027).
@@ -140,12 +147,10 @@ prose). The wording measured as V4:
 ```
 # Network access (hsh sandbox)
 Some network requests are blocked on purpose by an egress proxy. A blocked
-request fails with HTTP 407 (or "CONNECT tunnel failed, response 407") or a
-refused DNS lookup, and the user is notified automatically. That is policy,
-not an outage, and no proxy setting, tool, mirror, or DNS trick will get
-around it, so do not try. When a request is blocked, stop, tell the user which
-host you need and why, and carry on with whatever you can do without it. After
-the user approves the host, retry the same request.
+request fails with HTTP 403 or a refused DNS lookup. The user is notified
+automatically. When a request is blocked, stop, tell the user which host you
+need and why. Continue with what you can without access. After the user
+approves the host, retry the same request.
 ```
 
 It deliberately does not say which hosts are reachable (see the V2 and V3
@@ -170,7 +175,7 @@ Two mechanisms, chosen per harness image through the label:
 - **Launch flag (preferred where the harness has one).** The label's
   `agent.launch` and `agent.command` argv may contain the placeholder
   `{network_policy}`, which the workspace entrypoint replaces with
-  `/hsh-run/network-policy.md`. For pi: `["pi", "--append-system-prompt",
+  `/hsh-run/notice/network-policy.md`. For pi: `["pi", "--append-system-prompt",
   "{network_policy}"]` (the pi docs describe the flag taking a file path).
   The file is read at launch, so it is always current, nothing is written
   into the home directory, and it lands in the system prompt.
@@ -198,15 +203,8 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 
 ### 4. Better failure text from the proxy
 
-- **Reason phrase.** The 407 status line carries the instruction itself:
-  `407 hsh: blocked by sandbox policy - needs user approval - do not work
-  around - retry later`. Go's `http.Error` cannot set a reason phrase, so
-  denials are written by hijacking the connection (as the allowed CONNECT
-  path already does) with a fallback to `http.Error`.
 - **Body.** Keeps the instruction text and adds the current allowed hosts
   (capped at 20, with "and N more").
-- **Headers.** `X-Hsh-Blocked-Host: <host>` for tooling; whether to add
-  `Retry-After` depends on the experiment below.
 
 ### 5. Find out what actually reaches the agent (phase 1, done)
 
@@ -218,11 +216,11 @@ Before choosing wording or status codes, measure (results above).
   example image and records the exact error text each one prints. The result
   goes in `docs/` as a table and decides how much weight the reason phrase,
   body, and header carry.
-- **Status code.** Compare 407 with 403 and 503+`Retry-After` for how clients
-  and agents react (fail fast, retry with backoff, show text). 407 is the
+- **Status code.** Compare 403 with 407 and 503+`Retry-After` for how clients
+  and agents react (fail fast, retry with backoff, show text). 403 is the
   correct proxy status, so it only changes if another code is clearly better.
 - **Agent trial.** Run pi with Mistral through a fixed blocked-host task
-  (`hsh run --tasks`) four ways: baseline, 407 text only, plus the notice via
+  (`hsh run --tasks`) four ways: baseline, 403 text only, plus the notice via
   flag, plus both phrase and notice. Count tool calls and tokens until it
   gives up or reports to the user. Needs a Mistral key, so it is a manual
   benchmark with a written procedure, not CI.
@@ -248,9 +246,6 @@ Before choosing wording or status codes, measure (results above).
 
 ## Tests
 
-- Proxy: the 407 status line carries the reason phrase for CONNECT and plain
-  HTTP; the body lists at most 20 hosts; the allowlist in the body tracks a
-  reload; `http.Error` fallback when the connection cannot be hijacked.
 - Config: label parsing of `agent.context_files` and the placeholder; labelcheck
   covers each image.
 - Workspace entrypoint: placeholder substitution in launch and command argv;
@@ -269,7 +264,7 @@ Before choosing wording or status codes, measure (results above).
 The notice is text from the host written into the agent's own prompt; it adds
 no authority. The notice file is mounted read-only; the instruction-file block
 is agent-writable by design and only advisory. The proxy remains the only
-enforcement, and nothing in the notice or the 407 text widens policy. The
+enforcement, and nothing in the notice or the 403 text widens policy. The
 allowlist shown to the agent is already visible to it through behavior.
 
 ## Future work
