@@ -6,7 +6,7 @@
 > (10.77.0.2:7788, started by the workspace-inner, reached through
 > `podman exec` into the pod netns). The `--forward` published-port
 > bridge for fully automated redirects remains future work, now
-> planned as `hsh forward` in plans/0029-forward-ports.md, which
+> planned as `hsh forward` in plans/0030-forward-ports.md, which
 > supersedes the published-port design below.
 
 ## Problem
