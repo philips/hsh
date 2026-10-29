@@ -5,13 +5,11 @@
 An agent running in an hsh sandbox should know, before it hits a wall and
 again when it does, that:
 
-1. egress is restricted on purpose (not an outage or a bug to engineer
-   around)
-2. that a blocked host needs the user's approval, which the user has been
-   asked for
-3. what to do: say which host is needed and why, wait a minute or two, retry
-   the same request once, and not try other tools, mirrors, proxies, DNS
-   tricks, or changes to proxy settings
+1. egress is restricted on purpose (not an outage or a bug to engineer around)
+2. that a blocked host needs the user's approval, which the user has been asked
+   for
+3. tell the user which host is needed and why. do not try other tools, mirrors,
+   proxies, DNS tricks, or changes to proxy settings
 
 There is no formal standard for this. The channels agents actually read,
 strongest first: the system prompt, instruction files (`AGENTS.md`,
@@ -133,13 +131,14 @@ A short static text (about 100 words; weaker models ignore long prose).
 Some network requests are blocked on purpose by an egress proxy. A blocked
 request fails with HTTP 403 or a refused DNS lookup. The user is notified
 automatically. When a request is blocked, stop, tell the user which host you
-need and why. Continue with what you can without access. After the user
-approves the host, retry the same request.
+need and why. Continue with what you can without access.
 ```
 
 It deliberately does not say which hosts are reachable as this may change
 during an agent run. `network.notice: false` disables the feature; the text
 lives in one Go template.
+
+With none mode this notice is not inserted.
 
 ### 2. Where the notice file lives
 
@@ -195,6 +194,7 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 
 1. **Measure** (done): the client matrix, the status-code comparison, and the
    agent trial for pi with a Mistral model; results above.
+2. **Switch to 403**: Currently the proxy returns 407
 2. **Notice and delivery**: template, notice file and mount, placeholder
    substitution, managed blocks, config fields.
 3. **Images**: pi first (flag), then the others after their mechanisms are
