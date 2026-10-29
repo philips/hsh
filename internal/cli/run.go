@@ -29,7 +29,8 @@ import (
 
 type runOptions struct {
 	configPath   string
-	workspaceDir string
+	workdir      string
+	workspaceSel string
 	deniedDB     string
 	secretDB     string
 	tasksPath    string
@@ -44,14 +45,14 @@ type runOptions struct {
 
 func runCommand() *ff.Command {
 	ro := runOptions{
-		configPath: "config.hsh",
-		deniedDB:   denieddb.DefaultPath(),
-		secretDB:   secretstore.DefaultPath(),
-		pull:       "newer",
+		deniedDB: denieddb.DefaultPath(),
+		secretDB: secretstore.DefaultPath(),
+		pull:     "newer",
 	}
 	fs := ff.NewFlagSet("run")
-	fs.StringVar(&ro.configPath, 0, "config", "config.hsh", "config file that seeds the session's config copy")
-	fs.StringVar(&ro.workspaceDir, 0, "workspace", "", "workspace directory inside the container (default: first mount target)")
+	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
+	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point)")
+	fs.StringVar(&ro.workspaceSel, 0, "workspace", "", "with --resume: select the session by host workspace directory")
 	fs.StringVar(&ro.deniedDB, 0, "denied-db", denieddb.DefaultPath(), "proxy denial database")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
@@ -64,25 +65,42 @@ func runCommand() *ff.Command {
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
 	return &ff.Command{
 		Name:      "run",
-		Usage:     "hsh run [FLAGS] [IMAGE]",
+		Usage:     "hsh run [FLAGS] IMAGE [WORKSPACE-DIR]",
 		ShortHelp: "start a sandboxed shell (persistent session; re-enter with --resume)",
 		Flags:     fs,
 		Exec: func(ctx context.Context, args []string) error {
-			if len(args) > 1 {
-				return fmt.Errorf("unexpected arguments %v: at most one positional (IMAGE, or a session id with --resume) is accepted, and flags must come before it", args)
+			if ro.resume {
+				if len(args) > 1 {
+					return fmt.Errorf("unexpected arguments %v: with --resume at most one positional (session id) is accepted, and flags must come before it", args)
+				}
+				sessionArg := ""
+				if len(args) == 1 {
+					sessionArg = args[0]
+				}
+				return run(ctx, ro, sessionArg, "")
 			}
-			positional := ""
-			if len(args) == 1 {
-				positional = args[0]
+			if len(args) > 2 {
+				return fmt.Errorf("unexpected arguments %v: at most two positionals (IMAGE and WORKSPACE-DIR) are accepted, and flags must come before them", args)
 			}
-			return run(ctx, ro, positional)
+			image := ""
+			workspaceArg := ""
+			if len(args) >= 1 {
+				image = args[0]
+			}
+			if len(args) == 2 {
+				workspaceArg = args[1]
+			}
+			return run(ctx, ro, image, workspaceArg)
 		},
 	}
 }
 
-func run(ctx context.Context, ro runOptions, positional string) error {
+func run(ctx context.Context, ro runOptions, positional, workspaceArg string) error {
 	if ro.verbose {
 		verbose = true
+	}
+	if ro.workspaceSel != "" && !ro.resume {
+		return fmt.Errorf("--workspace selects a session to resume and requires --resume; to start a session in a directory pass it positionally: hsh run IMAGE WORKSPACE-DIR")
 	}
 	switch ro.networkMode {
 	case "", "https", "allowlist", "none":
@@ -106,6 +124,24 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
+	}
+	workspaceRoot := cwd
+	wsArg := workspaceArg
+	if ro.resume {
+		wsArg = ro.workspaceSel
+	}
+	if wsArg != "" {
+		workspaceRoot, err = filepath.Abs(wsArg)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(workspaceRoot)
+		if err != nil {
+			return fmt.Errorf("workspace directory %s: %w", workspaceRoot, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("workspace %s is not a directory", workspaceRoot)
+		}
 	}
 	var tasksPrompt string
 	if ro.tasksPath != "" {
@@ -145,7 +181,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		if positional != "" {
 			sessionID = strings.TrimPrefix(positional, "hsh-")
 		} else {
-			pods, err := listSandboxes("label=hsh.workspace=" + cwd)
+			pods, err := listSandboxes("label=hsh.workspace=" + workspaceRoot)
 			if err != nil {
 				return err
 			}
@@ -159,7 +195,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 				for _, p := range pods {
 					ids = append(ids, strings.TrimPrefix(p.Name, "hsh-"))
 				}
-				return fmt.Errorf("multiple sessions for workspace %s:\n  %s\nre-enter with: hsh run --resume <session id>", cwd, strings.Join(ids, "\n  "))
+				return fmt.Errorf("multiple sessions for workspace %s:\n  %s\nre-enter with: hsh run --resume <session id>", workspaceRoot, strings.Join(ids, "\n  "))
 			}
 		}
 	} else {
@@ -213,20 +249,22 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			}
 			infof("hsh: image %s\n", image)
 		}
-		absSeed, err := filepath.Abs(ro.configPath)
-		if err != nil {
-			return err
-		}
-		var mountBase string
-		if fileExists(absSeed) {
+		mountBase := workspaceRoot
+		if ro.configPath != "" {
+			absSeed, err := filepath.Abs(ro.configPath)
+			if err != nil {
+				return err
+			}
+			if !fileExists(absSeed) {
+				return fmt.Errorf("no config file at %s", absSeed)
+			}
 			cfg, err = config.Load(absSeed)
 			if err != nil {
 				return err
 			}
-			mountBase = filepath.Dir(absSeed)
 		} else {
 			if image == "" {
-				return fmt.Errorf("no config file at %s and no image given; try: hsh run IMAGE (a harness image supplies its default config via the org.ifup.hsh label)", absSeed)
+				return fmt.Errorf("no image given; try: hsh run IMAGE (a harness image supplies its default config via the org.ifup.hsh label), or pass --config")
 			}
 			label, err := imageLabel(image)
 			if err != nil {
@@ -236,7 +274,6 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 			if err != nil {
 				return err
 			}
-			mountBase = cwd
 			infof("hsh: using config from the org.ifup.hsh label of %s\n", image)
 		}
 		if image == "" {
@@ -286,7 +323,7 @@ func run(ctx context.Context, ro runOptions, positional string) error {
 		}
 	}()
 
-	wsDir := ro.workspaceDir
+	wsDir := ro.workdir
 	if wsDir == "" {
 		wsDir = mounts[0].Target
 	}

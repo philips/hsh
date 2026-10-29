@@ -583,9 +583,11 @@ A **workspace** is the host directory the first mount sources from
 sessions per workspace.
 
 - Every `hsh run` creates a persistent session. The seed config
-  (`--config PATH`, or `./config.hsh`, or the image's `org.ifup.hsh`
-  label) is copied into the session directory with mounts resolved to
-  absolute paths; the copy is the live config — watched for hot reload,
+  (`--config PATH`, or the image's `org.ifup.hsh` label) is copied into
+  the session directory with mounts resolved against the workspace
+  directory (the `WORKSPACE-DIR` positional, or the current directory
+  when omitted) to absolute paths; the copy is the live config — watched
+  for hot reload,
   and the only file the review commands edit.
 - When the shell exits the whole pod is stopped (proxy and infra
   included — verified: `podman start` auto-starts the infra container,
@@ -645,9 +647,10 @@ sessions per workspace.
   `hsh gc` cleans up).
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
-- `hsh run --resume` re-enters the current workspace's session — the
-  only one directly, or it lists the ids; `hsh run --resume <id>` picks
-  one (the full pod name also works). Re-entry reattaches to the
+- `hsh run --resume` re-enters the current workspace's session (or the
+  one named by `--workspace DIR`) — the only one directly, or it lists
+  the ids; `hsh run --resume <id>` picks one (the full pod name also
+  works). Re-entry reattaches to the
   **same container**, so state inside the workspace container (pi's
   `~/.pi` sign-in, installed packages, files in its home) survives.
   On re-entry the workspace entrypoint deletes the stale veth pair left

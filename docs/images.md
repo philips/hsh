@@ -53,25 +53,25 @@ It also declares the agent argv, in two forms:
 task prompt. `pi -p`, `vibe -p`, `claude -p`, `codex exec`, and `muse exec`
 are the headless invocations of the five harness images.
 
-`hsh run IMAGE` in a directory without a `config.hsh` uses the
+`hsh run IMAGE [WORKSPACE-DIR]` without `--config` uses the
 image's label as its config:
 
 ```
-$ cd my-project
-$ hsh run ghcr.io/ifup/hsh-vibe:latest
+$ hsh run ghcr.io/ifup/hsh-vibe:latest my-project
 ```
 
-The current directory is mounted at `/workspace` (or whatever `mounts`
-the label specifies, resolved against the current directory), the
+The workspace directory (the `WORKSPACE-DIR` positional, or the current
+directory when omitted) is mounted at `/workspace` (or whatever `mounts`
+the label specifies, resolved against the workspace directory), the
 label's allowlist and secrets are applied, and only the image's
 declared provider endpoints are reachable. The harness images pin
 `"mode":"allowlist"` in their labels to keep that promise; the
 default mode for configs without one is `https` (TLS to any host —
 see [network policy modes](config.md#network-policy-modes)).
 
-Precedence: a `config.hsh` file (or `--config PATH`) always wins — the
-label is only a fallback for when no config file exists. The image
-also overrides the `image` field when a config file is present.
+Precedence: `--config PATH` wins when given; otherwise the image label
+is used. The image overrides the config's `image` field when a config
+file is present.
 
 The label JSON must be quoted in the Containerfile so the Dockerfile
 parser preserves its double quotes:

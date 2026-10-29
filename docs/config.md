@@ -1,17 +1,16 @@
 # Configuration reference
 
-hsh reads a JSON config file (default: `./config.hsh`, override
-with `hsh run --config PATH`). The config file is a seed: every run
-copies it into the session's state directory
-(`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the copy -
-not the seed - is the live config, hot-reloaded and edited by the
-review commands. The seed file is never modified in place. Relative
-mount sources are resolved against the seed config's directory and
-stored as absolute paths in the session copy.
+hsh reads a JSON config file when `hsh run --config PATH` is given. The
+config file is a seed: every run copies it into the session's state
+directory (`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the
+copy - not the seed - is the live config, hot-reloaded and edited by the
+review commands. The seed file is never modified in place. Relative mount
+sources are resolved against the workspace directory (the `WORKSPACE-DIR`
+positional, or the current directory when omitted) and stored as absolute
+paths in the session copy.
 
-Without a config file, `hsh run IMAGE` falls back to the
-image's `org.ifup.hsh` label as the config - see
-[pre-built harness images](images.md).
+Without `--config`, `hsh run IMAGE` uses the image's `org.ifup.hsh` label
+as the config - see [pre-built harness images](images.md).
 
 ```json
 {
@@ -49,7 +48,7 @@ image's `org.ifup.hsh` label as the config - see
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session |
 
 The workspace starts in the first mount's target directory
-(override with `hsh run --workspace PATH`).
+(override with `hsh run --workdir PATH`).
 
 ## Secrets
 
