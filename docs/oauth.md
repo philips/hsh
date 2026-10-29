@@ -57,6 +57,11 @@ Declare the provider's token endpoint and API hosts in the config
   share one `api_host`.
 - **Refresh**: a phantom sent back in a refresh flow is redeemed in
   the request body, and the rotated response is captured again.
+- A client that parses the access token itself (e.g. decoding it as a
+  JWT for account claims) cannot receive a phantom for it - restrict
+  `response_fields` to `refresh_token` for such providers. The
+  long-lived credential stays host-side; the short-lived access token
+  is still never phantomed into a form the client would break on.
 - Both plain-HTTP and HTTPS flows are handled.
 
 ## Browser-redirect logins

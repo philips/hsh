@@ -100,13 +100,24 @@ sandbox. `--tasks -` reads the task list from stdin.
 - **pi** — multi-provider: `hsh://mistral-api-key` (Bearer) to
   `api.mistral.ai`, `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`, `hsh://openai-api-key` (Bearer) to
-  `api.openai.com`; also allows `auth.openai.com` and ships an
-  `openai` [OAuth capture provider](oauth.md#configuration)
-  (token endpoint `auth.openai.com/api/accounts/oauth/token`, api host
-  `api.openai.com`), so `Sign in with ChatGPT` logins are sandboxed:
-  deliver the browser callback with
-  [`hsh oauth callback`](oauth.md#browser-redirect-logins) and the
-  subscription credential never enters the workspace.
+  `api.openai.com`; also allows `ab.chatgpt.com`, `auth.openai.com`,
+  and `chatgpt.com` and ships
+  [OAuth capture providers](oauth.md#configuration) for both OpenAI
+  subscription logins:
+  - `openai` (`Sign in with ChatGPT`, browser-redirect): token endpoint
+    `auth.openai.com/api/accounts/oauth/token`, api host
+    `api.openai.com`. Deliver the browser callback with
+    [`hsh oauth callback`](oauth.md#browser-redirect-logins).
+  - `openai-codex` (`ChatGPT Plus/Pro`): token endpoint
+    `auth.openai.com/oauth/token`, api hosts `chatgpt.com` and
+    `ab.chatgpt.com`. The image preinstalls the
+    `pi-openai-codex-device-login` extension, so this login defaults to
+    a **device-code flow** - no loopback callback at all: open
+    `https://auth.openai.com/codex/device` in any browser and enter the
+    printed code. Only the `refresh_token` is captured (the client
+    parses and resends the access token as-is, so it cannot be
+    phantomized); the long-lived credential still never enters the
+    workspace.
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai`,
