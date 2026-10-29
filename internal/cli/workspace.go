@@ -60,6 +60,7 @@ func WorkspaceInner(args []string) error {
 		oauthDeliver = append(oauthDeliver, v)
 		return nil
 	})
+	sshStdio := fs.Bool("ssh-stdio", false, "internal: serve SSH port forwards into the session on stdin/stdout")
 	httpEcho := fs.String("http-echo", "", "internal: listen once on 127.0.0.1:PORT, print the request line, answer 200")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -69,6 +70,9 @@ func WorkspaceInner(args []string) error {
 	}
 	if len(oauthDeliver) == 3 {
 		return workspace.OAuthDeliver(oauthDeliver[0], oauthDeliver[1], oauthDeliver[2])
+	}
+	if *sshStdio {
+		return serveSSHStdio()
 	}
 	if *httpEcho != "" {
 		return workspace.HTTPEcho(*httpEcho)

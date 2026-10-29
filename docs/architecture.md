@@ -504,6 +504,53 @@ is picked up.
 
 Mounts, image, and shell changes require a restart.
 
+## Reaching servers inside the session
+
+A server the agent starts on its loopback (`localhost:8000`) lives in the
+inner network namespace, which nothing outside can reach directly. Inbound
+access goes through the session relay, and the user's own `ssh` client is the
+interface.
+
+```
+laptop ssh -L 8000:localhost:8000 hsh-<id>
+  └─ ProxyCommand: [ssh server] hsh ssh-proxy hsh-<id>
+       └─ podman exec -i <pod>-ws /hsh-workspace-inner --ssh-stdio
+            (pod netns; an SSH server on stdin/stdout)
+            └─ direct-tcpip "localhost:8000" → "DIAL 8000" over the veth
+                 └─ relay in the inner netns (10.77.0.2:7788) → 127.0.0.1:8000
+```
+
+- **The relay** (`internal/workspace/relay.go`) is started by the inner workspace process, in the inner netns,
+  just before it execs the shell, and listens on `10.77.0.2:7788`. It accepts connections only from
+  `10.77.0.1`, the pod side of the veth. `DIAL <port>` answers `OK` or `ERR
+  <reason>` and then splices raw bytes (with half-close in both directions),
+  `LIST` returns the inner netns's listening TCP ports (from
+  `/proc/net/tcp{,6}`), and `PORT <n>` is the older form `hsh oauth callback`
+  uses. A dial tries `127.0.0.1`, then `10.77.0.2`, then `::1`, so a server
+  bound to any of them is reachable.
+- **The SSH server** (`internal/sshd`) is started per connection by `podman
+  exec` and uses no authentication: the transport is the user's own login to
+  the machine that runs podman, and nothing listens on the host. The host key is
+  ephemeral, so `hsh ssh-config` prints a stanza with host-key checking off.
+- **What it accepts**: `direct-tcpip` channels whose destination is
+  `localhost`, `127.0.0.1`, or `::1`; the destination host is a name for the
+  sandbox's loopback, not an address to dial. Everything else is refused
+  without a dial: other destinations (so the relay is never an egress path
+  around the proxy), `tcpip-forward` (`ssh -R`), streamlocal, agent, X11, and
+  `session` channels. Use `ssh -N`.
+- **`hsh ssh-proxy`** resolves the session (the host name `hsh-<id>`, or
+  `--session`, or the workspace directory's only session), checks the
+  workspace container is running, and execs into it. It refuses to run with a
+  terminal on stdout and skips the auto-update hooks so stdout stays clean.
+- **Browser-redirect OAuth**: `ssh -N -L 1455:localhost:1455 hsh-<id>`
+  delivers the browser's redirect into the waiting login; the token exchange
+  still goes out through the proxy's capture. `hsh oauth callback` remains the
+  paste fallback.
+
+A forwarded port exposes the agent's code to the user's browser, and a page at
+`localhost:8000` can probe other localhost ports in that browser, as with any
+local dev server. The egress policy is untouched.
+
 ## Lifecycle and cleanup
 
 When automatic updates are enabled (`hsh update --auto`, see

@@ -72,6 +72,17 @@ proxy, the denial database, and the example image:
   disabling during a hold, unattended and stale markers, `none` mode, the
   default being off, the concurrency cap, client disconnects, the `holding`
   counts, and held DNS queries
+- **step 23**: ssh into a session — `ssh -N -L` through the `hsh
+  ssh-config` ProxyCommand reaches a node server on the sandbox's loopback;
+  a 5 MiB response and eight concurrent connections cross one ssh
+  connection; a closed sandbox port fails only that connection; a forward to
+  `example.com` and `ssh -R` are refused and nothing reaches the egress
+  proxy; no listeners outlive the ssh client. Skipped without an `ssh`
+  client. `internal/sshd` has Go tests (in-process client over loopback TCP)
+  for the destination restriction, every rejected channel and request type,
+  large transfers with half-close, concurrency, and recovery after a failed
+  dial; `internal/workspace` tests the relay (`DIAL`, `LIST`, `PORT`, source
+  refusal, half-close) and the `/proc/net/tcp` parser
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

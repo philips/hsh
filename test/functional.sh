@@ -1149,6 +1149,91 @@ pass "session.db records every binary that created or re-entered the session"
 env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" rm "hsh-$SESS_ID" >/dev/null 2>&1 || podman pod rm -f "hsh-$SESS_ID" >/dev/null 2>&1 || true
 [ ! -e "$SESS_DB" ] || fail "hsh rm did not remove session.db"
 
+echo "== step 23: ssh into a session — port forwards to the sandbox's loopback"
+if ! command -v ssh >/dev/null 2>&1; then
+	echo "SKIP: no ssh client"
+else
+	mkdir -p "$TMP/sshws"
+	rm -f "$TMP/sshws/done"
+	cat >"$TMP/sshws/server.js" <<'JS'
+require("http").createServer((q, r) => {
+	if (q.url === "/big") {
+		r.end("a".repeat(5 * 1024 * 1024));
+		return;
+	}
+	r.end("hello from the sandbox " + q.url + "\n");
+}).listen(8000, "127.0.0.1");
+JS
+	(cd "$TMP/sshws" && "$HSH" run localhost/hsh-example:latest) >"$TMP/ssh-run.out" 2>&1 <<'CMDS' &
+node /workspace/server.js &
+while [ ! -f /workspace/done ]; do sleep 0.5; done
+exit
+CMDS
+	SSH_SESSION_PID=$!
+	SSH_POD=""
+	for _ in $(seq 1 60); do
+		SSH_POD="$(podman pod ls --filter "label=hsh.workspace=$TMP/sshws" --format '{{.Name}}' | head -1)"
+		[ -n "$SSH_POD" ] && break
+		sleep 0.5
+	done
+	[ -n "$SSH_POD" ] || fail "the ssh test session never started: $(cat "$TMP/ssh-run.out")"
+	sed "s|ProxyCommand hsh|ProxyCommand $HSH|" < <("$HSH" ssh-config) >"$TMP/ssh_config"
+	grep -q "ProxyCommand $HSH ssh-proxy %h" "$TMP/ssh_config" || fail "hsh ssh-config did not produce the ProxyCommand: $(cat "$TMP/ssh_config")"
+	SSH_FWD_PID=""
+	ssh -F "$TMP/ssh_config" -N -o ExitOnForwardFailure=yes \
+		-L 18000:localhost:8000 -L 18001:localhost:8001 -L 18002:example.com:443 "$SSH_POD" >"$TMP/ssh-fwd.out" 2>&1 &
+	SSH_FWD_PID=$!
+	GOT=""
+	for _ in $(seq 1 40); do
+		GOT="$(curl -s --max-time 3 http://127.0.0.1:18000/abc || true)"
+		[ -n "$GOT" ] && break
+		sleep 0.5
+	done
+	[ "$GOT" = "hello from the sandbox /abc" ] || fail "ssh -L did not reach the server in the sandbox: '$GOT' $(cat "$TMP/ssh-fwd.out")"
+	pass "ssh -L reaches a server on the sandbox's loopback"
+
+	SIZE="$(curl -s --max-time 20 http://127.0.0.1:18000/big | wc -c)"
+	[ "$SIZE" = "5242880" ] || fail "a 5 MiB response through the forward arrived as $SIZE bytes"
+	CURL_PIDS=""
+	for i in 1 2 3 4 5 6 7 8; do
+		curl -s --max-time 10 "http://127.0.0.1:18000/p$i" >"$TMP/ssh-par-$i.out" &
+		CURL_PIDS="$CURL_PIDS $!"
+	done
+	wait $CURL_PIDS
+	for i in 1 2 3 4 5 6 7 8; do
+		[ "$(cat "$TMP/ssh-par-$i.out")" = "hello from the sandbox /p$i" ] || fail "concurrent request $i through one ssh connection failed: $(cat "$TMP/ssh-par-$i.out")"
+	done
+	pass "large responses and concurrent connections work over one ssh connection"
+
+	if curl -s --max-time 5 -o /dev/null http://127.0.0.1:18001/; then
+		fail "a forward to a closed sandbox port returned a response"
+	fi
+	GOT="$(curl -s --max-time 3 http://127.0.0.1:18000/after-error || true)"
+	[ "$GOT" = "hello from the sandbox /after-error" ] || fail "a failed forward broke the ssh connection: '$GOT'"
+	pass "a closed sandbox port fails that connection only"
+
+	if curl -s --max-time 5 -o /dev/null https://127.0.0.1:18002/ -k; then
+		fail "a forward to example.com was served"
+	fi
+	if podman logs "$SSH_POD-proxy" 2>&1 | grep -q "example.com"; then
+		fail "forwarding to example.com reached the egress proxy"
+	fi
+	pass "ssh -L to anything but the sandbox's loopback is refused"
+
+	if timeout 20 ssh -F "$TMP/ssh_config" -N -R 9000:localhost:80 -o ExitOnForwardFailure=yes "$SSH_POD" >"$TMP/ssh-R.out" 2>&1; then
+		fail "ssh -R was accepted"
+	fi
+	pass "ssh -R is refused"
+
+	kill "$SSH_FWD_PID" 2>/dev/null || true
+	touch "$TMP/sshws/done"
+	wait "$SSH_SESSION_PID" 2>/dev/null || true
+	if [ -n "$(ss -ltn 2>/dev/null | grep -E ':(18000|18001|18002) ' || true)" ]; then
+		fail "a forwarding listener outlived the ssh client"
+	fi
+	pass "no listeners are left behind"
+fi
+
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions
 if [ -n "$(test_pods)" ]; then

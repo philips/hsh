@@ -20,26 +20,20 @@ func freePort(t *testing.T) string {
 
 func startRelay(t *testing.T) string {
 	t.Helper()
-	addr := "127.0.0.1:" + freePort(t)
-	go func() {
-		_ = CallbackRelay(addr)
-	}()
-	waitForListener(t, addr)
-	return addr
+	return startRelayAllow(t, nil)
 }
 
-func waitForListener(t *testing.T, addr string) {
+func startRelayAllow(t *testing.T, allow func(net.IP) bool) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		conn, err := net.Dial("tcp", addr)
-		if err == nil {
-			conn.Close()
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("relay %s never came up", addr)
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		_ = ServeRelay(ln, allow)
+	}()
+	return ln.Addr().String()
 }
 
 func TestCallbackRelayDeliver(t *testing.T) {

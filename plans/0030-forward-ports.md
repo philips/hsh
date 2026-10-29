@@ -1,6 +1,8 @@
 # Reaching servers inside a session (`hsh forward`)
 
-> **Status: plan, awaiting review.** Nothing here is implemented.
+> **Status: plan, awaiting review.** The relay verbs `DIAL`/`LIST`, the source
+> check, and the half-close fixes (section 1) are implemented as part of
+> plans/0031-ssh.md; `hsh forward` itself is not.
 
 ## Goal
 
