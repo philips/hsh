@@ -54,7 +54,10 @@ for the provider's API key.
 It also declares the agent argv, in two forms:
 
 ```json
-"agent": {"command": ["pi", "-p", "{prompt}"], "launch": ["pi"]}
+"agent": {
+  "command": ["pi", "--append-system-prompt", "{network_policy}", "-p", "{prompt}"],
+  "launch": ["pi", "--append-system-prompt", "{network_policy}"]
+}
 ```
 
 - `command` is the headless template `hsh run --tasks` substitutes the
@@ -65,6 +68,12 @@ It also declares the agent argv, in two forms:
   prompt (`jobs`, `fg`, `bg` all work), and exiting the harness leaves
   you in the shell. Piped/non-interactive sessions do not launch
   anything, so scripted use is unaffected.
+
+`{network_policy}` passes the [network notice](config.md#network-notice) to
+the harness. The pi image appends it to pi's system prompt with
+`--append-system-prompt`, which takes a file path. Images whose harness has no
+such flag can list instruction files in `agent.context_files` instead (for
+example `~/.codex/AGENTS.md`); the other images do not deliver the notice yet.
 
 ```json
 "agent": {"command": ["pi", "-p", "{prompt}"]}

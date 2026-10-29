@@ -199,10 +199,10 @@ func TestHeldRequestIsDeniedAtOnceWhenTheUserIgnoresTheHost(t *testing.T) {
 	}
 	e.ignore("blocked.test")
 	line, done := req.within(t, 3*time.Second)
-	if !done || !strings.Contains(line, "407") {
+	if !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("an ignored host was not denied promptly: %q", line)
 	}
-	if body := <-req.body; !strings.Contains(body, "needs the user's approval") || !strings.Contains(body, "Do not look for workarounds") {
+	if body := <-req.body; !strings.Contains(body, "blocked on purpose") || !strings.Contains(body, "Do not try other tools") {
 		t.Fatalf("the denial does not tell the agent what to do: %q", body)
 	}
 }
@@ -216,7 +216,7 @@ func TestAlreadyIgnoredHostsAreNotHeld(t *testing.T) {
 	start := time.Now()
 	second := e.send(connectTo("noisy.test:443"))
 	line, done := second.within(t, 2*time.Second)
-	if !done || !strings.Contains(line, "407") || time.Since(start) > time.Second {
+	if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second {
 		t.Fatalf("a host the user ignored was held again: %q after %s", line, time.Since(start))
 	}
 }
@@ -227,8 +227,8 @@ func TestHoldTimesOutIntoTheNormalDenial(t *testing.T) {
 	req := e.send(connectTo("blocked.test:443"))
 	line, done := req.within(t, 4*time.Second)
 	elapsed := time.Since(start)
-	if !done || !strings.Contains(line, "407") {
-		t.Fatalf("expected 407 after the wait: %q", line)
+	if !done || !strings.Contains(line, "403 Forbidden") {
+		t.Fatalf("expected 403 after the wait: %q", line)
 	}
 	if elapsed < 700*time.Millisecond {
 		t.Fatalf("denied after only %s", elapsed)
@@ -245,7 +245,7 @@ func TestPlaintextRequestsAreHeldToo(t *testing.T) {
 		t.Fatal("plaintext request not held")
 	}
 	e.ignore("blocked.test")
-	if line, done := req.within(t, 3*time.Second); !done || !strings.Contains(line, "407") {
+	if line, done := req.within(t, 3*time.Second); !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("got %q", line)
 	}
 }
@@ -264,7 +264,7 @@ func TestNoHoldWhenDisabledUnattendedOrNone(t *testing.T) {
 		e := startHoldProxy(t, c.mode, c.wait, c.attended)
 		start := time.Now()
 		line, done := e.send(connectTo("blocked.test:443")).within(t, 2*time.Second)
-		if !done || !strings.Contains(line, "407") || time.Since(start) > time.Second {
+		if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second {
 			t.Errorf("%s: got %q after %s", c.name, line, time.Since(start))
 		}
 	}
@@ -277,7 +277,7 @@ func TestStaleAttendedMarkerDoesNotHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	line, done := e.send(connectTo("blocked.test:443")).within(t, time.Second)
-	if !done || !strings.Contains(line, "407") {
+	if !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("a stale marker still held the request: %q", line)
 	}
 }
@@ -292,7 +292,7 @@ func TestTurningHoldingOffReleasesHeldRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	line, done := req.within(t, 4*time.Second)
-	if !done || !strings.Contains(line, "407") {
+	if !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("turning holding off did not release the request: %q", line)
 	}
 }
@@ -326,7 +326,7 @@ func TestTooManyHoldsAreDeniedAtOnce(t *testing.T) {
 		t.Fatalf("active holds = %d", e.activeHolds())
 	}
 	line, done := e.send(connectTo("c.test:443")).within(t, time.Second)
-	if !done || !strings.Contains(line, "407") {
+	if !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("the request over the cap was not denied at once: %q", line)
 	}
 }
@@ -335,7 +335,7 @@ func TestHTTPSModeStillTunnelsPort443WithoutHolding(t *testing.T) {
 	e := startHoldProxy(t, "https", "10s", true)
 	start := time.Now()
 	line, done := e.send(connectTo("127.0.0.1:443")).within(t, 3*time.Second)
-	if !done || strings.Contains(line, "407") || time.Since(start) > time.Second || e.activeHolds() != 0 {
+	if !done || strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second || e.activeHolds() != 0 {
 		t.Fatalf("an allowed :443 CONNECT in https mode was held or denied: %q after %s", line, time.Since(start))
 	}
 }
@@ -476,7 +476,7 @@ func TestHoldingIsOffUnlessTheConfigAsksForIt(t *testing.T) {
 	e := startHoldProxy(t, "allowlist", "", true)
 	start := time.Now()
 	line, done := e.send(connectTo("blocked.test:443")).within(t, 2*time.Second)
-	if !done || !strings.Contains(line, "407") || time.Since(start) > time.Second {
+	if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second {
 		t.Fatalf("with no approval_wait in the config the request was held: %q after %s", line, time.Since(start))
 	}
 	if e.activeHolds() != 0 {

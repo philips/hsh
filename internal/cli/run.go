@@ -22,6 +22,7 @@ import (
 	"hsh/internal/denieddb"
 	"hsh/internal/imageRef"
 	"hsh/internal/netsetup"
+	"hsh/internal/notice"
 	"hsh/internal/secretstore"
 	"hsh/internal/sessiondb"
 	"hsh/internal/update"
@@ -314,7 +315,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if err := os.WriteFile(filepath.Join(sessionDir, "workspace"), []byte(workspaceSource+"\n"), 0o644); err != nil {
 			return err
 		}
+		mode := cfg.Network.ModeOrDefault()
+		if ro.networkMode != "" {
+			mode = ro.networkMode
+		}
+		if err := notice.Write(notice.SessionDir(sessionDir), notice.Enabled(cfg.Network.NoticeEnabled(), mode)); err != nil {
+			return fmt.Errorf("write the network notice: %w", err)
+		}
 		recordSessionVersion(sessionDir, "created")
+	}
+	if err := os.MkdirAll(notice.SessionDir(sessionDir), 0o755); err != nil {
+		return err
 	}
 	failureCleanup := true
 	defer func() {
@@ -518,6 +529,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"-v", exe + ":/hsh-workspace:ro",
 		"-v", exe + ":/hsh-workspace-inner:ro",
 		"-v", caCertPath + ":/hsh-run/ca.crt:ro",
+		"-v", notice.SessionDir(sessionDir) + ":" + notice.Dir + ":ro",
 	}
 	interactive := isTerminal(os.Stdin)
 	if interactive {
@@ -553,6 +565,13 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return err
 		}
 		wsArgs = append(wsArgs, "--launch-json", string(launchJSON))
+	}
+	if len(cfg.Agent.ContextFiles) > 0 {
+		contextJSON, err := json.Marshal(cfg.Agent.ContextFiles)
+		if err != nil {
+			return err
+		}
+		wsArgs = append(wsArgs, "--context-files-json", string(contextJSON))
 	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	detachable := interactive && len(agentExec) == 0 && !ro.rm

@@ -23,6 +23,11 @@ type Network struct {
 	Mode         string   `json:"mode"`
 	Allow        []string `json:"allow"`
 	ApprovalWait string   `json:"approval_wait,omitempty"`
+	Notice       *bool    `json:"notice,omitempty"`
+}
+
+func (n Network) NoticeEnabled() bool {
+	return n.Notice == nil || *n.Notice
 }
 
 const (
@@ -124,8 +129,9 @@ const DefaultMonitorKey = "ctrl-space"
 const DefaultDetachKeys = "ctrl-]"
 
 type Agent struct {
-	Command []string `json:"command"`
-	Launch  []string `json:"launch"`
+	Command      []string `json:"command"`
+	Launch       []string `json:"launch"`
+	ContextFiles []string `json:"context_files,omitempty"`
 }
 
 func ParseTasks(data []byte) []string {

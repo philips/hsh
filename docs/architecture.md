@@ -123,6 +123,7 @@ flowchart LR
             cfgcopy[("config.json")]
             cafiles[("ca.crt / ca.key")]
             secretsjson[("secrets.json")]
+            noticedir[("notice/")]
         end
         denieddb[("denied.db")]
         caBundle["host CA bundle"]
@@ -142,13 +143,14 @@ flowchart LR
     caBundle -.->|"ro → /hsh-roots.pem"| PROXY
     denieddb <-.->|"rw → /hsh-state/denied.db"| PROXY
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
+    noticedir -.->|"ro → /hsh-run/notice"| WSC
     wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
     pasta ===|"user-mode network uplink"| POD
 
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
 
     class hshbin,pasta proc
-    class cfgcopy,cafiles,secretsjson,denieddb,wsdir file
+    class cfgcopy,cafiles,secretsjson,noticedir,denieddb,wsdir file
     class PROXY,WSC ctr
 ```
 
@@ -171,8 +173,8 @@ Reading notes:
   lifecycle control, and `===` is the pasta network uplink (see the
   interface diagram for the full mount set). The session directory is
   mounted read-only into the proxy only (config copy, resolved secrets,
-  CA); the workspace sees only the CA certificate. `secrets.json` never
-  enters the workspace.
+  CA); the workspace sees only the CA certificate and the network notice
+  directory. `secrets.json` never enters the workspace.
 - Pods do not share PID namespaces, so the workspace cannot see or
   signal the proxy's processes.
 - **Idle**: when the shell exits the whole pod is stopped (infra and
@@ -205,6 +207,12 @@ The child then:
 - installs the proxy CA into `/etc/ssl/certs/ca-certificates.crt`
 - creates the home directory, strips setuid/setgid bits from the container
   filesystem (excluding the workspace mount)
+- applies the network notice: if `/hsh-run/notice/network-policy.md` exists,
+  it replaces `{network_policy}` in the launch and headless argv with that path
+  and upserts the managed block into each `agent.context_files` entry;
+  otherwise it drops the placeholder argument (and the flag before it) and
+  removes any managed block. Doing this at every start keeps a reused
+  container (resume) consistent with the notice file
 - drops all capabilities except CAP_DAC_OVERRIDE and sets `PR_SET_NO_NEW_PRIVS`
 - `chdir`s into the workspace and `exec`s the configured shell. When the
   config's `agent.launch` is set and the shell is bash, the shell is
@@ -236,13 +244,15 @@ the veth addresses.
 Every request is checked against `network.allow`:
 
 - **Denied**: the proxy records the host in the denial database and answers
-  `407 Proxy Authentication Required` with a
-  `Proxy-Authenticate: Hsh realm="egress-allowlist"` header (RFC 7235). For
-  `CONNECT` this surfaces in curl as `CONNECT tunnel failed, response 407`.
-  The body is written for an agent: the host is blocked pending the user's
-  approval (`hsh monitor`), and the agent should not look for workarounds
-  but wait a minute or two and retry, or tell the user which host is needed.
-  Optionally the proxy holds the request first (below).
+  `403 Forbidden`, as other agent sandboxes do. For `CONNECT` this surfaces
+  in curl as `CONNECT tunnel failed, response 403`. The body is written for
+  an agent: the block is on purpose and not an outage, the user has been
+  notified (`hsh monitor`), and the agent should tell the user which host it
+  needs and why rather than try other tools, mirrors, proxies, or DNS tricks.
+  Most clients never show the body for a denied `CONNECT`, so the same
+  instructions also reach the agent's system prompt through the
+  [network notice](config.md#network-notice). Optionally the proxy holds
+  the request first (below).
 - **Allowed, no secret configured for the host**: the proxy tunnels the
   connection (`CONNECT` → `200 Connection Established`, then a raw TCP
   splice). TLS is end-to-end between the workspace and the upstream; any
@@ -259,8 +269,8 @@ injection applied when the host matches a secret.
 ### Holding denied requests
 
 An agent that is refused can start working around the refusal, which costs
-tokens. The 407 body therefore tells it to wait and ask (above). hsh can
-also **hold** a request the policy would deny until the user decides. Holding
+tokens. The 403 body and the network notice therefore tell it to stop and
+ask. hsh can also **hold** a request the policy would deny until the user decides. Holding
 is **off by default** (a held request looks like a hung network, which is
 often a worse experience than a fast failure with instructions) and is
 enabled per session with `network.approval_wait` (for example `"30s"`; at most
@@ -273,7 +283,7 @@ enabled per session with `network.approval_wait` (for example `"30s"`; at most
   its session's counts when it starts).
 - The proxy then polls every 250 ms. It lets the request through as soon
   as the host is allowed (an approval rewrites the session config and the
-  proxy's one-second reload picks it up), fails it with the normal 407 as
+  proxy's one-second reload picks it up), fails it with the normal 403 as
   soon as the user *ignores* the host (the row is marked ignored; hosts
   already ignored are not held at all), and otherwise fails it when the wait
   runs out, when holding is switched off by a reload, when nobody is watching

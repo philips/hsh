@@ -10,7 +10,7 @@ proxy, the denial database, and the example image:
 - ensures the fixture image exists (builds it with
   `podman build -t hsh-example test/fixtures/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
-  denied with 407 and recorded in a throwaway denial database, attributed
+  denied with 403 and recorded in a throwaway denial database, attributed
   with the session id and workspace; the session state directory holds
   the config copy and workspace file
 - **step 2**: `hsh proxy allow --all --session ID` adds the denied host to
@@ -23,7 +23,7 @@ proxy, the denial database, and the example image:
   `~/.pi/agent/settings.json` inside the sandbox)
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
-  request log), and denies a non-allowlisted host with 407
+  request log), and denies a non-allowlisted host with 403
 - **step 5**: the session model — resume without a session fails clearly;
   plain runs persist their pod; idle pods are `Exited` with `secrets.json`
   scrubbed; bare `--resume` re-enters the workspace's only session with
@@ -83,6 +83,14 @@ proxy, the denial database, and the example image:
   large transfers with half-close, concurrency, and recovery after a failed
   dial; `internal/workspace` tests the relay (`DIAL`, `LIST`, `PORT`, source
   refusal, half-close) and the `/proc/net/tcp` parser
+- **step 24**: the network notice — a `--tasks` run whose agent command
+  contains `{network_policy}` gets the read-only notice path; the managed block
+  is created in a missing `~/` instruction file and, in a pre-existing file in
+  the workspace, keeps the user's text with exactly one block across a resume;
+  `network.notice: false` and `--network none` write no notice, drop the flag
+  with its placeholder, and remove the existing block. `internal/notice` and
+  `internal/workspace` have unit tests for the text, the argv substitution, and
+  the block upsert and removal
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,
@@ -139,5 +147,8 @@ wget, Python, Node, npm, git, and Go against a stand-in denying proxy
 (`test/measure/denyproxy`, with configurable status, reason phrase, body, and
 headers) and records what each client shows and whether it retries;
 `agent-trial.sh` runs pi with a Mistral model through an hsh allowlist session
-for several wordings of a notice and counts tool calls and tokens (it spends
-tokens and needs the `hsh://mistral-api-key` secret).
+for several wordings of a notice and counts tool calls, tokens, and recorded
+denials (it spends tokens and needs the `hsh://mistral-api-key` secret).
+`VARIANTS="v5 c0 c1"` runs the shipped notice through `{network_policy}` on a
+blocked host, and the over-caution pair: an `https`-mode task on a reachable
+host without (`c0`) and with (`c1`) the notice.

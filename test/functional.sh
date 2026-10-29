@@ -108,13 +108,13 @@ rm_test_sessions() {
 	done
 }
 
-echo "== step 1: curl to a not-yet-allowed endpoint is denied (407) and recorded"
+echo "== step 1: curl to a not-yet-allowed endpoint is denied (403) and recorded"
 "$HSH" run --config "$TMP/config.hsh" --denied-db "$DB" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
 CMDS
-grep -q "response 407" "$TMP/session1.out" || fail "expected the proxy to deny api.mistral.ai with 407; got: $(tail -3 "$TMP/session1.out")"
-pass "api.mistral.ai denied with 407 before being allowlisted"
+grep -q "response 403" "$TMP/session1.out" || fail "expected the proxy to deny api.mistral.ai with 403; got: $(tail -3 "$TMP/session1.out")"
+pass "api.mistral.ai denied with 403 before being allowlisted"
 DB_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format '{{.Name}}' | sed 's/^hsh-//')"
 [ -n "$DB_SESSION" ] || fail "the run left no session pod for the workspace"
 [ -d "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION" ] || fail "the run left no session state directory"
@@ -266,8 +266,8 @@ fi
 pass "secret injected as Authorization: Bearer, replacing the client's placeholder"
 
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -x http://127.0.0.1:18080 http://example.com/)"
-[ "$CODE" = "407" ] || fail "standalone proxy did not deny a non-allowlisted host with 407 (got $CODE)"
-pass "standalone proxy denies non-allowlisted hosts with 407"
+[ "$CODE" = "403" ] || fail "standalone proxy did not deny a non-allowlisted host with 403 (got $CODE)"
+pass "standalone proxy denies non-allowlisted hosts with 403"
 
 kill "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
@@ -466,7 +466,7 @@ CMDS
 )
 grep -qx 'label-mount' "$TMP/label.out" || fail "the current directory was not mounted with the label config"
 grep -Eq '^allowed=200$' "$TMP/label.out" || fail "the label allowlist did not permit the dummy endpoint: $(tail -5 "$TMP/label.out")"
-grep -Eq '^denied=407$' "$TMP/label.out" || fail "the label config did not deny a non-allowlisted host"
+grep -Eq '^denied=403$' "$TMP/label.out" || fail "the label config did not deny a non-allowlisted host"
 grep -q "Authorization: Bearer label-secret-value-42" "$TMP/requests.log" || fail "the label secrets were not injected"
 if grep -Eq '^denied=200$' "$TMP/label.out"; then
 	fail "a non-allowlisted host was reachable with the label config"
@@ -580,7 +580,7 @@ curl -sS -o /dev/null -w 'http=%{http_code}\n' --max-time 15 http://example.com/
 getent hosts example.com >/dev/null && echo dns=resolved || echo dns=failed
 CMDS
 grep -Eq '^https=(200|301|30[0-9])$' "$TMP/mode-https.out" || fail "https mode did not allow TLS to an arbitrary host: $(cat "$TMP/mode-https.out")"
-grep -Eq '^http=407$' "$TMP/mode-https.out" || fail "https mode allowed plaintext to a non-allowlisted host: $(cat "$TMP/mode-https.out")"
+grep -Eq '^http=403$' "$TMP/mode-https.out" || fail "https mode allowed plaintext to a non-allowlisted host: $(cat "$TMP/mode-https.out")"
 grep -q '^dns=resolved$' "$TMP/mode-https.out" || fail "https mode did not resolve arbitrary names: $(cat "$TMP/mode-https.out")"
 pass "https mode (default) allows TLS to any host, denies plaintext, resolves all names"
 
@@ -946,7 +946,7 @@ wait "$HOLD_PID" || true
 kill "$ATTENDED_PID" 2>/dev/null || true
 grep -q "held-result" "$TMP/hold-run.out" || fail "the held request never completed after approval: $(cat "$TMP/hold-run.out")"
 HELD_CODE="$(sed -n 's/.*held-result code=\([0-9]*\).*/\1/p' "$TMP/hold-run.out" | head -1)"
-case "$HELD_CODE" in 000|407|"") fail "the approved request did not reach the host (code=$HELD_CODE): $(cat "$TMP/hold-run.out")" ;; esac
+case "$HELD_CODE" in 000|403|"") fail "the approved request did not reach the host (code=$HELD_CODE): $(cat "$TMP/hold-run.out")" ;; esac
 pass "approving the host releases the held request, which then succeeds (HTTP $HELD_CODE)"
 
 BEFORE_IDS="$(session_ids)"
@@ -959,10 +959,10 @@ OFF_PID=$!
 start_attended_loop "$BEFORE_IDS" "$OFF_PID"
 wait "$OFF_PID" || true
 kill "$ATTENDED_PID" 2>/dev/null || true
-OFF_TIME="$(sed -n 's/.*optout-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/hold-off.out" | head -1)"
-[ -n "$OFF_TIME" ] || fail "an opted-out session did not answer 407: $(cat "$TMP/hold-off.out")"
+OFF_TIME="$(sed -n 's/.*optout-result code=403 time=\([0-9.]*\).*/\1/p' "$TMP/hold-off.out" | head -1)"
+[ -n "$OFF_TIME" ] || fail "an opted-out session did not answer 403: $(cat "$TMP/hold-off.out")"
 awk -v t="$OFF_TIME" 'BEGIN { exit !(t < 10) }' || fail "an opted-out session still waited ($OFF_TIME s)"
-grep -q "needs the user's approval" "$TMP/hold-off.out" || fail "the denial text does not tell the agent what to do: $(cat "$TMP/hold-off.out")"
+grep -q "blocked on purpose" "$TMP/hold-off.out" || fail "the denial text does not tell the agent what to do: $(cat "$TMP/hold-off.out")"
 pass "holding is off by default: a denied request fails at once, with a message aimed at the agent"
 
 OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
@@ -977,8 +977,8 @@ FOUR_PID=$!
 start_attended_loop "$BEFORE_IDS" "$FOUR_PID"
 wait "$FOUR_PID" || true
 kill "$ATTENDED_PID" 2>/dev/null || true
-FOUR_TIME="$(sed -n 's/.*fourgs-result code=407 time=\([0-9.]*\).*/\1/p' "$TMP/hold-4s.out" | head -1)"
-[ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 407: $(cat "$TMP/hold-4s.out")"
+FOUR_TIME="$(sed -n 's/.*fourgs-result code=403 time=\([0-9.]*\).*/\1/p' "$TMP/hold-4s.out" | head -1)"
+[ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 403: $(cat "$TMP/hold-4s.out")"
 awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
 pass "hsh proxy hold 4s turns holding on live; an unapproved request is held about 4s, then denied"
 
@@ -1245,6 +1245,63 @@ CMDS
 	fi
 	pass "no listeners are left behind"
 fi
+
+echo "== step 24: the network notice reaches the agent (launch flag, managed block)"
+mkdir -p "$TMP/notice-ws"
+printf '# user rules\nkeep me\n' >"$TMP/notice-ws/ctx.md"
+notice_config() {
+	cat >"$1" <<EOF
+{
+	"image": "localhost/hsh-example:latest",
+	"shell": "/bin/bash",
+	"mounts": ["$TMP/notice-ws:/workspace"],
+	"network": {"mode": "allowlist", "allow": [], "notice": $2},
+	"agent": {
+		"command": ["/bin/bash", "-c", "echo ARGC=\$#; echo FIRST=\$1; echo SECOND=\$2; if [ -r /hsh-run/notice/network-policy.md ]; then grep -q '403 Forbidden' /hsh-run/notice/network-policy.md && echo NOTICE-TEXT; else echo NOTICE-ABSENT; fi; touch /hsh-run/notice/x 2>/dev/null && echo NOTICE-WRITABLE; grep -c 'hsh:network-policy begin' ~/.hsh-notice/AGENTS.md 2>/dev/null | sed 's/^/HOMEBLOCKS=/'; true", "_", "--append-system-prompt", "{network_policy}"],
+		"context_files": ["/workspace/ctx.md", "~/.hsh-notice/AGENTS.md"]
+	}
+}
+EOF
+}
+notice_config "$TMP/notice-on.hsh" true
+notice_config "$TMP/notice-off.hsh" false
+echo "report the network notice" >"$TMP/notice-tasks.txt"
+
+BEFORE_IDS="$(session_ids)"
+(cd "$TMP/notice-ws" && "$HSH" run --config "$TMP/notice-on.hsh" --denied-db "$DB" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-on.out" 2>&1 || fail "the notice session failed: $(cat "$TMP/notice-on.out")"
+sed -i 's/\r$//' "$TMP/notice-on.out"
+NOTICE_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
+grep -q 'ARGC=3$' "$TMP/notice-on.out" || fail "the agent argv lost arguments: $(cat "$TMP/notice-on.out")"
+grep -qx 'SECOND=/hsh-run/notice/network-policy.md' "$TMP/notice-on.out" || fail "{network_policy} was not replaced with the notice path: $(cat "$TMP/notice-on.out")"
+grep -qx 'NOTICE-TEXT' "$TMP/notice-on.out" || fail "the notice file is not readable at the stable path: $(cat "$TMP/notice-on.out")"
+grep -qx 'NOTICE-WRITABLE' "$TMP/notice-on.out" && fail "the notice mount is writable from the sandbox"
+grep -qx 'HOMEBLOCKS=1' "$TMP/notice-on.out" || fail "the managed block was not created in a missing ~ instruction file: $(cat "$TMP/notice-on.out")"
+[ -f "$XDG_STATE_HOME/hsh/sessions/$NOTICE_SESSION/notice/network-policy.md" ] || fail "the notice was not written into the session directory"
+pass "the notice is mounted read-only and {network_policy} expands to its path"
+
+"$HSH" run --denied-db "$DB" --resume "$NOTICE_SESSION" >"$TMP/notice-resume.out" 2>&1 </dev/null || fail "resuming the notice session failed: $(cat "$TMP/notice-resume.out")"
+sed -i 's/\r$//' "$TMP/notice-resume.out"
+grep -qx 'SECOND=/hsh-run/notice/network-policy.md' "$TMP/notice-resume.out" || fail "the resumed agent did not get the notice: $(cat "$TMP/notice-resume.out")"
+[ "$(grep -c 'hsh:network-policy begin' "$TMP/notice-ws/ctx.md")" = 1 ] || fail "two starts did not leave exactly one managed block: $(cat "$TMP/notice-ws/ctx.md")"
+[ "$(head -2 "$TMP/notice-ws/ctx.md")" = "$(printf '# user rules\nkeep me')" ] || fail "the user's own instructions were not preserved: $(cat "$TMP/notice-ws/ctx.md")"
+pass "a pre-existing instruction file keeps its text and one managed block across two starts"
+
+BEFORE_IDS="$(session_ids)"
+(cd "$TMP/notice-ws" && "$HSH" run --config "$TMP/notice-off.hsh" --denied-db "$DB" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-off.out" 2>&1 || fail "the notice:false session failed: $(cat "$TMP/notice-off.out")"
+sed -i 's/\r$//' "$TMP/notice-off.out"
+OFF_NOTICE_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
+grep -q 'ARGC=1$' "$TMP/notice-off.out" || fail "network.notice: false did not drop the whole flag: $(cat "$TMP/notice-off.out")"
+grep -qx 'NOTICE-ABSENT' "$TMP/notice-off.out" || fail "network.notice: false still provided a notice file"
+[ ! -e "$XDG_STATE_HOME/hsh/sessions/$OFF_NOTICE_SESSION/notice/network-policy.md" ] || fail "network.notice: false wrote a notice file"
+grep -q 'hsh:network-policy' "$TMP/notice-ws/ctx.md" && fail "a disabled notice left its managed block behind: $(cat "$TMP/notice-ws/ctx.md")"
+[ "$(cat "$TMP/notice-ws/ctx.md")" = "$(printf '# user rules\nkeep me')" ] || fail "removing the block changed the user's text: $(cat "$TMP/notice-ws/ctx.md")"
+pass "network.notice: false writes no notice, drops the flag, and removes an existing managed block"
+
+(cd "$TMP/notice-ws" && "$HSH" run --config "$TMP/notice-on.hsh" --denied-db "$DB" --network none --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-none.out" 2>&1 || fail "the none-mode notice session failed: $(cat "$TMP/notice-none.out")"
+sed -i 's/\r$//' "$TMP/notice-none.out"
+grep -q 'ARGC=1$' "$TMP/notice-none.out" || fail "none mode did not drop the notice flag: $(cat "$TMP/notice-none.out")"
+grep -qx 'NOTICE-ABSENT' "$TMP/notice-none.out" || fail "none mode provided a notice"
+pass "none mode gets no notice"
 
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions

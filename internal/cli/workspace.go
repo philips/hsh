@@ -18,6 +18,7 @@ func Workspace(args []string) error {
 	home := fs.String("home", "/home/hsh", "home directory")
 	innerExe := fs.String("inner-exe", "", "path to the hsh-workspace-inner binary (empty: re-exec self with the workspace-inner subcommand)")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
+	contextJSON := fs.String("context-files-json", "", "JSON array of instruction files that get the network notice block")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -33,15 +34,22 @@ func Workspace(args []string) error {
 			return err
 		}
 	}
+	var contextFiles []string
+	if *contextJSON != "" {
+		if err := json.Unmarshal([]byte(*contextJSON), &contextFiles); err != nil {
+			return err
+		}
+	}
 	return workspace.RunParent(workspace.ParentOptions{
-		Shell:     *shell,
-		Exec:      exec,
-		Launch:    launch,
-		Workspace: *workspaceDir,
-		Home:      *home,
-		CACert:    *caCert,
-		ProxyAddr: *proxyAddr,
-		InnerExe:  *innerExe,
+		Shell:        *shell,
+		Exec:         exec,
+		Launch:       launch,
+		ContextFiles: contextFiles,
+		Workspace:    *workspaceDir,
+		Home:         *home,
+		CACert:       *caCert,
+		ProxyAddr:    *proxyAddr,
+		InnerExe:     *innerExe,
 	})
 }
 
@@ -54,6 +62,7 @@ func WorkspaceInner(args []string) error {
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
 	home := fs.String("home", "/home/hsh", "home directory")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
+	contextJSON := fs.String("context-files-json", "", "JSON array of instruction files that get the network notice block")
 	callbackRelay := fs.String("callback-relay", "", "internal: run the OAuth callback relay on this address")
 	oauthDeliver := []string{}
 	fs.Func("oauth-deliver", "internal: relay ADDR, target PORT, and raw HTTP REQUEST", func(v string) error {
@@ -89,13 +98,20 @@ func WorkspaceInner(args []string) error {
 			return err
 		}
 	}
+	var contextFiles []string
+	if *contextJSON != "" {
+		if err := json.Unmarshal([]byte(*contextJSON), &contextFiles); err != nil {
+			return err
+		}
+	}
 	return workspace.RunInner(workspace.InnerOptions{
-		Shell:     *shell,
-		Exec:      exec,
-		Launch:    launch,
-		Workspace: *workspaceDir,
-		Home:      *home,
-		CACert:    *caCert,
-		ProxyAddr: *proxyAddr,
+		Shell:        *shell,
+		Exec:         exec,
+		Launch:       launch,
+		ContextFiles: contextFiles,
+		Workspace:    *workspaceDir,
+		Home:         *home,
+		CACert:       *caCert,
+		ProxyAddr:    *proxyAddr,
 	})
 }

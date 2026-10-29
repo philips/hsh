@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -317,5 +318,32 @@ func TestApprovalWaitLoadsValidatesAndRoundTrips(t *testing.T) {
 	}
 	if err := SetApprovalWait(path, "forever"); err == nil {
 		t.Fatal("an invalid value was written")
+	}
+}
+
+func TestNoticeAndContextFilesFromLabel(t *testing.T) {
+	cfg, err := FromImageLabel(`{"agent":{"launch":["pi","--append-system-prompt","{network_policy}"],"context_files":["~/.codex/AGENTS.md"]}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Network.NoticeEnabled() {
+		t.Fatal("the notice must default to on")
+	}
+	if len(cfg.Agent.ContextFiles) != 1 || cfg.Agent.ContextFiles[0] != "~/.codex/AGENTS.md" {
+		t.Fatalf("context_files = %q", cfg.Agent.ContextFiles)
+	}
+	if cfg.Agent.Launch[2] != "{network_policy}" {
+		t.Fatalf("launch = %q", cfg.Agent.Launch)
+	}
+	cfg, err = FromImageLabel(`{"network":{"notice":false}}`)
+	if err != nil || cfg.Network.NoticeEnabled() {
+		t.Fatalf("notice:false not honoured: %v", err)
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"notice":false`) {
+		t.Fatalf("notice:false lost in the session config copy: %s", data)
 	}
 }

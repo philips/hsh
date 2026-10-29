@@ -3,8 +3,18 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func hasNoticeFlag(argv []string) bool {
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--append-system-prompt" && argv[i+1] == "{network_policy}" {
+			return true
+		}
+	}
+	return false
+}
 
 func TestHarnessImageLabels(t *testing.T) {
 	files, err := filepath.Glob("../../images/*/hsh.json")
@@ -36,6 +46,18 @@ func TestHarnessImageLabels(t *testing.T) {
 		}
 		if len(cfg.Agent.Launch) == 0 {
 			t.Errorf("%s: label has no agent launch (interactive sessions auto-launch the harness)", cf)
+		}
+		if filepath.Base(filepath.Dir(cf)) == "pi" {
+			for _, argv := range [][]string{cfg.Agent.Launch, cfg.Agent.Command} {
+				if !hasNoticeFlag(argv) {
+					t.Errorf("%s: %q does not pass the network notice with --append-system-prompt {network_policy}", cf, argv)
+				}
+			}
+		}
+		for _, f := range cfg.Agent.ContextFiles {
+			if !filepath.IsAbs(f) && f != "~" && !strings.HasPrefix(f, "~/") {
+				t.Errorf("%s: context file %q must be absolute or start with ~/", cf, f)
+			}
 		}
 		for name, secret := range cfg.Secrets {
 			scheme, _, err := ParseSecretRef(secret.From)

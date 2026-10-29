@@ -1,5 +1,15 @@
 # Telling agents about the network restrictions
 
+> **Status:** phases 1, 2, 3 and 5 done; phase 4 done for pi only (the other
+> images wait for their mechanisms to be verified). V4 was re-run against the
+> shipped code (V5) and the over-caution trial was run (C0, C1): both passed,
+> see "Re-run with the shipped code". Implementation notes: the notice
+> directory is always mounted, empty when there is no notice, so a recreated
+> workspace container on resume still has its mount; the entrypoint decides
+> from the file's presence at every start. The notice sentence "continue with
+> what you can without access don't try..." is split into two sentences in the
+> shipped text.
+
 ## Goal
 
 An agent running in an hsh sandbox should know, before it hits a wall and
@@ -101,6 +111,25 @@ What the runs show:
   gap is the solid one (V4 was identical in all three runs). Re-run against
   other models and harnesses before treating the numbers as general.
 
+### Re-run with the shipped code
+
+Same model, harness, and image; five runs per variant;
+`VARIANTS="v5 c0 c1" HSH_V1=<hsh> test/measure/agent-trial.sh 5`.
+
+| Variant | Tool calls (runs) | Mean tokens | Outcome |
+|---|---|---|---|
+| V5 shipped notice via `{network_policy}`, 403 Forbidden, allowlist, blocked task | 2, 2, 2, 2, 2 | 5,460 | denial recorded (count 2) every run, no workaround attempts, told the user which host and why |
+| C0 https mode, task on a reachable host (example.com title), no notice | 1, 1, 1, 1, 1 | 3,100 | fetched and answered every run |
+| C1 as C0 with the shipped notice | 1, 2, 1, 2, 1 | 4,130 | fetched and answered every run |
+
+- V5 matches V4 call for call: the switch to 403, the shorter wording, and
+  delivery through the mounted file and placeholder kept the behaviour (the
+  request, one `curl -v`, then a report).
+- The notice did not stop the agent from using the network (C1). It added
+  about 220 tokens of prompt per run, and in two of five runs a
+  `curl -I` header check before the real request (about 2,000 tokens).
+- Same caveats as above: one model, one harness, one task each.
+
 ## Decision 
 
 Because of the prior art of other agent sandbox tools using 403 we are going to
@@ -200,13 +229,20 @@ With none network mode this notice is not inserted.
 
 1. **Measure** (done): the client matrix, the status-code comparison, and the
    agent trial for pi with a Mistral model; results above.
-2. **Switch to 403**: Currently the proxy returns 407
-3. **Notice and delivery**: template, notice file and mount, placeholder
-   substitution, managed blocks, config fields.
-4. **Images**: pi first (flag), then the others after their mechanisms are
-   verified; the labelcheck test pins the new fields.
-5. **Docs**: `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
+2. **Switch to 403** (done): denials answer `403 Forbidden` with the agent
+   instructions in the body; proxy tests, `test/functional.sh`, and docs
+   updated.
+3. **Notice and delivery** (done): `internal/notice` (text, notice file,
+   placeholder substitution, managed blocks), the read-only mount, the
+   workspace entrypoint, `network.notice` and `agent.context_files`.
+4. **Images** (pi done): pi passes `--append-system-prompt {network_policy}`
+   in `agent.launch` and `agent.command`; the labelcheck test pins it. Claude
+   Code, Codex, Mistral Vibe, and Muse Code wait for their mechanisms to be
+   verified.
+5. **Docs** (done): `docs/config.md`, `docs/architecture.md`, `docs/images.md`,
    `docs/testing.md`.
+6. **Verify** (done): V4 re-run against the shipped code (V5) and the
+   over-caution trial (C0, C1) with `test/measure/agent-trial.sh`.
 
 ## Tests
 
@@ -214,8 +250,9 @@ With none network mode this notice is not inserted.
   --append-system-prompt flag, not leave an empty value. Add a test for this.
 - Leftover blocks: when the notice is disabled, any existing managed block in
   the persistent home directory should be removed.
-- Over-caution check: run a task whose host is allowed, in https mode, to
-  confirm the notice doesn't stop the agent from using the network.
+- Over-caution check (manual, done; C0 and C1 above): run a task whose host is
+  allowed, in https mode, to confirm the notice doesn't stop the agent from
+  using the network.
 - Config: label parsing of `agent.context_files` and the placeholder; labelcheck
   covers each image.
 - Workspace entrypoint: placeholder substitution in launch and command argv;

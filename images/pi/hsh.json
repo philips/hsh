@@ -69,11 +69,15 @@
   "agent": {
     "command": [
       "pi",
+      "--append-system-prompt",
+      "{network_policy}",
       "-p",
       "{prompt}"
     ],
     "launch": [
-      "pi"
+      "pi",
+      "--append-system-prompt",
+      "{network_policy}"
     ]
   }
 }

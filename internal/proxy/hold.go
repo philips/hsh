@@ -18,9 +18,9 @@ const (
 	dnsHoldLimit = 9 * time.Second
 )
 
-var denialMessage = "hsh: egress to %s is blocked by the sandbox policy and needs the user's approval.\n" +
-	"The user can approve it with `hsh monitor`. Do not look for workarounds or alternative hosts.\n" +
-	"Wait a minute or two and retry the same request, or tell the user which host you need.\n"
+var denialMessage = "hsh: egress to %s is blocked on purpose by the sandbox policy; this is not an outage.\n" +
+	"The user has been notified and can approve it with `hsh monitor`.\n" +
+	"Tell the user which host you need and why. Do not try other tools, mirrors, proxies, or DNS tricks.\n"
 
 var maxHolds int64 = 64
 
@@ -135,6 +135,5 @@ func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
 }
 
 func (p *Proxy) writeDeny(w http.ResponseWriter, host string) {
-	w.Header().Set("Proxy-Authenticate", `Hsh realm="egress-allowlist"`)
-	http.Error(w, fmt.Sprintf(denialMessage, host), http.StatusProxyAuthRequired)
+	http.Error(w, fmt.Sprintf(denialMessage, host), http.StatusForbidden)
 }

@@ -44,16 +44,16 @@ const plaintextGet = "GET http://evil.test/ HTTP/1.1\r\nHost: evil.test\r\n\r\n"
 func assertDenied(t *testing.T, addr, req, what string) {
 	t.Helper()
 	line := rawRequest(t, addr, req)
-	if !strings.Contains(line, "407") {
-		t.Fatalf("%s: expected 407, got %q", what, line)
+	if !strings.Contains(line, "403 Forbidden") {
+		t.Fatalf("%s: expected 403 Forbidden, got %q", what, line)
 	}
 }
 
 func assertNotDenied(t *testing.T, addr, req, what string) {
 	t.Helper()
 	line := rawRequest(t, addr, req)
-	if strings.Contains(line, "407") {
-		t.Fatalf("%s: unexpected 407: %q", what, line)
+	if strings.Contains(line, "403 Forbidden") {
+		t.Fatalf("%s: unexpected 403: %q", what, line)
 	}
 }
 

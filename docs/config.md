@@ -41,11 +41,12 @@ as the config - see [pre-built harness images](images.md).
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
 | `network.approval_wait` | `off` | opt-in: how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)) |
+| `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
 | `monitor` | `{"enabled": true, "status_line": true, "key": "ctrl-space"}` | inline proxy review in interactive sessions ([below](#inline-proxy-review)); `enabled: false` attaches the container directly |
-| `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session |
+| `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session; in both, `{network_policy}` is replaced with the [network notice](#network-notice) path; `agent.context_files`: instruction files that get the notice as a managed block |
 
 The workspace starts in the first mount's target directory
 (override with `hsh run --workdir PATH`).
@@ -161,18 +162,56 @@ A config entry referencing the store:
 In `https` mode a compromised agent can exfiltrate data to any TLS
 endpoint; for untrusted code use `--network allowlist`.
 
+## Network notice
+
+Agents that hit a blocked request without explanation hunt for workarounds
+(other tools, proxy settings, mirrors, DNS tricks) and burn tokens. hsh
+therefore tells the agent up front, in its system prompt or instruction
+files, that some requests are blocked on purpose, what a block looks like
+(`403 Forbidden` or a refused DNS lookup), that you are notified, and that it
+should tell you which host it needs and why instead of working around it.
+
+The notice deliberately does not list the reachable hosts: in measurements an
+agent told which hosts are allowed refused to try any other, so the request
+that would have asked you for approval was never made.
+
+When a session is created, hsh writes the notice to
+`notice/network-policy.md` in the session directory, and the workspace sees
+it read-only at `/hsh-run/notice/network-policy.md`. There is no notice in
+`none` mode (nothing can be approved there) or with `network.notice: false`.
+The text is fixed for the life of the session.
+
+The notice reaches the agent in one of two ways, chosen by the image label:
+
+- **`{network_policy}` in `agent.launch` or `agent.command`.** Each start
+  replaces an argument that is exactly `{network_policy}`, or ends in
+  `={network_policy}`, with the notice path. Without a notice, that argument
+  is dropped, together with the flag before it (an argument starting with
+  `-`), so `["pi", "--append-system-prompt", "{network_policy}"]` becomes
+  plain `["pi"]`.
+- **`agent.context_files`**, a list of paths in the container (`~/` is the
+  sandbox home). Each start writes the notice into each file between
+  `<!-- hsh:network-policy begin -->` and `<!-- hsh:network-policy end -->`,
+  creating the file if needed and leaving everything outside the markers
+  alone. Without a notice, an existing block is removed. The agent can edit
+  the block; it is rewritten on the next start, and it is only advice:
+  enforcement stays in the proxy.
+
+hsh never writes into your project's own instruction files unless a path in
+`agent.context_files` points there.
+
 ## Holding denied requests
 
-By default a denied request fails at once with a 407 whose message tells the
-agent that the host needs the user's approval, not to look for workarounds,
-and to wait a minute or two and retry (or tell you which host it needs).
+By default a denied request fails at once with a `403 Forbidden` whose message
+tells the agent that the block is on purpose, that you have been notified, and
+to tell you which host it needs and why instead of looking for workarounds.
 
 If you would rather the request wait for you, set `network.approval_wait` (for
 example `"30s"`, at most `5m`). Then a request the policy would deny (a CONNECT,
 a plaintext HTTP request, or a DNS lookup in `allowlist` mode) is *held* for
 that long while you decide: if you approve the host in time the request just
 succeeds, if you ignore the host it fails at once, and if nobody decides it
-fails with the same 407.
+fails with the same 403.
 
 - It only holds while someone can approve: an inline-review relay is
   attached, or `hsh monitor` / `hsh proxy allow --watch` is covering the
@@ -338,7 +377,7 @@ proxy's denial database, never from what the session prints.
 
 ## Managing the allowlist
 
-Denied egress attempts are answered with `407` and recorded in a SQLite
+Denied egress attempts are answered with `403 Forbidden` and recorded in a SQLite
 database (`$XDG_STATE_HOME/hsh/denied.db`, default
 `~/.local/state/hsh/denied.db`). Two subcommands manage it:
 

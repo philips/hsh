@@ -16,29 +16,32 @@ import (
 	"time"
 
 	"hsh/internal/netsetup"
+	"hsh/internal/notice"
 
 	"golang.org/x/sys/unix"
 )
 
 type ParentOptions struct {
-	Shell     string
-	Exec      []string
-	Launch    []string
-	Workspace string
-	Home      string
-	CACert    string
-	ProxyAddr string
-	InnerExe  string
+	Shell        string
+	Exec         []string
+	Launch       []string
+	ContextFiles []string
+	Workspace    string
+	Home         string
+	CACert       string
+	ProxyAddr    string
+	InnerExe     string
 }
 
 type InnerOptions struct {
-	Shell     string
-	Exec      []string
-	Launch    []string
-	Workspace string
-	Home      string
-	CACert    string
-	ProxyAddr string
+	Shell        string
+	Exec         []string
+	Launch       []string
+	ContextFiles []string
+	Workspace    string
+	Home         string
+	CACert       string
+	ProxyAddr    string
 }
 
 func RunParent(opts ParentOptions) error {
@@ -81,6 +84,13 @@ func RunParent(opts ParentOptions) error {
 			return err
 		}
 		innerArgs = append(innerArgs, "--launch-json", string(launchJSON))
+	}
+	if len(opts.ContextFiles) > 0 {
+		contextJSON, err := json.Marshal(opts.ContextFiles)
+		if err != nil {
+			return err
+		}
+		innerArgs = append(innerArgs, "--context-files-json", string(contextJSON))
 	}
 	cmd := exec.Command(opts.InnerExe, innerArgs...)
 	cmd.ExtraFiles = []*os.File{readyW, goR}
@@ -157,6 +167,7 @@ func RunInner(opts InnerOptions) error {
 	if err := os.MkdirAll(opts.Home, 0o755); err != nil {
 		return err
 	}
+	applyNotice(&opts, notice.Path)
 	stripSetuid(opts.Workspace)
 
 	// Its owner is the parent-namespace UID selected by the mapping, which
@@ -203,6 +214,25 @@ func RunInner(opts InnerOptions) error {
 		shellArgs = append(shellArgs, "--rcfile", rcPath)
 	}
 	return syscall.Exec(opts.Shell, shellArgs, buildEnv(opts))
+}
+
+func applyNotice(opts *InnerOptions, noticePath string) {
+	text := notice.Read(noticePath)
+	argPath := ""
+	if text != "" {
+		argPath = noticePath
+	}
+	for _, f := range opts.ContextFiles {
+		if err := notice.ApplyContextFile(notice.ExpandHome(f, opts.Home), text); err != nil {
+			fmt.Fprintf(os.Stderr, "hsh: warning: network notice in %s: %v\n", f, err)
+		}
+	}
+	if len(opts.Exec) > 0 {
+		opts.Exec = notice.SubstituteArgv(opts.Exec, argPath)
+	}
+	if len(opts.Launch) > 0 {
+		opts.Launch = notice.SubstituteArgv(opts.Launch, argPath)
+	}
 }
 
 func writeLaunchRC(path string, argv []string) error {
