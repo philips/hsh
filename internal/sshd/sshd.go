@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -80,14 +81,34 @@ func handleGlobalRequests(reqs <-chan *ssh.Request, cfg Config) {
 			}
 			continue
 		}
-		var b strings.Builder
-		for _, l := range listeners {
-			fmt.Fprintf(&b, "%d %s\n", l.Port, l.Addr)
-		}
 		if req.WantReply {
-			_ = req.Reply(true, []byte(b.String()))
+			_ = req.Reply(true, FormatList(listeners))
 		}
 	}
+}
+
+func FormatList(listeners []Listener) []byte {
+	var b strings.Builder
+	for _, l := range listeners {
+		fmt.Fprintf(&b, "%d %s\n", l.Port, l.Addr)
+	}
+	return []byte(b.String())
+}
+
+func ParseList(payload []byte) []Listener {
+	var out []Listener
+	for _, line := range strings.Split(string(payload), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		port, err := strconv.Atoi(fields[0])
+		if err != nil || port < 1 || port > 65535 {
+			continue
+		}
+		out = append(out, Listener{Port: port, Addr: fields[1]})
+	}
+	return out
 }
 
 func SandboxLoopback(host string) bool {

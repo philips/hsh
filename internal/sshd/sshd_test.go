@@ -241,3 +241,14 @@ func TestSandboxLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestFormatParseListRoundTrip(t *testing.T) {
+	in := []Listener{{8000, "127.0.0.1"}, {3000, "::"}}
+	got := ParseList(FormatList(in))
+	if len(got) != 2 || got[0] != in[0] || got[1] != in[1] {
+		t.Fatalf("%+v", got)
+	}
+	if n := len(ParseList([]byte("junk\n0 x\n99999 y\n8 \n"))); n != 0 {
+		t.Fatalf("parsed %d bad lines", n)
+	}
+}
