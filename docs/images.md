@@ -112,11 +112,12 @@ ARG HSH_LABEL
 LABEL org.ifup.hsh="${HSH_LABEL}"
 ```
 
-The build (`images/build.sh` locally, the `compute org.ifup.hsh label`
-step in CI) compacts `hsh.json` with `jq -c` and passes it as
-`HSH_LABEL`. Docker substitutes the variable after tokenizing the
-instruction, so the JSON's double quotes are preserved in the label
-value.
+The build (`images/build.sh` locally, the buildx step in CI) compacts
+`hsh.json` with `jq -c` and passes it as `HSH_LABEL`. The value must
+reach the builder as a shell-quoted `--build-arg`, never through
+docker/build-push-action's `build-args` input: that input is parsed
+as CSV with `"` as the quote character, which strips the JSON's double
+quotes and produces a label hsh cannot parse.
 
 ## Headless task runs
 

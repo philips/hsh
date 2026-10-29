@@ -88,26 +88,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: compute org.ifup.hsh label
-        id: label
-        run: |
-          {
-            echo 'hsh<<HSH_EOF'
-            jq -c . images/${{ matrix.name }}/hsh.json
-            echo HSH_EOF
-          } >> "$GITHUB_OUTPUT"
-
       - name: build and push the harness image
-        uses: docker/build-push-action@v6
-        with:
-          context: images/${{ matrix.name }}/
-          file: images/${{ matrix.name }}/Containerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/hsh-${{ matrix.name }}:latest
-            ghcr.io/${{ github.repository_owner }}/hsh-${{ matrix.name }}:${{ github.ref_name }}
-          build-args: |
-            HSH_LABEL=${{ steps.label.outputs.hsh }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+        run: |
+          docker buildx build \
+            --file images/${{ matrix.name }}/Containerfile \
+            --platform linux/amd64,linux/arm64 \
+            --tag ghcr.io/${{ github.repository_owner }}/hsh-${{ matrix.name }}:latest \
+            --tag ghcr.io/${{ github.repository_owner }}/hsh-${{ matrix.name }}:${{ github.ref_name }} \
+            --build-arg "HSH_LABEL=$(jq -c . images/${{ matrix.name }}/hsh.json)" \
+            --cache-from type=gha,scope=${{ matrix.name }} \
+            --cache-to type=gha,scope=${{ matrix.name }},mode=max \
+            --push \
+            images/${{ matrix.name }}/
