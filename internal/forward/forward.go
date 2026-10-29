@@ -66,6 +66,21 @@ func parsePort(s string) (int, error) {
 	return port, nil
 }
 
+func CheckLocal(bind string, specs []Spec) error {
+	if bind == "" {
+		bind = "127.0.0.1"
+	}
+	for _, spec := range specs {
+		addr := net.JoinHostPort(bind, strconv.Itoa(spec.Local))
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("cannot listen on %s: %w (pick another local port with LOCAL:%d)", addr, err, spec.Remote)
+		}
+		ln.Close()
+	}
+	return nil
+}
+
 type Options struct {
 	Bind      string
 	Specs     []Spec

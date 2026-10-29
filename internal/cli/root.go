@@ -79,6 +79,7 @@ func Root() *ff.Command {
 			monitorCommand(),
 			oauthCommand(),
 			sshCommand(),
+			forwardCommand(),
 			lsCommand(),
 			rmCommand(),
 			gcCommand(),

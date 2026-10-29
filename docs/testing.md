@@ -91,6 +91,14 @@ proxy, the denial database, and the example image:
   with its placeholder, and remove the existing block. `internal/notice` and
   `internal/workspace` have unit tests for the text, the argv substitution, and
   the block upsert and removal
+- **step 25**: `hsh forward` and `hsh run --forward` — a busy `--forward` port
+  fails before a session exists; `--forward 18100:18200` reaches a node server
+  in the sandbox; `hsh forward --list` shows the server and not the relay's
+  port; `hsh forward LOCAL:PORT` works on a running session; `hsh forward`
+  with no ports forwards the running server and a second one started later;
+  listeners go away with their process. `internal/forward` has Go tests for
+  spec parsing, explicit and automatic forwarding (including release and
+  re-pickup), busy local ports, dial-failure warnings, and a closing session
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

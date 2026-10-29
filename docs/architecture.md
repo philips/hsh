@@ -557,6 +557,20 @@ laptop ssh -L 8000:localhost:8000 hsh-<id>
   still goes out through the proxy's capture. `hsh oauth callback` remains the
   paste fallback.
 
+- **`hsh forward`** needs no ssh configuration: it is an SSH client
+  (`internal/forward`) over the same stdio server, started with one `podman
+  exec` for all connections. `hsh forward PORT` or `LOCAL:PORT` listens on the
+  host's `127.0.0.1` (`--bind` to change it, with a warning for non-loopback
+  addresses) and opens a `direct-tcpip` channel per accepted connection. With
+  no ports it polls the sandbox's listeners every two seconds and forwards
+  each as it appears, releasing it when it goes; `--list` prints them. With
+  `SSH_CONNECTION` set it prints the `ssh -N -L` line for the user's
+  computer. `hsh run --forward LOCAL:PORT` runs the same forwarder inside the
+  `hsh run` process while it is attached (the local ports are checked before
+  the session is created); after a detach, `hsh forward` takes over. The flag
+  has no config or image-label equivalent, so an image cannot open listeners
+  on the user's machine.
+
 A forwarded port exposes the agent's code to the user's browser, and a page at
 `localhost:8000` can probe other localhost ports in that browser, as with any
 local dev server. The egress policy is untouched.

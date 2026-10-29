@@ -1303,6 +1303,94 @@ grep -q 'ARGC=1$' "$TMP/notice-none.out" || fail "none mode did not drop the not
 grep -qx 'NOTICE-ABSENT' "$TMP/notice-none.out" || fail "none mode provided a notice"
 pass "none mode gets no notice"
 
+echo "== step 25: hsh forward and hsh run --forward"
+mkdir -p "$TMP/fwdws"
+rm -f "$TMP/fwdws/done" "$TMP/fwdws/start2"
+cat >"$TMP/fwdws/server.js" <<'JS'
+const port = parseInt(process.argv[2], 10);
+require("http").createServer((q, r) => {
+	r.end("hello from the sandbox port " + port + " " + q.url + "\n");
+}).listen(port, "127.0.0.1");
+JS
+python3 -m http.server 18199 --bind 127.0.0.1 >/dev/null 2>&1 &
+BUSY_PID=$!
+sleep 1
+if (cd "$TMP/fwdws" && "$HSH" run --forward 18199:1 localhost/hsh-example:latest) >"$TMP/fwd-busy.out" 2>&1 </dev/null; then
+	kill "$BUSY_PID" 2>/dev/null || true
+	fail "hsh run --forward with a busy local port started anyway"
+fi
+kill "$BUSY_PID" 2>/dev/null || true
+grep -q "cannot listen on 127.0.0.1:18199" "$TMP/fwd-busy.out" || fail "a busy --forward port did not fail clearly: $(cat "$TMP/fwd-busy.out")"
+[ -z "$(test_pods | while read -r p; do podman pod ls --filter "name=$p" --format '{{.Labels}}' | grep -F "$TMP/fwdws"; done)" ] || fail "a failed --forward left a session behind"
+pass "hsh run --forward fails before starting when the local port is busy"
+
+(cd "$TMP/fwdws" && "$HSH" run --forward 18100:18200 localhost/hsh-example:latest) >"$TMP/fwd-run.out" 2>&1 <<'CMDS' &
+node /workspace/server.js 18200 &
+while [ ! -f /workspace/start2 ]; do sleep 0.3; done
+node /workspace/server.js 18201 &
+while [ ! -f /workspace/done ]; do sleep 0.5; done
+exit
+CMDS
+FWD_SESSION_PID=$!
+GOT=""
+for _ in $(seq 1 80); do
+	GOT="$(curl -s --max-time 3 http://127.0.0.1:18100/x || true)"
+	[ -n "$GOT" ] && break
+	sleep 0.5
+done
+[ "$GOT" = "hello from the sandbox port 18200 /x" ] || fail "hsh run --forward did not reach the sandbox's server: '$GOT' $(cat "$TMP/fwd-run.out")"
+pass "hsh run --forward 18100:18200 reaches a server in the sandbox while attached"
+
+LISTED=""
+for _ in $(seq 1 20); do
+	LISTED="$(cd "$TMP/fwdws" && "$HSH" forward --list 2>&1 || true)"
+	echo "$LISTED" | grep -q "^18200" && break
+	sleep 0.5
+done
+echo "$LISTED" | grep -q "^18200" || fail "hsh forward --list did not show the sandbox's listener: $LISTED"
+echo "$LISTED" | grep -q "^7788" && fail "hsh forward --list showed the relay's own port: $LISTED"
+pass "hsh forward --list shows the ports the sandbox listens on, not the relay's"
+
+(cd "$TMP/fwdws" && exec "$HSH" forward 18300:18200) >"$TMP/fwd-explicit.out" 2>&1 &
+FWD_EXPLICIT_PID=$!
+GOT=""
+for _ in $(seq 1 40); do
+	GOT="$(curl -s --max-time 3 http://127.0.0.1:18300/y || true)"
+	[ -n "$GOT" ] && break
+	sleep 0.5
+done
+[ "$GOT" = "hello from the sandbox port 18200 /y" ] || fail "hsh forward LOCAL:PORT did not forward: '$GOT' $(cat "$TMP/fwd-explicit.out")"
+grep -q "forwarding 127.0.0.1:18300 -> the session's port 18200" "$TMP/fwd-explicit.out" || fail "hsh forward did not announce the forward: $(cat "$TMP/fwd-explicit.out")"
+kill "$FWD_EXPLICIT_PID" 2>/dev/null || true
+wait "$FWD_EXPLICIT_PID" 2>/dev/null || true
+pass "hsh forward LOCAL:PORT works on an already-running session"
+
+(cd "$TMP/fwdws" && exec "$HSH" forward) >"$TMP/fwd-auto.out" 2>&1 &
+FWD_AUTO_PID=$!
+for _ in $(seq 1 40); do
+	grep -q "forwarding 127.0.0.1:18200" "$TMP/fwd-auto.out" && break
+	sleep 0.5
+done
+GOT="$(curl -s --max-time 3 http://127.0.0.1:18200/auto || true)"
+[ "$GOT" = "hello from the sandbox port 18200 /auto" ] || fail "auto mode did not forward the running server: '$GOT' $(cat "$TMP/fwd-auto.out")"
+touch "$TMP/fwdws/start2"
+for _ in $(seq 1 60); do
+	grep -q "forwarding 127.0.0.1:18201" "$TMP/fwd-auto.out" && break
+	sleep 0.5
+done
+GOT="$(curl -s --max-time 3 http://127.0.0.1:18201/late || true)"
+[ "$GOT" = "hello from the sandbox port 18201 /late" ] || fail "auto mode did not pick up a server started later: '$GOT' $(cat "$TMP/fwd-auto.out")"
+pass "hsh forward with no ports follows servers as they start listening"
+
+kill "$FWD_AUTO_PID" 2>/dev/null || true
+wait "$FWD_AUTO_PID" 2>/dev/null || true
+touch "$TMP/fwdws/done"
+wait "$FWD_SESSION_PID" 2>/dev/null || true
+if curl -s --max-time 2 -o /dev/null http://127.0.0.1:18100/; then
+	fail "the --forward listener outlived hsh run"
+fi
+pass "forward listeners go away with the process that owns them"
+
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions
 if [ -n "$(test_pods)" ]; then

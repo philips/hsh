@@ -20,6 +20,7 @@ import (
 	"hsh/internal/certs"
 	"hsh/internal/config"
 	"hsh/internal/denieddb"
+	"hsh/internal/forward"
 	"hsh/internal/imageRef"
 	"hsh/internal/netsetup"
 	"hsh/internal/notice"
@@ -42,6 +43,7 @@ type runOptions struct {
 	takeOver     bool
 	fresh        bool
 	rm           bool
+	forwards     stringArray
 }
 
 func runCommand() *ff.Command {
@@ -64,6 +66,7 @@ func runCommand() *ff.Command {
 	fs.BoolVar(&ro.takeOver, 0, "take-over", "with --resume: detach whatever terminal is attached to the session first")
 	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
+	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
 		Name:      "run",
 		Usage:     "hsh run [FLAGS] IMAGE [WORKSPACE-DIR]",
@@ -121,6 +124,13 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	if ro.takeOver && !ro.resume {
 		return fmt.Errorf("--take-over requires --resume")
+	}
+	forwardSpecs, err := forward.ParseSpecs(ro.forwards)
+	if err != nil {
+		return err
+	}
+	if err := forward.CheckLocal("127.0.0.1", forwardSpecs); err != nil {
+		return err
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -583,6 +593,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
+	}
+	if len(forwardSpecs) > 0 {
+		stopForwards := startRunForwards(wsName, forwardSpecs)
+		defer stopForwards()
 	}
 	exitWith := func(code int) error {
 		if code != 0 {
