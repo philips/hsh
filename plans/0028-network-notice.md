@@ -104,7 +104,7 @@ What the runs show:
 ## Decision 
 
 Because of the prior art of other agent sandbox tools using 403 we are going to
-use 403. The measurements showed no difference between 403 and 407 below.
+use 403. We haven't measured 403 vs 407 for agent response though.
 
 We are going to just make the reason phrase "Forbidden" and rely on the system
 prompt to save tokens. A custom reason phrase introduces uncertainty because we
@@ -128,15 +128,19 @@ A short static text (about 100 words; weaker models ignore long prose).
 
 ```
 # Network access (sandbox)
-Some network requests are blocked on purpose by an egress proxy. A blocked
-request fails with HTTP 403 or a refused DNS lookup. The user is notified
-automatically. When a request is blocked, stop, tell the user which host you
-need and why. Continue with what you can without access.
+
+Some network requests are blocked on purpose by a security egress proxy. A
+blocked request fails with HTTP 403 or a refused DNS lookup. This is not an
+outage. The user is notified automatically of the requested hostname. When a
+request is blocked, stop, tell the user which host you need and why. Continue
+with what you can without access don't try other tools, mirrors, proxies, DNS
+tricks.
 ```
 
 It deliberately does not say which hosts are reachable as this may change
-during an agent run. `network.notice: false` disables the feature; the text
-lives in one Go template.
+during an agent run and the measurements show it might stop an agent from
+attempting connections at all. `network.notice: false` disables the feature;
+the text lives in one Go template.
 
 With none mode this notice is not inserted.
 
@@ -156,18 +160,18 @@ Two mechanisms, chosen per harness image through the label:
 - **Launch flag (preferred where the harness has one).** The label's
   `agent.launch` and `agent.command` argv may contain the placeholder
   `{network_policy}`, which the workspace entrypoint replaces with
-  `/hsh-run/notice/network-policy.md`. For pi: `["pi", "--append-system-prompt",
-  "{network_policy}"]` (the pi docs describe the flag taking a file path).
-  The file is read at launch, so it is always current, nothing is written
-  into the home directory, and it lands in the system prompt.
-- **Managed block in an instruction file** for harnesses without such a
-  flag: `agent.context_files`, a list of paths in the container (`~` allowed).
-  At each start the workspace entrypoint upserts a block delimited by
-  `<!-- hsh:network-policy begin -->` / `<!-- hsh:network-policy end -->`
-  holding the notice text, creating the file if needed and leaving everything
-  outside the block untouched, so the user's own instructions in the same file
-  survive. The home directory persists across detaches and resumes, so the
-  block is rewritten on every start rather than trusted.
+  `/hsh-run/notice/network-policy.md`. For pi: `["pi",
+  "--append-system-prompt", "{network_policy}"]` (the pi docs describe the flag
+  taking a file path). The file is read at launch, nothing is written into the
+  home directory, and it lands in the system prompt.
+- **Managed block in an instruction file** for harnesses without such a flag:
+  `agent.context_files`, a list of paths in the container (`~` allowed). At
+  each start the workspace entrypoint upserts a block delimited by `<!--
+  hsh:network-policy begin -->` / `<!-- hsh:network-policy end -->` holding the
+  notice text, creating the file if needed and leaving everything outside the
+  block untouched, so the user's own instructions in the same file survive. The
+  home directory persists across detaches and resumes, so the block is
+  rewritten on every start rather than trusted.
 
 The agent can edit its own instruction files; that costs the user nothing,
 because enforcement stays in the proxy and the notice is advisory.
@@ -204,6 +208,13 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 
 ## Tests
 
+- Disabled notice and the launch flag: with network.notice: false,
+  {network_policy} has to remove the whole --append-system-prompt flag, not
+  leave an empty value. Add a test for this.
+- Leftover blocks: when the notice is disabled, any existing managed block in
+  the persistent home directory should be removed.
+- Over-caution check: run V4 on a task whose host is allowed, in https mode, to
+  confirm the notice doesn't stop the agent from using the network.
 - Config: label parsing of `agent.context_files` and the placeholder; labelcheck
   covers each image.
 - Workspace entrypoint: placeholder substitution in launch and command argv;
@@ -219,11 +230,9 @@ Per-harness mechanism (to confirm in phase 1; I have verified only pi's docs):
 
 ## Security
 
-The notice is text from the host written into the agent's own prompt; it adds
-no authority. The notice file is mounted read-only; the instruction-file block
-is agent-writable by design and only advisory. The proxy remains the only
-enforcement, and nothing in the notice or the 403 text widens policy. The
-allowlist shown to the agent is already visible to it through behavior.
+The notice is text from the host written into the agent's own prompt. The
+notice file is mounted read-only. The proxy remains the only enforcement, and
+nothing in the notice or the 403 text widens policy.
 
 ## Future work
 
