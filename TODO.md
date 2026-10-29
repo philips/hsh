@@ -21,7 +21,8 @@ An example policy might be Go access
 ```
 "go.dev",
 "dl.google.com",
-"proxy.golang.org"
+"proxy.golang.org",
+"storage.googleapis.com"
 ```
 
 Which would add a file to `~/.config/hsh/policy/network/github.com.json`
