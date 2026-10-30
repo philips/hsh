@@ -584,7 +584,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--security-opt", "label=disable",
 	}
 	if gv != nil {
-		wsArgs = append(wsArgs, "--runtime", gv.wrapper)
+		wsArgs = append(wsArgs, "--runtime", gv.wrapper, "-v", exe+":"+sshdPath+":ro")
 	} else {
 		wsArgs = append(wsArgs, "--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN")
 	}

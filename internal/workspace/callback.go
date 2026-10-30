@@ -34,6 +34,25 @@ func OAuthDeliver(relayAddr, port, request string) error {
 	return nil
 }
 
+func DeliverLocal(port, request string) error {
+	n, ok := parsePort(port)
+	if !ok {
+		fmt.Println("ERR invalid port")
+		return nil
+	}
+	conn, err := DialLoopbackPort(n)
+	if err != nil {
+		fmt.Printf("ERR nothing is listening on port %d in this session\n", n)
+		return nil
+	}
+	defer conn.Close()
+	if _, err := io.WriteString(conn, request); err != nil {
+		return err
+	}
+	_, _ = io.Copy(os.Stdout, conn)
+	return nil
+}
+
 func HTTPEcho(port string) error {
 	ln, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {

@@ -24,6 +24,14 @@ func RunSSHSession(opts SSHSessionOptions) error {
 	if err != nil {
 		return err
 	}
+	return runSessionShell(pid, true, opts)
+}
+
+func RunDirectSSHSession(opts SSHSessionOptions) error {
+	return runSessionShell(1, false, opts)
+}
+
+func runSessionShell(pid int, enterNetns bool, opts SSHSessionOptions) error {
 	env, _ := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	envv := parseEnviron(env)
 	shell := envValue(envv, "HSH_SHELL")
@@ -33,13 +41,15 @@ func RunSSHSession(opts SSHSessionOptions) error {
 	if opts.Term != "" {
 		envv = setEnv(envv, "TERM", opts.Term)
 	}
-	ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", pid))
-	if err != nil {
-		return fmt.Errorf("open the session's network namespace: %w", err)
-	}
-	defer ns.Close()
-	if err := unix.Setns(int(ns.Fd()), unix.CLONE_NEWNET); err != nil {
-		return fmt.Errorf("enter the session's network namespace: %w (is the session's shell still running?)", err)
+	if enterNetns {
+		ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", pid))
+		if err != nil {
+			return fmt.Errorf("open the session's network namespace: %w", err)
+		}
+		defer ns.Close()
+		if err := unix.Setns(int(ns.Fd()), unix.CLONE_NEWNET); err != nil {
+			return fmt.Errorf("enter the session's network namespace: %w (is the session's shell still running?)", err)
+		}
 	}
 	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
 		return err
@@ -108,4 +118,11 @@ func envValue(env []string, key string) string {
 		}
 	}
 	return ""
+}
+
+func RestrictPrivileges() error {
+	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
+		return err
+	}
+	return unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
 }

@@ -21,6 +21,8 @@ func main() {
 		err = cli.Workspace(args)
 	case "hsh-workspace-inner":
 		err = cli.WorkspaceInner(args)
+	case "hsh-sshd":
+		err = cli.SSHD(args)
 	default:
 		err = hostCommand(args)
 	}

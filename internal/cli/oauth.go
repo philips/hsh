@@ -62,10 +62,14 @@ func oauthCallbackCommand() *ff.Command {
 				return fmt.Errorf("session %s has no running workspace container", sessionID)
 			}
 			request := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", u.RequestURI(), u.Host)
-			out, err := podman("exec", wsName, "/hsh-workspace-inner",
+			deliverArgs := []string{"exec", wsName, "/hsh-workspace-inner",
 				"--oauth-deliver", netsetup.CallbackRelayAddr(),
 				"--oauth-deliver", port,
-				"--oauth-deliver", request)
+				"--oauth-deliver", request}
+			if readSessionRuntime(state.SessionDir(sessionID)) == runtimeGVisor {
+				deliverArgs = []string{"exec", wsName, sshdPath, "--deliver", port, "--request", request}
+			}
+			out, err := podman(deliverArgs...)
 			if err != nil {
 				return fmt.Errorf("delivering the callback to session %s: %w\n%s", sessionID, err, out)
 			}

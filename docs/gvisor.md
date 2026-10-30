@@ -97,19 +97,51 @@ holds or denies the connection. If the name is approved, the proxy dials
 it by name. A pure DNS lookup of a denied name is therefore not recorded
 as a denial; only the connection attempt is.
 
+## Reaching servers inside the session
+
+`hsh forward`, `hsh run --forward`, `hsh ssh`, and `hsh oauth callback`
+work as in the default runtime, served by a separate role, `/hsh-sshd`.
+`hsh run` bind-mounts the hsh binary read-only at `/hsh-sshd` in the
+workspace container, and the host commands run `podman exec -i
+<pod>-ws /hsh-sshd` instead of `/hsh-workspace-inner --ssh-stdio` when
+the session's runtime is gvisor.
+
+```
+hsh forward / ssh hsh-<id> / hsh oauth callback      (host)
+  └─ podman exec -i <pod>-ws /hsh-sshd               (inside the gVisor sandbox)
+       ├─ direct-tcpip localhost:PORT → dial 127.0.0.1 / ::1 in the sandbox
+       ├─ session → /hsh-sshd --session-shell (env and cwd of PID 1)
+       └─ --deliver PORT --request REQ → 127.0.0.1:PORT
+```
+
+- `/hsh-sshd` runs inside the sandbox, in the same network namespace as
+  the shell, so it needs no relay, veth, or `setns`. It dials only
+  `127.0.0.1` and `::1`. Any other address would leave the sandbox through
+  the netstack and reach the proxy, so it is never tried. The SSH server
+  (`internal/sshd`) refuses non-loopback `direct-tcpip` destinations as
+  in the default runtime.
+- It holds no secrets and has no route to them: the CA key, the
+  resolved secrets, and the monitor database are only mounted in the
+  proxy container. On start it drops every capability except
+  `CAP_DAC_OVERRIDE` and sets `NO_NEW_PRIVS`, the same restrictions as
+  the session's shell, before serving.
+- Session shells (`ssh hsh-<id>`, `ssh hsh-<id> CMD`, `ssh -tt`) exec
+  `/hsh-sshd --session-shell`, which copies the environment, shell
+  (`HSH_SHELL`), and working directory of PID 1 (the session's shell or
+  agent, which `/hsh-workspace --netstack` execs in place), makes fd 0
+  the controlling terminal for pty sessions, and execs the shell.
+- Listeners for `hsh forward --list` and auto-forwarding come from the
+  sandbox's `/proc/net/tcp{,6}`.
+
 ## Not supported yet
 
-- `hsh forward`, `hsh ssh`, `--forward`, and OAuth callback delivery:
-  they rely on the callback relay in the inner network namespace, which
-  gVisor sessions do not have.
 - `tty` reports `ttyname error` inside the sandbox; the terminal itself
   (size, job control, detach/attach) works.
-- The proxy needs `/etc/resolv.conf` resolvers in its own container,
-  which podman provides.
 
 ## Tests
 
 `test/gvisor.sh` runs end-to-end checks and skips when runsc is missing:
 transparent forwarding with secret injection, the 403 denial message over
 intercepted TLS, IP literals and ICMP refused, `monitor.db` records,
-resume after stop, and no egress after the proxy is killed.
+resume after stop, no egress after the proxy is killed, and `hsh forward`,
+`ssh hsh-<id>`, and `hsh oauth callback` through `/hsh-sshd`.

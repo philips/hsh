@@ -8,6 +8,7 @@ controlled egress. It is a single static Go binary that plays three roles:
 | `hsh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
 | `/hsh-proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
 | `/hsh-workspace` / `/hsh-workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
+| `/hsh-sshd` | workspace container, gVisor sessions only | SSH server for `hsh forward`, `hsh ssh`, and `hsh oauth callback` inside the sandbox; see [gVisor runtime](gvisor.md) |
 
 Host-side subcommands manage state around the sandbox: `hsh secret`
 (the secret store below), `hsh proxy` (denial review) and `hsh monitor`
@@ -537,6 +538,10 @@ config it understood. `hsh run` and the proxy fail at startup on an unreadable
 config instead. See [config versions](config.md#config-versions).
 
 ## Reaching servers inside the session
+
+This section describes the default runtime. gVisor sessions serve the
+same commands from `/hsh-sshd` inside the sandbox; see
+[gVisor runtime](gvisor.md#reaching-servers-inside-the-session).
 
 A server the agent starts on its loopback (`localhost:8000`) lives in the
 inner network namespace, which nothing outside can reach directly. Inbound

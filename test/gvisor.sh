@@ -130,6 +130,46 @@ grep -qx 'after=000' "$TMP/run3.out" || fail "egress worked without the proxy: $
 grep -qx 'afterip=000' "$TMP/run3.out" || fail "egress to an IP worked without the proxy: $(cat "$TMP/run3.out")"
 pass "the workspace has no egress without the proxy"
 
+echo "== step 4: /hsh-sshd forwards ports, opens shells, and delivers callbacks inside the sandbox"
+podman pod stop -t 2 "hsh-$SESSION" >/dev/null 2>&1 || true
+"$HSH" run --resume "$SESSION" >"$TMP/run4.out" 2>&1 <<'CMDS' &
+(while true; do /hsh-workspace-inner --http-echo 8000 >/dev/null 2>&1; done &)
+sleep 40
+exit
+CMDS
+RUN_PID=$!
+for _ in $(seq 1 100); do
+	if "$HSH" forward --session "$SESSION" --list 2>/dev/null | grep -q '^8000'; then
+		break
+	fi
+	sleep 0.3
+done
+"$HSH" forward --session "$SESSION" --list 2>/dev/null | grep -q '^8000' || fail "hsh forward --list does not show the sandbox's listener"
+pass "hsh forward --list sees the sandbox's listeners"
+"$HSH" forward --session "$SESSION" 18800:8000 >"$TMP/fwd.out" 2>&1 &
+FWD_PID=$!
+sleep 3
+CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18800/)"
+kill "$FWD_PID" 2>/dev/null || true
+[ "$CODE" = "200" ] || fail "hsh forward did not reach the sandbox's port: $CODE $(cat "$TMP/fwd.out")"
+pass "hsh forward reaches a server on the sandbox's loopback"
+SSHO=(-F /dev/null -o "ProxyCommand=$HSH ssh proxy %h" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR)
+ssh "${SSHO[@]}" "hsh-$SESSION" 'echo "kernel=$(uname -r)"; echo "cwd=$(pwd)"; grep NoNewPrivs /proc/self/status; curl -sS -o /dev/null -w "allowed=%{http_code}\n" --max-time 15 http://host.containers.internal:8899/v1/models' >"$TMP/ssh.out" 2>&1 || true
+grep -q '^kernel=.*gvisor' "$TMP/ssh.out" || fail "ssh did not open a shell in the gVisor sandbox: $(cat "$TMP/ssh.out")"
+grep -qx 'cwd=/workspace' "$TMP/ssh.out" || fail "ssh shell is not in the session's working directory"
+grep -q 'NoNewPrivs:.*1' "$TMP/ssh.out" || fail "ssh shell does not have no_new_privs"
+grep -qx 'allowed=200' "$TMP/ssh.out" || fail "ssh shell has no proxied network"
+pass "ssh hsh-SESSION opens a restricted shell in the sandbox with the proxied network"
+podman exec -d "hsh-$SESSION-ws" /hsh-workspace-inner --http-echo 1455 >/dev/null
+sleep 1
+"$HSH" oauth callback --session "$SESSION" "http://127.0.0.1:1455/cb?code=gvisorcode" >"$TMP/oauth.out" 2>&1 || fail "hsh oauth callback failed: $(cat "$TMP/oauth.out")"
+grep -q 'HTTP/1.1 200 OK' "$TMP/oauth.out" || fail "the callback was not delivered: $(cat "$TMP/oauth.out")"
+pass "hsh oauth callback delivers into the sandbox"
+podman exec "hsh-$SESSION-ws" sh -c 'test -e /hsh-session || test -e /hsh-netstack' && fail "the workspace container can see proxy state"
+pass "the sandbox has no access to the proxy's session state"
+kill "$RUN_PID" 2>/dev/null || true
+wait "$RUN_PID" 2>/dev/null || true
+
 PASSED=1
 echo
 echo "ALL GVISOR TESTS PASSED"

@@ -13,6 +13,7 @@ import (
 
 	"hsh/internal/netsetup"
 	"hsh/internal/sshd"
+	"hsh/internal/state"
 	"hsh/internal/workspace"
 )
 
@@ -42,7 +43,11 @@ func spawnSSHSession(r sshd.SpawnRequest) (sshd.SpawnResult, error) {
 	if err != nil {
 		return sshd.SpawnResult{}, err
 	}
-	args := []string{"--ssh-session"}
+	return spawnSession(self, []string{"--ssh-session"}, r)
+}
+
+func spawnSession(self string, base []string, r sshd.SpawnRequest) (sshd.SpawnResult, error) {
+	args := append([]string(nil), base...)
 	if r.Pty {
 		args = append(args, "--pty")
 	}
@@ -120,12 +125,20 @@ func sshProxyCommand() *ff.Command {
 			if !containerRunning(wsName) {
 				return fmt.Errorf("session %s has no running workspace container; start or resume it with hsh run", sessionID)
 			}
-			cmd := exec.CommandContext(ctx, "podman", "exec", "-i", wsName, "/hsh-workspace-inner", "--ssh-stdio")
+			cmd := exec.CommandContext(ctx, "podman", sessionSSHArgs(sessionID)...)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
 			return cmd.Run()
 		})
+}
+
+func sessionSSHArgs(sessionID string) []string {
+	wsName := "hsh-" + sessionID + "-ws"
+	if readSessionRuntime(state.SessionDir(sessionID)) == runtimeGVisor {
+		return []string{"exec", "-i", wsName, sshdPath}
+	}
+	return []string{"exec", "-i", wsName, "/hsh-workspace-inner", "--ssh-stdio"}
 }
 
 func sshConfigCommand() *ff.Command {

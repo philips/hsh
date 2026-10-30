@@ -88,7 +88,7 @@ func relayConn(conn net.Conn) {
 			fmt.Fprint(conn, "ERR invalid port\n")
 			return
 		}
-		target, err := dialSandboxPort(port)
+		target, err := DialSandboxPort(port)
 		if err != nil {
 			fmt.Fprintf(conn, "ERR nothing is listening on port %d in this session\n", port)
 			return
@@ -103,10 +103,18 @@ func relayConn(conn net.Conn) {
 	}
 }
 
-func dialSandboxPort(port int) (net.Conn, error) {
+func DialSandboxPort(port int) (net.Conn, error) {
+	return dialPort(port, "127.0.0.1", netsetup.InnerIP, "::1")
+}
+
+func DialLoopbackPort(port int) (net.Conn, error) {
+	return dialPort(port, "127.0.0.1", "::1")
+}
+
+func dialPort(port int, hosts ...string) (net.Conn, error) {
 	p := strconv.Itoa(port)
 	var lastErr error
-	for _, host := range []string{"127.0.0.1", netsetup.InnerIP, "::1"} {
+	for _, host := range hosts {
 		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, p), relayDialTimeout)
 		if err == nil {
 			return conn, nil

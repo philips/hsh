@@ -1,6 +1,6 @@
 # 0033: gVisor (runsc) as an optional sandbox runtime
 
-Status: prototype on branch `gvisor-prototype`, implementing the external network proxy layout (Plan steps 1–4, 6, 7). Design documentation: `docs/gvisor.md`. Remaining: step 5 (`hsh forward`/ssh/OAuth callbacks under gVisor), the netns single-interface question, and whether this stays opt-in.
+Status: prototype on branch `gvisor-prototype`, implementing the external network proxy layout (Plan steps 1–4, 6, 7). Design documentation: `docs/gvisor.md`. `hsh forward`, `hsh ssh`, and `hsh oauth callback` are served by a separate `/hsh-sshd` role inside the sandbox, with no access to secrets. Remaining: the netns single-interface question, and whether this stays opt-in.
 
 gVisor gives a stronger boundary than a plain Linux container (a userspace kernel intercepts syscalls) without needing `/dev/kvm`, and unlike krun (see 0020) it keeps network namespaces meaningful, so the egress model survives. The spike shows rootless podman + runsc can run the sandbox, but not with the current two-container pod and inner-namespace design. runsc's external network proxy lets the egress proxy stay outside the sandbox in its own container (see below).
 
