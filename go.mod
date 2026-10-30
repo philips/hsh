@@ -1,6 +1,6 @@
 module hsh
 
-go 1.27
+go 1.27.3
 
 require (
 	code.selman.me/hauntty v0.0.0-20260820211454-ddcef3d71401
@@ -13,8 +13,10 @@ require (
 	github.com/miekg/dns v1.1.73
 	github.com/peterbourgon/ff/v4 v4.0.0-beta.1
 	github.com/vishvananda/netlink v1.3.1
+	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
 	golang.org/x/term v0.47.0
+	gvisor.dev/gvisor v0.0.0-20261030032141-312939767dc2
 	modernc.org/sqlite v1.61.0
 )
 
@@ -28,6 +30,7 @@ require (
 	github.com/clipperhouse/stringish v0.1.1 // indirect
 	github.com/clipperhouse/uax29/v2 v2.5.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
+	github.com/google/btree v1.1.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
@@ -41,9 +44,10 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/vishvananda/netns v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/exp v0.0.0-20250711185948-6ae5c78190dc // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect

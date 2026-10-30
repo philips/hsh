@@ -22,6 +22,7 @@ func Proxy(args []string) error {
 	session := fs.String("session", "", "session id recorded with each denial")
 	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
 	attended := fs.String("attended", "", "marker file whose recent modification time means someone can approve denied requests (enables holding them)")
+	netstack := fs.String("netstack-socket", "", "serve a gVisor sandbox's network over this SOCK_SEQPACKET socket (runsc --network-proxy-path) instead of listening for proxy clients")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,6 +43,7 @@ func Proxy(args []string) error {
 		Session:      *session,
 		Workspace:    *workspace,
 		AttendedPath: *attended,
+		NetstackPath: *netstack,
 	})
 	if err != nil {
 		return err

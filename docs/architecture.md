@@ -183,6 +183,10 @@ Reading notes:
 
 ## Network isolation
 
+This section describes the default runtime. With `hsh run --runtime
+gvisor` the workspace runs under gVisor and its packets go straight to
+the proxy over a Unix socket instead; see [gVisor runtime](gvisor.md).
+
 The workspace container starts in the pod's network namespace with
 `NET_ADMIN` and `SYS_ADMIN` capabilities. Its entrypoint
 (`/hsh-workspace`):
@@ -191,7 +195,8 @@ The workspace container starts in the pod's network namespace with
    configures `hsh0` with `10.77.0.1/24`
 2. re-executes `/hsh-workspace-inner`, which calls
    `unshare(CLONE_NEWNET)` to move into a fresh, empty network namespace
-3. moves `hsh1` into the child's namespace (by PID, via netlink)
+3. moves `hsh1` into the child's namespace (via netlink, by a file
+   descriptor for `/proc/<child>/ns/net`; gVisor rejects the by-PID form)
 4. drops all of its own capabilities
 5. signals the child, which configures `hsh1` with `10.77.0.2/24` and brings
    up loopback

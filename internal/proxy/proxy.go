@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -36,6 +37,7 @@ type Options struct {
 	Session      string
 	Workspace    string
 	AttendedPath string
+	NetstackPath string
 }
 
 type state struct {
@@ -57,6 +59,11 @@ type Proxy struct {
 
 	mu sync.RWMutex
 	st state
+
+	resolvers []string
+	namesMu   sync.Mutex
+	names     map[string]dnsName
+	synthetic map[string]netip.Addr
 }
 
 func New(opts Options) (*Proxy, error) {
@@ -110,6 +117,13 @@ func (p *Proxy) Run() error {
 	p.mu.RUnlock()
 	log.Printf("configuration loaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
 	go p.watch(1 * time.Second)
+	if p.opts.NetstackPath != "" {
+		p.resolvers = readResolvers("/etc/resolv.conf")
+		if len(p.resolvers) == 0 {
+			return fmt.Errorf("no upstream resolvers in /etc/resolv.conf")
+		}
+		return p.serveNetstack(p.opts.NetstackPath)
+	}
 	var listener net.Listener
 	var err error
 	deadline := time.Now().Add(60 * time.Second)
@@ -345,6 +359,10 @@ func (p *Proxy) intercept(clientConn net.Conn, clientBuf *bufio.ReadWriter, host
 	if err := clientBuf.Flush(); err != nil {
 		return
 	}
+	p.interceptTLS(clientConn, host, target, secrets)
+}
+
+func (p *Proxy) interceptTLS(clientConn net.Conn, host, target string, secrets []config.ResolvedSecret) {
 	leaf, err := p.ca.Leaf(host)
 	if err != nil {
 		log.Printf("generate certificate for %s: %v", host, err)
@@ -359,17 +377,19 @@ func (p *Proxy) intercept(clientConn net.Conn, clientBuf *bufio.ReadWriter, host
 		return
 	}
 	defer tlsConn.Close()
-	p.serveConn(tlsConn, target, secrets)
+	p.serveRequests(tlsConn, bufio.NewReader(tlsConn), nil, "https", target, secrets)
 }
 
-func (p *Proxy) serveConn(conn *tls.Conn, target string, secrets []config.ResolvedSecret) {
-	br := bufio.NewReader(conn)
+func (p *Proxy) serveRequests(conn io.Writer, br *bufio.Reader, req *http.Request, scheme, target string, secrets []config.ResolvedSecret) {
 	for {
-		req, err := http.ReadRequest(br)
-		if err != nil {
-			return
+		if req == nil {
+			var err error
+			req, err = http.ReadRequest(br)
+			if err != nil {
+				return
+			}
 		}
-		req.URL.Scheme = "https"
+		req.URL.Scheme = scheme
 		req.URL.Host = target
 		host := req.URL.Hostname()
 		if prov := p.oauthTokenEndpoint(host, req.URL.Path); prov != nil && req.Method == http.MethodPost {
@@ -378,6 +398,7 @@ func (p *Proxy) serveConn(conn *tls.Conn, target string, secrets []config.Resolv
 			if req.Close {
 				return
 			}
+			req = nil
 			continue
 		}
 		if !p.redeemBearerHeader(req.Header, host) {
@@ -391,6 +412,7 @@ func (p *Proxy) serveConn(conn *tls.Conn, target string, secrets []config.Resolv
 		if req.Close {
 			return
 		}
+		req = nil
 	}
 }
 

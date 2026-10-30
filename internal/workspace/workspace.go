@@ -161,6 +161,18 @@ func RunInner(opts InnerOptions) error {
 	if err := writeResolvConf(); err != nil {
 		return err
 	}
+	return enterSession(opts)
+}
+
+func RunDirect(opts InnerOptions) error {
+	opts.ProxyAddr = ""
+	if err := writeResolvConf(); err != nil {
+		return err
+	}
+	return enterSession(opts)
+}
+
+func enterSession(opts InnerOptions) error {
 	if err := installCA(opts.CACert); err != nil {
 		return err
 	}
@@ -193,7 +205,9 @@ func RunInner(opts InnerOptions) error {
 	if err := os.Chdir(opts.Workspace); err != nil {
 		return err
 	}
-	startCallbackRelay()
+	if opts.ProxyAddr != "" {
+		startCallbackRelay()
+	}
 	if len(opts.Exec) > 0 {
 		argv := opts.Exec
 		if !strings.Contains(argv[0], "/") {
@@ -284,15 +298,21 @@ func buildEnv(opts InnerOptions) []string {
 		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	}
 	env = setEnv(env, "PATH", path)
+	if opts.ProxyAddr != "" {
+		for _, kv := range [][2]string{
+			{"http_proxy", opts.ProxyAddr},
+			{"https_proxy", opts.ProxyAddr},
+			{"all_proxy", opts.ProxyAddr},
+			{"HTTP_PROXY", opts.ProxyAddr},
+			{"HTTPS_PROXY", opts.ProxyAddr},
+			{"ALL_PROXY", opts.ProxyAddr},
+			{"no_proxy", noProxy},
+			{"NO_PROXY", noProxy},
+		} {
+			env = setEnv(env, kv[0], kv[1])
+		}
+	}
 	for _, kv := range [][2]string{
-		{"http_proxy", opts.ProxyAddr},
-		{"https_proxy", opts.ProxyAddr},
-		{"all_proxy", opts.ProxyAddr},
-		{"HTTP_PROXY", opts.ProxyAddr},
-		{"HTTPS_PROXY", opts.ProxyAddr},
-		{"ALL_PROXY", opts.ProxyAddr},
-		{"no_proxy", noProxy},
-		{"NO_PROXY", noProxy},
 		{"SSL_CERT_FILE", bundle},
 		{"GIT_SSL_CAINFO", bundle},
 		{"NODE_EXTRA_CA_CERTS", bundle},

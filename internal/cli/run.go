@@ -46,6 +46,7 @@ type runOptions struct {
 	fresh        bool
 	rm           bool
 	forwards     stringArray
+	runtime      string
 }
 
 func runCommand() *ff.Command {
@@ -68,6 +69,7 @@ func runCommand() *ff.Command {
 	fs.BoolVar(&ro.takeOver, 0, "take-over", "with --resume: detach whatever terminal is attached to the session first")
 	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
+	fs.StringVar(&ro.runtime, 0, "runtime", "", "sandbox runtime for a new session: gvisor (needs runsc), or omit for the default container runtime")
 	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
 		Name:      "run",
@@ -117,6 +119,12 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	case "always", "missing", "newer", "never":
 	default:
 		return fmt.Errorf("invalid --pull value %q (want always, missing, newer, or never)", ro.pull)
+	}
+	if err := validRuntime(ro.runtime); err != nil {
+		return err
+	}
+	if ro.runtime != runtimeDefault && ro.resume && !ro.fresh {
+		return fmt.Errorf("--runtime applies to new sessions; a resumed session keeps the runtime it was created with")
 	}
 	if ro.rm && ro.resume {
 		return fmt.Errorf("--rm and --resume are mutually exclusive: --rm sessions are removed at exit, --resume re-enters a persistent one")
@@ -235,6 +243,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return err
 		}
 		workspaceSource = readWorkspaceFile(sessionDir)
+		if ro.runtime == runtimeDefault {
+			ro.runtime = readSessionRuntime(sessionDir)
+		}
 		if ro.fresh {
 			infof("hsh: discarding session %s (--fresh)\n", sessionID)
 			_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
@@ -334,7 +345,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if err := notice.Write(notice.SessionDir(sessionDir), notice.Enabled(cfg.Network.NoticeEnabled(), mode)); err != nil {
 			return fmt.Errorf("write the network notice: %w", err)
 		}
+		if err := writeSessionRuntime(sessionDir, ro.runtime); err != nil {
+			return err
+		}
 		recordSessionVersion(sessionDir, "created")
+	}
+	var gv *gvisorSession
+	if ro.runtime == runtimeGVisor {
+		gv, err = prepareGVisor(sessionDir)
+		if err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(notice.SessionDir(sessionDir), 0o755); err != nil {
 		return err
@@ -469,9 +490,14 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if roots != "" {
 		proxyArgs = append(proxyArgs, "-v", roots+":/hsh-roots.pem:ro")
 	}
+	listenArgs := []string{"--listen", netsetup.HostIP + ":" + netsetup.ProxyPort}
+	if gv != nil {
+		proxyArgs = append(proxyArgs, "-v", gv.sockDir+":"+netstackTarget)
+		listenArgs = []string{"--netstack-socket", netstackTarget + "/sock"}
+	}
+	proxyArgs = append(proxyArgs, cfg.Image)
+	proxyArgs = append(proxyArgs, listenArgs...)
 	proxyArgs = append(proxyArgs,
-		cfg.Image,
-		"--listen", netsetup.HostIP+":"+netsetup.ProxyPort,
 		"--config", "/hsh-session/config.json",
 		"--secrets", "/hsh-session/secrets.json",
 		"--ca-cert", "/hsh-session/ca.crt",
@@ -488,15 +514,32 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		proxyArgs = append(proxyArgs, "--network-mode", ro.networkMode)
 	}
 
+	startProxy := func() error {
+		if gv != nil {
+			gv.clearSocket()
+		}
+		if out, err := podman("start", proxyName); err != nil {
+			return fmt.Errorf("start proxy container: %w\n%s", err, out)
+		}
+		if gv != nil {
+			return gv.waitForSocket(30 * time.Second)
+		}
+		return nil
+	}
 	reattach := false
 	if resumeSession {
 		if !containerExists(proxyName) {
 			if out, err := podman(proxyArgs...); err != nil {
 				return fmt.Errorf("create proxy container: %w\n%s", err, out)
 			}
+			if gv != nil {
+				if err := startProxy(); err != nil {
+					return err
+				}
+			}
 		} else if !containerRunning(proxyName) {
-			if out, err := podman("start", proxyName); err != nil {
-				return fmt.Errorf("start proxy container: %w\n%s", err, out)
+			if err := startProxy(); err != nil {
+				return err
 			}
 		}
 		reattach = true
@@ -506,14 +549,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
 		podCreateArgs := []string{"pod", "create", "--name", podName,
 			"--label", "hsh.workspace=" + workspaceSource}
+		if gv != nil {
+			podCreateArgs = append(podCreateArgs, "--infra=false", "--share", "")
+		}
 		if out, err := podman(podCreateArgs...); err != nil {
 			return fmt.Errorf("create pod: %w\n%s", err, out)
 		}
 		if out, err := podman(proxyArgs...); err != nil {
 			return fmt.Errorf("create proxy container: %w\n%s", err, out)
 		}
-		if out, err := podman("start", proxyName); err != nil {
-			return fmt.Errorf("start proxy container: %w\n%s", err, out)
+		if err := startProxy(); err != nil {
+			return err
 		}
 	}
 	failureCleanup = false
@@ -536,13 +582,19 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	wsArgs := []string{
 		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
-		"--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN",
-		"--entrypoint", "/hsh-workspace",
-		"-v", exe + ":/hsh-workspace:ro",
-		"-v", exe + ":/hsh-workspace-inner:ro",
-		"-v", caCertPath + ":/hsh-run/ca.crt:ro",
-		"-v", notice.SessionDir(sessionDir) + ":" + notice.Dir + ":ro",
 	}
+	if gv != nil {
+		wsArgs = append(wsArgs, "--runtime", gv.wrapper)
+	} else {
+		wsArgs = append(wsArgs, "--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN")
+	}
+	wsArgs = append(wsArgs,
+		"--entrypoint", "/hsh-workspace",
+		"-v", exe+":/hsh-workspace:ro",
+		"-v", exe+":/hsh-workspace-inner:ro",
+		"-v", caCertPath+":/hsh-run/ca.crt:ro",
+		"-v", notice.SessionDir(sessionDir)+":"+notice.Dir+":ro",
+	)
 	interactive := isTerminal(os.Stdin)
 	if interactive {
 		wsArgs = append(wsArgs, "-i", "-t")
@@ -565,6 +617,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--workspace", wsDir,
 		"--home", "/home/hsh",
 	)
+	if gv != nil {
+		wsArgs = append(wsArgs, "--netstack")
+	}
 	if len(agentExec) > 0 {
 		execJSON, err := json.Marshal(agentExec)
 		if err != nil {

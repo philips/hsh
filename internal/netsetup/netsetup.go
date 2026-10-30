@@ -2,6 +2,7 @@ package netsetup
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/vishvananda/netlink"
 )
@@ -59,7 +60,12 @@ func MoveInnerVethToPID(pid int) error {
 	if err != nil {
 		return err
 	}
-	if err := netlink.LinkSetNsPid(link, pid); err != nil {
+	ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", pid))
+	if err != nil {
+		return fmt.Errorf("open child network namespace: %w", err)
+	}
+	defer ns.Close()
+	if err := netlink.LinkSetNsFd(link, int(ns.Fd())); err != nil {
 		return fmt.Errorf("move %s to child network namespace: %w", InnerVethName, err)
 	}
 	return nil

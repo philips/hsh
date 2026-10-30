@@ -1,0 +1,115 @@
+# gVisor runtime (prototype)
+
+`hsh run --runtime gvisor` runs the workspace container under gVisor
+(`runsc`) instead of the default container runtime. The workspace's
+syscalls are served by gVisor's userspace kernel, and its network is
+handed, as raw IP packets, to the egress proxy, which stays in its own
+ordinary container. The runtime is recorded in the session
+(`$XDG_STATE_HOME/hsh/sessions/<id>/runtime`) and `--resume` keeps it.
+
+Status: prototype. It is opt-in and the default runtime is unchanged.
+
+## Requirements
+
+- `runsc` from the upstream release tarball
+  (https://gvisor.dev/docs/user_guide/install/#install-latest), with its
+  `gvisor-bin/` directory next to it, on `PATH` or named by `HSH_RUNSC`.
+- Rootless podman with pasta. No `/dev/kvm` is needed (gVisor's default
+  `systrap` platform).
+
+## Layout
+
+```mermaid
+flowchart LR
+    classDef proc fill:#fdf3d8,stroke:#b59b3e
+    subgraph POD["pod hsh-&lt;id&gt; (--infra=false, nothing shared)"]
+        subgraph WS["workspace container (runsc)"]
+            shell["shell / agent"]
+            sentry["gVisor sentry + netstack"]
+        end
+        subgraph PX["proxy container (default runtime)"]
+            proxy["/hsh-proxy --netstack-socket<br/>userspace TCP/IP stack,<br/>policy, MITM, secrets, DNS"]
+        end
+    end
+    sock[("sessions/&lt;id&gt;/netstack/sock<br/>SOCK_SEQPACKET")]
+    net(("internet"))
+    shell --> sentry
+    sentry -->|"IP packets<br/>(--network-proxy-path)"| sock
+    sock --> proxy
+    proxy --> net
+    class shell,sentry,proxy proc
+```
+
+- `hsh run` writes a wrapper, `sessions/<id>/runsc`, that runs
+  `runsc --ignore-cgroups --overlay2=none --network-proxy-path=<session>/netstack/sock`,
+  and creates the workspace container with `podman create --runtime <wrapper>`.
+  Podman records the runtime on the container, so later `start`, `attach`,
+  `exec`, and `pod stop` use it without extra flags.
+- The proxy container bind-mounts `sessions/<id>/netstack` and listens
+  on the socket. `hsh run` removes a stale socket before starting the
+  proxy and waits for the new one before starting the workspace, because
+  runsc dials the socket once at sandbox start and fails if no one is
+  listening. Each workspace start (including `--resume`) is a new
+  connection; the proxy runs one TCP/IP stack per connection and drops
+  it when the sandbox disconnects.
+- runsc copies the workspace container's network namespace (its single
+  pasta interface, addresses and routes) into its netstack and attaches
+  that interface to the socket. All of the workspace's traffic arrives at
+  the proxy; nothing reaches pasta. If the proxy is gone, the workspace
+  has no network.
+- The workspace container gets no extra capabilities. `/hsh-workspace
+  --netstack` skips the veth, the inner network namespace, and the proxy
+  environment variables. It points `/etc/resolv.conf` at `10.77.0.1`
+  (any address works, since every packet goes to the proxy), installs
+  the session CA, and drops capabilities as in the default runtime.
+- `--overlay2=none` makes the container's root filesystem changes land in
+  podman's container layer, so they survive stop and `--resume`. Without
+  it runsc keeps them in a sandbox-private overlay that is discarded.
+- `--ignore-cgroups` is required for rootless runsc under podman, so
+  gVisor sessions have no cgroup resource limits.
+
+## Transparent proxying
+
+The proxy terminates the workspace's TCP connections in its own gVisor
+`pkg/tcpip` stack and applies the same policy as the HTTP proxy, keyed by
+hostname:
+
+| Traffic | Host used for policy | Handling |
+|---|---|---|
+| TLS (first byte `0x16`) | ClientHello SNI | `connectAllowed`; secrets or OAuth → MITM with the session CA; otherwise a tunnel dialed by the SNI name, so a forged SNI cannot reach another address |
+| plain HTTP (request line) | `Host` header | `plaintextAllowed`; secrets and OAuth as for proxied HTTP |
+| anything else (the client sends nothing within 3 s, e.g. SSH) | name from the proxy's DNS answers for the destination IP | allowed only if that name is on the allowlist (in every mode) |
+| TCP or UDP port 53 | query name | the existing DNS handler |
+| other UDP, ICMP | — | dropped |
+
+A TLS connection with no SNI falls back to the DNS-answer name, then to
+the destination IP. Denied TLS connections that carry an SNI are completed
+with a certificate from the session CA and answered with the usual 403
+denial message, so agents see the same explanation as through the HTTP
+proxy. Denials, holds, approvals, and `monitor.db` records work as for the
+HTTP proxy.
+
+In `allowlist` and `none` modes, an A query for a name that is not allowed
+is answered with a placeholder address from `198.18.0.0/15` (TTL 1, and an
+empty AAAA answer) instead of being refused. The client then connects,
+the proxy maps the placeholder back to the name, records the denial, and
+holds or denies the connection. If the name is approved, the proxy dials
+it by name. A pure DNS lookup of a denied name is therefore not recorded
+as a denial; only the connection attempt is.
+
+## Not supported yet
+
+- `hsh forward`, `hsh ssh`, `--forward`, and OAuth callback delivery:
+  they rely on the callback relay in the inner network namespace, which
+  gVisor sessions do not have.
+- `tty` reports `ttyname error` inside the sandbox; the terminal itself
+  (size, job control, detach/attach) works.
+- The proxy needs `/etc/resolv.conf` resolvers in its own container,
+  which podman provides.
+
+## Tests
+
+`test/gvisor.sh` runs end-to-end checks and skips when runsc is missing:
+transparent forwarding with secret injection, the 403 denial message over
+intercepted TLS, IP literals and ICMP refused, `monitor.db` records,
+resume after stop, and no egress after the proxy is killed.

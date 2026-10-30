@@ -19,6 +19,7 @@ func Workspace(args []string) error {
 	innerExe := fs.String("inner-exe", "", "path to the hsh-workspace-inner binary (empty: re-exec self with the workspace-inner subcommand)")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
 	contextJSON := fs.String("context-files-json", "", "JSON array of instruction files that get the network notice block")
+	netstack := fs.Bool("netstack", false, "the sandbox network is already proxied below the socket layer (gVisor): skip the veth, the inner namespace, and the proxy environment")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -39,6 +40,17 @@ func Workspace(args []string) error {
 		if err := json.Unmarshal([]byte(*contextJSON), &contextFiles); err != nil {
 			return err
 		}
+	}
+	if *netstack {
+		return workspace.RunDirect(workspace.InnerOptions{
+			Shell:        *shell,
+			Exec:         exec,
+			Launch:       launch,
+			ContextFiles: contextFiles,
+			Workspace:    *workspaceDir,
+			Home:         *home,
+			CACert:       *caCert,
+		})
 	}
 	return workspace.RunParent(workspace.ParentOptions{
 		Shell:        *shell,
