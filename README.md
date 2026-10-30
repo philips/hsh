@@ -14,9 +14,10 @@ The goals of `hsh` isolation include:
 
 - Single install binary
 - Rootless Linux containers
-- Optional gVisor support for VM-like isolation
 - Dynamic egress network isolation
+- Fast permission review/approval workflow
 - Simple OCI (docker) agent packaging
+- VM-like isolation with gVisor (optional)
 
 The goal is to make it easy to hack on software alongside an agent harness like
 `pi`, `codex`, `claude-code`, etc while protecting you from moderate dangers of
