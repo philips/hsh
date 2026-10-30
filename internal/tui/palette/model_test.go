@@ -123,19 +123,32 @@ func TestOpensTheReviewWhenSomethingNeedsReview(t *testing.T) {
 	if m.view != viewReview || !strings.Contains(m.View(), "https://a.example") {
 		t.Fatalf("did not open the review list:\n%s", m.View())
 	}
-	m, cmd := press(t, m, esc)
-	if isQuit(cmd) || m.view != viewCommands {
-		t.Fatal("esc in the review did not go back to the commands")
+	if !strings.Contains(m.View(), "esc close") {
+		t.Errorf("the help does not say esc closes:\n%s", m.View())
 	}
-	if !strings.Contains(m.View(), "1 need review") {
-		t.Errorf("the review command does not show the pending count:\n%s", m.View())
+	m, cmd := press(t, m, enter)
+	m = run(t, m, cmd)
+	if m.view != viewReview || !strings.Contains(m.View(), "nothing to review") {
+		t.Fatalf("enter did not approve the host in place:\n%s", m.View())
 	}
-	m, _ = press(t, m, enter)
-	if m.view != viewReview {
-		t.Fatal("enter on the first command did not open the review")
+	if _, cmd := press(t, m, esc); !isQuit(cmd) {
+		t.Fatal("one esc after approving did not close the monitor")
 	}
 	if _, cmd := press(t, m, typed("q")); !isQuit(cmd) {
 		t.Fatal("q in the review did not close the monitor")
+	}
+}
+
+func TestEscInAReviewOpenedFromThePaletteGoesBack(t *testing.T) {
+	e := newEnv(t)
+	m := e.model(t, "")
+	m, _ = press(t, m, enter)
+	if m.view != viewReview || !strings.Contains(m.View(), "esc back to commands") {
+		t.Fatalf("the review did not open from the palette:\n%s", m.View())
+	}
+	m, cmd := press(t, m, esc)
+	if isQuit(cmd) || m.view != viewCommands {
+		t.Fatal("esc in a review opened from the palette did not go back")
 	}
 }
 
@@ -148,9 +161,8 @@ func TestEscInTheReviewFilterClearsTheFilterFirst(t *testing.T) {
 	if m.view != viewReview {
 		t.Fatal("esc while filtering left the review")
 	}
-	m, _ = press(t, m, esc)
-	if m.view != viewCommands {
-		t.Fatal("a second esc did not go back to the commands")
+	if _, cmd := press(t, m, esc); !isQuit(cmd) {
+		t.Fatal("a second esc did not close the monitor")
 	}
 }
 
@@ -221,10 +233,10 @@ func TestChangeMonitorKeyReportsAnUnreadableSettingsFile(t *testing.T) {
 func TestAddAllowlistItemInTheSession(t *testing.T) {
 	e := newEnv(t)
 	path := e.session(t, "s1", "/ws")
+	m := e.model(t, "s1")
 	_ = monitordb.Record(e.db, "/ws", "s1", "api.example.com", "api.example.com:443")
 	_ = monitordb.Record(e.db, "/ws", "s1", "other.test", "other.test:443")
-	m := e.model(t, "s1")
-	m, _ = press(t, m, esc, down, enter)
+	m, _ = press(t, m, down, enter)
 	if m.view != viewAllowHost {
 		t.Fatalf("view = %v", m.view)
 	}

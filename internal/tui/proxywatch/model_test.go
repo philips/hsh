@@ -270,14 +270,51 @@ func TestRefreshBringsNewDenials(t *testing.T) {
 	}
 }
 
-func TestApproveEmptySelection(t *testing.T) {
-	env := newTestEnv(t, "alpha.example.com")
+func TestEnterWithoutASelectionApprovesTheCursorRow(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
+	m, cmd := send(env.model, keyMsg("enter"))
+	m, _ = send(m, runCmd(cmd))
+	got := allowlist(t, env.configPath)
+	if !hasHost(got, "beta.example.com") || hasHost(got, "alpha.example.com") {
+		t.Fatalf("enter did not approve just the cursor row: %v", got)
+	}
+	if hosts := listHosts(m); len(hosts) != 1 || hosts[0] != "alpha.example.com" {
+		t.Fatalf("rows after approving: %v", hosts)
+	}
+}
+
+func TestIgnoreWithoutASelectionIgnoresTheCursorRow(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
+	m, cmd := send(env.model, keyMsg("i"))
+	m, _ = send(m, runCmd(cmd))
+	if hosts := listHosts(m); len(hosts) != 1 || hosts[0] != "alpha.example.com" {
+		t.Fatalf("rows after ignoring: %v", hosts)
+	}
+	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
+		t.Fatalf("ignoring allowed the host: %v", got)
+	}
+}
+
+func TestApproveWithNothingListed(t *testing.T) {
+	env := newTestEnv(t)
 	m, cmd := send(env.model, keyMsg("enter"))
 	if cmd != nil {
-		t.Error("approve with an empty selection should be a no-op")
+		t.Error("approve with no rows should be a no-op")
 	}
-	if !strings.Contains(m.status, "select hosts") {
+	if !strings.Contains(m.status, "nothing to approve") {
 		t.Errorf("unexpected status %q", m.status)
+	}
+}
+
+func TestEmptyViewSaysSoOnce(t *testing.T) {
+	env := newTestEnv(t)
+	view := env.model.View()
+	if strings.Count(strings.ToLower(view), "nothing to review") != 1 || strings.Contains(view, "denied host(s)") || strings.Contains(view, "No denied hosts") {
+		t.Fatalf("the empty state is repeated:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	if !strings.HasPrefix(lines[0], "denied hosts awaiting review") {
+		t.Fatalf("the first line is not the title: %q", lines[0])
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"hsh/internal/config"
 	"hsh/internal/monitordb"
 	"hsh/internal/state"
+	"hsh/internal/tui/style"
 )
 
 type Model struct {
@@ -33,6 +34,7 @@ type Model struct {
 
 	filtering   bool
 	filterInput textinput.Model
+	escHelp     string
 
 	width  int
 	height int
@@ -285,7 +287,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		h := msg.Height - 4
+		h := msg.Height - 6
 		if h < 1 {
 			h = 1
 		}
@@ -394,19 +396,30 @@ func (m Model) toggleSelect() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) targetRows() []monitordb.DeniedHost {
+	if rows := m.selectedRows(); len(rows) > 0 {
+		return rows
+	}
+	c := m.table.Cursor()
+	if c >= 0 && c < len(m.rows) && !m.rows[c].Ignored {
+		return []monitordb.DeniedHost{m.rows[c]}
+	}
+	return nil
+}
+
 func (m Model) approve() (tea.Model, tea.Cmd) {
-	rows := m.selectedRows()
+	rows := m.targetRows()
 	if len(rows) == 0 {
-		m.status = "select hosts with space"
+		m.status = "nothing to approve"
 		return m, nil
 	}
 	return m, m.actionCmd(actionApprove, rows)
 }
 
 func (m Model) ignore() (tea.Model, tea.Cmd) {
-	rows := m.selectedRows()
+	rows := m.targetRows()
 	if len(rows) == 0 {
-		m.status = "select hosts with space"
+		m.status = "nothing to ignore"
 		return m, nil
 	}
 	return m, m.actionCmd(actionIgnore, rows)
@@ -589,22 +602,30 @@ func (m Model) holdTitle() string {
 	return summary + " (session " + session + ")"
 }
 
-func title(showIgnored bool, f monitordb.Filter) string {
-	t := "denied hosts awaiting review"
+func title(showIgnored bool) string {
 	if showIgnored {
-		t = "denied hosts — pending and ignored"
+		return "denied hosts — pending and ignored"
 	}
-	var scope []string
-	if f.Session != "" {
-		scope = append(scope, "session "+f.Session)
+	return "denied hosts awaiting review"
+}
+
+func (m Model) headingNotes() string {
+	var notes []string
+	if m.filter.Session != "" {
+		notes = append(notes, "session "+m.filter.Session)
 	}
-	if f.Workspace != "" {
-		scope = append(scope, "workspace "+f.Workspace)
+	if m.filter.Workspace != "" {
+		notes = append(notes, "workspace "+m.filter.Workspace)
 	}
-	if len(scope) > 0 {
-		t += " — " + strings.Join(scope, ", ")
+	if h := m.holdTitle(); h != "" {
+		notes = append(notes, h)
 	}
-	return t
+	return strings.Join(notes, " · ")
+}
+
+func (m Model) SetEscHelp(text string) Model {
+	m.escHelp = text
+	return m
 }
 
 func (m Model) View() string {
@@ -612,42 +633,42 @@ func (m Model) View() string {
 	if m.showIgnored {
 		total += len(m.ignoredRows)
 	}
-	var sections []string
-	heading := title(m.showIgnored, m.filter)
-	if h := m.holdTitle(); h != "" {
-		heading += " — " + h
+	heading := style.Title.Render(title(m.showIgnored))
+	if notes := m.headingNotes(); notes != "" {
+		heading += style.Note.Render("  " + notes)
 	}
-	sections = append(sections, heading)
-	if len(m.rows) == 0 {
-		if m.filterText() != "" {
-			sections = append(sections, "Nothing matches the filter.")
-		} else {
-			sections = append(sections, "No denied hosts.")
-		}
-	} else {
+	sections := []string{heading, ""}
+	switch {
+	case len(m.rows) > 0:
 		sections = append(sections, m.table.View())
+	case m.filterText() != "":
+		sections = append(sections, style.Note.Render("  nothing matches the filter"))
+	default:
+		sections = append(sections, style.Note.Render("  nothing to review"))
 	}
-	status := fmt.Sprintf("%d denied host(s)", total)
-	if len(m.rows) < total {
-		status += fmt.Sprintf("  ·  %d shown", len(m.rows))
+	var status []string
+	if total > 0 {
+		status = append(status, fmt.Sprintf("%d denied host(s)", total))
+		if len(m.rows) < total {
+			status = append(status, fmt.Sprintf("%d shown", len(m.rows)))
+		}
 	}
 	if n := len(m.selected); n > 0 {
-		status += fmt.Sprintf("  ·  %d selected", n)
+		status = append(status, fmt.Sprintf("%d selected", n))
 	}
 	if m.status != "" {
-		status += "  ·  " + m.status
+		status = append(status, m.status)
 	}
-	sections = append(sections, statusStyle.Render(status))
+	sections = append(sections, "", style.Note.Render(strings.Join(status, "  ·  ")))
 	if m.filtering {
 		sections = append(sections, "  filter: "+m.filterInput.View())
-		sections = append(sections, helpStyle.Render("  type to filter (session, workspace, url) • tab complete • enter apply • esc clear"))
+		sections = append(sections, style.Help.Render("  type to filter (session, workspace, url) • tab complete • enter apply • esc clear"))
 	} else {
-		sections = append(sections, helpStyle.Render("  ↑/k ↓/j move • space select • enter approve • i ignore • a all • n none • t ignored • w hold on/off • / filter • r refresh • q quit"))
+		esc := m.escHelp
+		if esc == "" {
+			esc = "q quit"
+		}
+		sections = append(sections, style.Help.Render("  enter approve • i ignore • space select • a/n all/none • t ignored • w hold • / filter • "+esc))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
-
-var (
-	statusStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-)

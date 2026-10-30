@@ -66,6 +66,7 @@ type Model struct {
 	allowEntry string
 	review     proxywatch.Model
 	hasReview  bool
+	reviewOnly bool
 	monitorKey string
 	status     string
 	isError    bool
@@ -95,6 +96,8 @@ func New(o Options) Model {
 	m.refreshCommands()
 	if m.hasReview && len(o.Pending) > 0 {
 		m.view = viewReview
+		m.reviewOnly = true
+		m.review = m.review.SetEscHelp("esc close")
 	}
 	return m
 }
@@ -133,7 +136,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.host.Width = max(msg.Width-10, 10)
 		if m.hasReview {
-			return m.updateReview(tea.WindowSizeMsg{Width: msg.Width, Height: max(msg.Height-1, 1)})
+			return m.updateReview(msg)
 		}
 		return m, nil
 	case allowMsg:
@@ -179,6 +182,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.view {
 	case viewReview:
 		if msg.Type == tea.KeyEsc && !m.review.Filtering() {
+			if m.reviewOnly {
+				return m, tea.Quit
+			}
 			m.back()
 			return m, nil
 		}
@@ -241,6 +247,8 @@ func (m Model) run() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.view = viewReview
+		m.reviewOnly = false
+		m.review = m.review.SetEscHelp("esc back to commands")
 	case cmdAllow:
 		m.host.SetValue("")
 		m.view = viewAllowHost
@@ -428,7 +436,7 @@ func (m Model) View() string {
 	var sections []string
 	switch m.view {
 	case viewReview:
-		return lipgloss.JoinVertical(lipgloss.Left, m.review.View(), helpStyle.Render("  esc back to commands"))
+		return m.review.View()
 	case viewAllowHost:
 		sections = []string{
 			m.heading("Proxy: add new allowlist item"),

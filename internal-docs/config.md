@@ -404,11 +404,14 @@ command palette. Typing filters the commands fuzzily, up/down (or
 Ctrl+P/Ctrl+N, Tab/Shift+Tab) move, Enter runs the selected command, Esc
 closes. The commands:
 
-- **Proxy: review denied requests** — the review list: up/down move, space
-  selects, enter approves the selected hosts (adding them to the session
-  config's `network.allow`), `i` ignores, `a`/`n` select all or none, `t`
+- **Proxy: review denied requests** — the review list: up/down move, enter
+  approves the selected hosts, or the host under the cursor when none are
+  selected (adding them to the session config's `network.allow`), `i`
+  ignores the same way, space selects, `a`/`n` select all or none, `t`
   toggles ignored hosts, `w` toggles holding, `/` filters, `r` refreshes,
-  Esc goes back to the palette, `q` closes the monitor
+  `q` closes the monitor. Esc goes back to the palette, except when the
+  monitor opened straight into the list: then Esc closes it, so approving
+  a request is enter then Esc
 - **Proxy: add new allowlist item** — type `example.com`, `*.example.com`,
   or a URL (reduced to its host) and press Enter. It is added to the
   session config's `network.allow` and any pending denials it matches are
@@ -422,7 +425,8 @@ closes. The commands:
   other attached sessions keep their key until they are re-attached
 
 `hsh monitor` opens straight into the review list when something is
-pending, like the in-session monitor. Ctrl+C closes it from any screen.
+pending, like the in-session monitor. The review list's empty state is a
+single `nothing to review` line. Ctrl+C closes it from any screen.
 
 ### Global settings
 

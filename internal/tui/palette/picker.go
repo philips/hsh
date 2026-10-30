@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"hsh/internal/tui/style"
 )
 
 type item struct {
@@ -140,8 +142,8 @@ var (
 	matchStyle         = lipgloss.NewStyle().Bold(true).Underline(true)
 	selectedStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))
 	selectedMatchStyle = selectedStyle.Bold(true).Underline(true)
-	noteStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	titleStyle         = lipgloss.NewStyle().Bold(true)
-	helpStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errorStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
+	noteStyle          = style.Note
+	titleStyle         = style.Title
+	helpStyle          = style.Help
+	errorStyle         = style.Error
 )
