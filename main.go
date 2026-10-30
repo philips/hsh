@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"hsh/internal/cli"
+	"hsh/internal/crashlog"
 )
 
 func main() {
@@ -16,6 +17,7 @@ func main() {
 	case "hsh-proxy":
 		err = cli.Proxy(args)
 	case "hsh-reaper":
+		crashlog.Install()
 		err = cli.Reaper(args)
 	case "hsh-workspace":
 		err = cli.Workspace(args)
@@ -24,6 +26,7 @@ func main() {
 	case "hsh-sshd":
 		err = cli.SSHD(args)
 	default:
+		crashlog.Install()
 		err = hostCommand(args)
 	}
 	if err != nil {

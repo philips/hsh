@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -50,6 +51,12 @@ func (m fakeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.note("key " + msg.String())
 		if s := msg.String(); s == "q" || s == "esc" {
 			return m, tea.Quit
+		}
+		if msg.String() == "P" {
+			panic("boom-update")
+		}
+		if msg.String() == "C" {
+			return m, func() tea.Msg { panic("boom-command") }
 		}
 		if msg.String() == "K" {
 			return m, func() tea.Msg {
@@ -833,5 +840,41 @@ func TestKeyNamesAreAllValid(t *testing.T) {
 	}
 	if len(names) != len(validMonitorKeys(t)) {
 		t.Errorf("KeyNames lists %d keys, the security tests cover %d", len(names), len(validMonitorKeys(t)))
+	}
+}
+
+func TestAPanickingMonitorIsLoggedAndTheSessionSurvives(t *testing.T) {
+	for _, tc := range []struct{ key, where, value string }{
+		{"P", "update", "boom-update"},
+		{"C", "command", "boom-command"},
+	} {
+		t.Run(tc.where, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("XDG_STATE_HOME", dir)
+			h := newHarness(t, true, time.Hour)
+			h.run("echo hi")
+			h.press("\x00")
+			h.waitFor("the overlay", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+			h.press(tc.key)
+			h.waitFor("the overlay to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+			h.waitFor("the crash note", func() bool { return strings.Contains(h.statusRow(), "the monitor crashed") })
+			data, err := os.ReadFile(filepath.Join(dir, "hsh", "crash.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			log := string(data)
+			for _, want := range []string{"panic in the monitor (" + tc.where + ") (recovered): " + tc.value, "relay_test.go", "version:"} {
+				if !strings.Contains(log, want) {
+					t.Errorf("crash.log lacks %q:\n%s", want, log)
+				}
+			}
+			h.run("echo still-alive-$((6*7))")
+			h.waitFor("the session to keep working", func() bool { return strings.Contains(h.user.text(), "still-alive-42") })
+			h.press("\x00")
+			h.waitFor("the overlay to reopen", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+			if strings.Contains(h.statusRow(), "crashed") {
+				t.Fatal("the crash note outlived reopening the monitor")
+			}
+		})
 	}
 }

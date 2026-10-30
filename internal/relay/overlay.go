@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+
+	"hsh/internal/crashlog"
 )
 
 const (
@@ -23,6 +26,30 @@ type reviewState struct {
 	model  tea.Model
 	gen    int
 	parser inputParser
+	view   string
+	crash  string
+}
+
+func (r *Relay) failOverlayLocked(where string, p any, stack []byte) {
+	r.review.crash = crashlog.Record("the monitor ("+where+")", p, stack)
+	if r.review.crash == "" {
+		r.review.crash = "(could not write " + crashlog.Path() + ")"
+	}
+	r.review.open = false
+	r.review.model = nil
+	r.review.gen++
+	r.dirty = true
+}
+
+func (r *Relay) overlayCallLocked(where string, f func()) (ok bool) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.failOverlayLocked(where, p, debug.Stack())
+			ok = false
+		}
+	}()
+	f()
+	return true
 }
 
 func (r *Relay) pollLocked() {
@@ -39,11 +66,18 @@ func (r *Relay) pollLocked() {
 func (r *Relay) openReviewLocked() {
 	r.pollLocked()
 	r.review.open = true
+	r.review.crash = ""
 	r.review.gen++
-	r.review.model = r.cfg.Overlay(r.cols, r.rows)
 	r.review.parser = inputParser{}
+	if !r.overlayCallLocked("open", func() { r.review.model = r.cfg.Overlay(r.cols, r.rows) }) {
+		r.paintLocked()
+		return
+	}
 	r.updateOverlayLocked(tea.WindowSizeMsg{Width: r.cols, Height: r.rows})
-	r.runCmdLocked(r.review.model.Init(), r.review.gen)
+	var cmd tea.Cmd
+	if r.review.open && r.overlayCallLocked("init", func() { cmd = r.review.model.Init() }) {
+		r.runCmdLocked(cmd, r.review.gen)
+	}
 	r.paintLocked()
 }
 
@@ -59,8 +93,10 @@ func (r *Relay) updateOverlayLocked(msg tea.Msg) {
 	if !r.review.open {
 		return
 	}
-	model, cmd := r.review.model.Update(msg)
-	r.review.model = model
+	var cmd tea.Cmd
+	if !r.overlayCallLocked("update", func() { r.review.model, cmd = r.review.model.Update(msg) }) {
+		return
+	}
 	if isQuitCmd(cmd) {
 		r.closeReviewLocked()
 		return
@@ -77,10 +113,28 @@ func (r *Relay) runCmdLocked(cmd tea.Cmd, gen int) {
 		return
 	}
 	go func() {
-		msg := cmd()
+		var msg tea.Msg
+		var crash any
+		var stack []byte
+		func() {
+			defer func() {
+				if p := recover(); p != nil {
+					crash, stack = p, debug.Stack()
+				}
+			}()
+			msg = cmd()
+		}()
 		r.mu.Lock()
 		defer r.mu.Unlock()
 		if r.closed || !r.review.open || r.review.gen != gen {
+			if crash != nil {
+				crashlog.Record("the monitor (command)", crash, stack)
+			}
+			return
+		}
+		if crash != nil {
+			r.failOverlayLocked("command", crash, stack)
+			r.paintLocked()
 			return
 		}
 		r.handleMsgLocked(msg, gen)
@@ -162,6 +216,9 @@ func (r *Relay) statusLineLocked() string {
 		name = "session"
 	}
 	switch {
+	case r.review.crash != "":
+		sgr = sgrRed
+		text = " hsh | the monitor crashed; details in " + r.review.crash + " | " + r.keyName() + " reopens"
 	case r.review.open:
 		sgr = sgrRed
 		text = " hsh | MONITOR | Esc goes back | " + r.keyName() + " closes"
@@ -218,11 +275,7 @@ func (r *Relay) repaintRowsLocked(b *bytes.Buffer, top, n int) {
 }
 
 func (r *Relay) overlayFrameLocked() string {
-	view := ""
-	if r.review.model != nil {
-		view = r.review.model.View()
-	}
-	lines := strings.Split(view, "\n")
+	lines := strings.Split(r.review.view, "\n")
 	var b strings.Builder
 	b.WriteString("\x1b[?25l")
 	for y := 0; y < r.rows; y++ {
@@ -236,6 +289,9 @@ func (r *Relay) overlayFrameLocked() string {
 }
 
 func (r *Relay) paintLocked() {
+	if r.review.open && r.review.model != nil {
+		r.overlayCallLocked("view", func() { r.review.view = r.review.model.View() })
+	}
 	want := r.review.open
 	ground := r.term.Ground()
 	if want && !r.paused {

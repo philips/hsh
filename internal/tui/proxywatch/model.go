@@ -161,16 +161,24 @@ func (m Model) tableRows(rows []monitordb.DeniedHost) []table.Row {
 	return out
 }
 
+func (m Model) cursorRow() (monitordb.DeniedHost, bool) {
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.rows) {
+		return monitordb.DeniedHost{}, false
+	}
+	return m.rows[c], true
+}
+
 func (m *Model) rebuildRows(preserveCursor bool) {
 	cursorKey := ""
-	if preserveCursor && len(m.rows) > 0 {
-		c := m.table.Cursor()
-		if c >= 0 && c < len(m.rows) {
-			cursorKey = rowKey(m.rows[c])
-		}
+	if h, ok := m.cursorRow(); ok && preserveCursor {
+		cursorKey = rowKey(h)
 	}
 	m.rows = m.visibleRows()
 	m.table.SetRows(m.tableRows(m.rows))
+	if m.table.Cursor() < 0 && len(m.rows) > 0 {
+		m.table.SetCursor(0)
+	}
 	if cursorKey != "" {
 		for i, h := range m.rows {
 			if rowKey(h) == cursorKey {
@@ -377,11 +385,11 @@ func (m Model) selectedRows() []monitordb.DeniedHost {
 }
 
 func (m Model) toggleSelect() (tea.Model, tea.Cmd) {
-	if len(m.rows) == 0 || m.table.Cursor() >= len(m.rows) {
+	h, ok := m.cursorRow()
+	if !ok {
 		m.status = "no rows to select"
 		return m, nil
 	}
-	h := m.rows[m.table.Cursor()]
 	if h.Ignored {
 		m.status = "ignored rows cannot be selected"
 		return m, nil
@@ -400,9 +408,8 @@ func (m Model) targetRows() []monitordb.DeniedHost {
 	if rows := m.selectedRows(); len(rows) > 0 {
 		return rows
 	}
-	c := m.table.Cursor()
-	if c >= 0 && c < len(m.rows) && !m.rows[c].Ignored {
-		return []monitordb.DeniedHost{m.rows[c]}
+	if h, ok := m.cursorRow(); ok && !h.Ignored {
+		return []monitordb.DeniedHost{h}
 	}
 	return nil
 }
@@ -541,10 +548,8 @@ func loadHolds(f monitordb.Filter, rows ...[]monitordb.DeniedHost) map[string]st
 }
 
 func (m Model) holdSession() string {
-	if len(m.rows) > 0 && m.table.Cursor() >= 0 && m.table.Cursor() < len(m.rows) {
-		if s := m.rows[m.table.Cursor()].Session; s != "" {
-			return s
-		}
+	if h, ok := m.cursorRow(); ok && h.Session != "" {
+		return h.Session
 	}
 	return m.filter.Session
 }

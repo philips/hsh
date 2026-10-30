@@ -583,3 +583,27 @@ func TestHeldHostsAreListedFirstAndMarked(t *testing.T) {
 		t.Fatalf("the held marker is missing:\n%s", m.View())
 	}
 }
+
+func TestNewRowsAfterAnEmptyListAreSelectable(t *testing.T) {
+	env := newTestEnv(t, "alpha.example.com")
+	m, cmd := send(env.model, keyMsg("enter"))
+	m, _ = send(m, runCmd(cmd))
+	if len(m.rows) != 0 {
+		t.Fatalf("rows after approving the only host: %v", listHosts(m))
+	}
+	recordAt(t, env.db, "beta.example.com", "beta.example.com:443", time.Now(), env.session)
+	m, _ = send(m, runCmd(m.refreshCmd()))
+	if len(m.rows) != 1 {
+		t.Fatalf("rows after refresh: %v", listHosts(m))
+	}
+	m, _ = send(m, keyMsg(" "))
+	if !m.selected[rowKey(m.rows[0])] {
+		t.Fatal("space did not select the new row")
+	}
+	m, _ = send(m, keyMsg("n"))
+	m, cmd = send(m, keyMsg("enter"))
+	m, _ = send(m, runCmd(cmd))
+	if got := allowlist(t, env.configPath); !hasHost(got, "beta.example.com") {
+		t.Fatalf("enter did not approve the new row: %v", got)
+	}
+}

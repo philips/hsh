@@ -10,6 +10,7 @@ import (
 	"github.com/peterbourgon/ff/v4"
 
 	"hsh/internal/config"
+	"hsh/internal/crashlog"
 	"hsh/internal/monitordb"
 	"hsh/internal/settings"
 	"hsh/internal/tui/palette"
@@ -52,7 +53,10 @@ func monitorCommand() *ff.Command {
 			opts.DB = db
 			defer watchSessions(filter)()
 		}
-		if _, err := tea.NewProgram(palette.New(opts), tea.WithAltScreen()).Run(); err != nil {
+		if _, err := tea.NewProgram(crashlog.Guard("hsh monitor", palette.New(opts)), tea.WithAltScreen()).Run(); err != nil {
+			if errors.Is(err, tea.ErrProgramPanic) {
+				return fmt.Errorf("the monitor crashed; details in %s", crashlog.Path())
+			}
 			return err
 		}
 		return nil

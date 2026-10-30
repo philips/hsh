@@ -796,6 +796,29 @@ sessions per workspace.
 A reused sandbox accumulates container state; use `--fresh` (or
 `hsh rm -f <sandbox>` followed by a fresh `--resume`) to reset it.
 
+## Crash log
+
+Host-side processes (`hsh` commands and `hsh-reaper`) append crash reports
+to `$XDG_STATE_HOME/hsh/crash.log` (mode 0600; the file is created on
+every run and stays empty until something crashes):
+
+- A fatal panic in any goroutine is written there by the Go runtime
+  (`debug.SetCrashOutput`) as well as to stderr, with every goroutine's
+  stack. These entries start with `panic:` or `fatal error:` and carry no
+  timestamp; the file's mtime dates the last one.
+- A panic in the in-session monitor (the overlay model's constructor,
+  `Init`, `Update`, `View`, or one of its commands) is recovered by the
+  relay: it is logged with a `=== <time> ... recovered panic` header
+  (version, arguments, stack), the overlay closes, the status line turns
+  red with `the monitor crashed; details in <path>`, and the session keeps
+  running. Opening the monitor again clears the note.
+- `hsh monitor` wraps its model the same way, logs the panic, and lets
+  bubbletea restore the terminal; the command then fails with
+  `the monitor crashed; details in <path>`.
+
+Processes inside the pod (proxy, workspace) do not write the host's crash
+log; their crashes are in `podman logs`.
+
 ## Why podman
 
 hsh uses podman because it is the only container runtime that works
