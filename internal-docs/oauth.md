@@ -103,7 +103,7 @@ What a healthy browser-redirect login looks like, in order:
 - `CONNECT auth.openai.com:443 ... will intercept for oauth` - the
   provider config reached this session's proxy. If you instead see
   `denied auth.openai.com (not in network.allow)` or
-  `dns: denied auth.openai.com`, the session is running a stale image or
+  `dns: refused auth.openai.com`, the session is running a stale image or
   config - the allowlist and `oauth` section must both be present.
 - `POST auth.openai.com/api/accounts/oauth/token -> oauth token exchange (openai)`
 - `oauth: openai exchange request: grant_type=authorization_code

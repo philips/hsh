@@ -296,10 +296,7 @@ enabled per session with `network.approval_wait` (for example `"30s"`; at most
   any more, or when the client goes away. At most 64 requests are held at
   once; beyond that requests are denied immediately.
 - Applies to `CONNECT` and plain-HTTP requests before they are hijacked or
-  forwarded, and to DNS queries in `allowlist` mode. A DNS query is held for
-  at most `min(approval_wait, 9s)`: resolvers (glibc, Go) give up after two
-  5 s tries, so a longer hold would end in a timeout instead of an answer.
-  `none` mode never holds, because nothing can be approved there; `https`
+  forwarded. DNS queries are never held. `none` mode never holds, because nothing can be approved there; `https`
   mode only holds what it denies (plaintext and non-443).
 - **Only while someone can approve.** The proxy holds only if the file
   `attended` in the session directory (mounted read-only into the proxy as
@@ -333,13 +330,13 @@ policy matters: an unrestricted resolver would let the workspace exfiltrate
 data via DNS tunneling without ever opening a TCP connection the proxy
 could check.
 
-DNS denials are recorded in the same `denied` table as egress denials —
-there is no separate DNS ledger and no separate DNS policy: a refused
-lookup and a refused CONNECT are both "the agent tried to reach X", one
-review queue, one approval per host (approving a host fixes the lookup
-and the egress together). A merged row is keyed by host + session, so
-`count` aggregates denial events of either kind and `target` keeps the
-first-seen form (`host:443` from a CONNECT, `name:53` from a lookup).
+A refused lookup is only logged (`dns: refused <name>`): it is not recorded
+in the `denied` table, not held, and never reaches `hsh monitor`. A lookup
+is not "the agent tried to reach X" — resolvers and tools issue speculative
+queries, and the workspace cannot reach a resolved name directly anyway —
+so review items come only from connection attempts (a refused CONNECT,
+plaintext request, or transparent connection). Approving a host makes both
+the lookup and the connection work.
 
 ### Monitor database
 
@@ -390,9 +387,10 @@ CREATE TABLE IF NOT EXISTS denied (
 ```
 
 Recording is an upsert on host + session (count incremented,
-`last_seen` bumped); `allowed` marks rows already handled. Egress
-denials (a refused CONNECT) and DNS denials (a refused lookup) share the
-table — see the DNS section above. The state directory is bind-mounted
+`last_seen` bumped); `allowed` marks rows already handled. Only
+connection denials (a refused CONNECT, plaintext request, or transparent
+connection) are recorded; refused DNS lookups are not — see the DNS section
+above. The state directory is bind-mounted
 read-write into the proxy container only — the workspace never sees it,
 so the agent cannot erase or forge its own denial record. Database
 errors are logged and never change the response: a denial is a denial
@@ -836,7 +834,8 @@ TLS on port 443, and DNS resolves every name. That trades destination
 control for out-of-the-box usability; the `allowlist` mode (`--network
 allowlist` or `network.mode` in the config, used by the pre-built
 harness images) restores deny-by-default — only `network.allow` hosts
-on any port, DNS gated by the same list, denials recorded for review.
+on any port, DNS gated by the same list (refused lookups are logged, not
+reviewable), connection denials recorded for review.
 `none` disables egress entirely. In `https` mode a compromised agent
 can exfiltrate data to any TLS endpoint; use `allowlist` for untrusted
 code.

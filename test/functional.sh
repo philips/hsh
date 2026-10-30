@@ -194,6 +194,7 @@ getent hosts api.mistral.ai | head -1
 echo "getent-allowed-rc=$?"
 getent hosts dns-denied.example.net >/dev/null 2>&1
 echo "getent-denied-rc=$?"
+curl -sS -o /dev/null --max-time 8 https://queue-check.example.net >/dev/null 2>&1
 curl -sS --noproxy '*' --max-time 8 -o /dev/null https://api.mistral.ai 2>&1 | head -1
 CMDS
 cat "$TMP/session2.out"
@@ -219,9 +220,7 @@ pass "pi's request reached the dummy endpoint through the proxy"
 
 REMAINING="$("$HSH" proxy denied --db "$DB")"
 echo "$REMAINING" | grep -q "https://api.mistral.ai" && fail "approved host must leave the review queue"
-if echo "$REMAINING" | grep -q "no denied hosts awaiting review"; then
-	fail "expected the refused DNS lookup to be pending in the single queue"
-fi
+echo "$REMAINING" | grep -q "https://queue-check.example.net" || fail "the denied CONNECT is not pending in the review queue"
 pass "approved hosts leave the single review queue"
 
 grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+api\.mistral\.ai' "$TMP/session2.out" || fail "DNS resolution of the allowlisted host failed"
@@ -234,8 +233,10 @@ if grep -q 'Could not resolve host' "$TMP/session2.out"; then
 fi
 pass "non-allowlisted names are refused; allowed names resolve but stay unreachable directly"
 
-echo "$REMAINING" | grep -q "https://dns-denied.example.net" || fail "DNS denial is not in the single review queue"
-pass "DNS denials share the single review queue with egress denials"
+if echo "$REMAINING" | grep -q "dns-denied.example.net"; then
+	fail "a refused DNS lookup must not appear in the review queue"
+fi
+pass "refused DNS lookups are not reviewable; connection denials are"
 
 if "$HSH" proxy denied --db "$DB" --dns >/dev/null 2>&1; then
 	fail "the --dns flag must be gone with the separate table"

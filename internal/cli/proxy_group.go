@@ -121,7 +121,7 @@ func proxyDeniedCommand() *ff.Command {
 	var dbPath string
 	var watch bool
 	var filter monitordb.Filter
-	return newCommand("denied", "hsh proxy denied [FLAGS]", "list hosts denied by the egress proxy (DNS lookups share this queue)", func(fs *ff.FlagSet) {
+	return newCommand("denied", "hsh proxy denied [FLAGS]", "list hosts denied by the egress proxy", func(fs *ff.FlagSet) {
 		fs.StringVar(&dbPath, 0, "db", monitordb.DefaultPath(), "monitor database path")
 		fs.BoolVar(&watch, 0, "watch", "continuously output new denied requests")
 		sessionFilterFlags(fs, &filter)

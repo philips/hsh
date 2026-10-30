@@ -188,7 +188,8 @@ A config entry referencing the store:
   denied unless the host is in `network.allow`. DNS resolves every
   name.
 - `allowlist` - only hosts in `network.allow`, any port; DNS is gated
-  by the same list. The pre-built harness images use this mode.
+  by the same list (a refused lookup is logged, not queued for review).
+  The pre-built harness images use this mode.
 - `none` - no egress; DNS is refused.
 
 `hsh run --network MODE` overrides the mode from the command line.
@@ -241,7 +242,7 @@ to tell you which host it needs and why instead of looking for workarounds.
 
 If you would rather the request wait for you, set `network.approval_wait` (for
 example `"30s"`, at most `5m`). Then a request the policy would deny (a CONNECT,
-a plaintext HTTP request, or a DNS lookup in `allowlist` mode) is *held* for
+or a plaintext HTTP request) is *held* for
 that long while you decide: if you approve the host in time the request just
 succeeds, if you ignore the host it fails at once, and if nobody decides it
 fails with the same 403.
@@ -251,7 +252,7 @@ fails with the same 403.
   session. Otherwise denials are immediate.
 - It does not apply in `none` mode, and in `https` mode only to what is
   denied (plaintext HTTP and non-443 ports).
-- DNS lookups are held for at most 9 s (resolvers give up after about 10 s).
+- DNS lookups are never held.
 - Clients with short connect timeouts (Node's fetch gives up after 10 s) will
   see a timeout before a long wait ends.
 - Turn it on in the seed config, an image label, or the session's
@@ -428,9 +429,9 @@ hsh monitor                                 # interactive review (TUI)
 sorted, 2-space indent); only `network.allow` changes.
 
 `network.allow` also gates DNS: the workspace resolves names through a
-forwarder in the proxy that refuses any name not on the allowlist. DNS
-DNS denials share the single review queue and are
-never auto-allowed.
+forwarder in the proxy that refuses any name not on the allowlist. A
+refused lookup is only logged: it is not recorded in the review queue, so a
+host becomes reviewable when something connects to it.
 
 ## Tools that self-download
 

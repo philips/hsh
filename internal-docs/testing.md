@@ -72,7 +72,7 @@ proxy, the monitor database, and the example image:
   (`hold_test.go`) cover release by approval, release by ignore, timeout,
   disabling during a hold, unattended and stale markers, `none` mode, the
   default being off, the concurrency cap, client disconnects, the `holding`
-  counts, and held DNS queries
+  counts, and DNS lookups never being held or recorded
 - **step 23**: ssh into a session — `ssh -N -L` through the `hsh
   ssh config` ProxyCommand reaches a node server on the sandbox's loopback;
   a 5 MiB response and eight concurrent connections cross one ssh

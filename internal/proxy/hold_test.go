@@ -361,59 +361,79 @@ func startDNS(t *testing.T, e *holdEnv) string {
 	return addr
 }
 
-func query(addr, name string, timeout time.Duration) (*dns.Msg, error) {
+func query(addr, name string, qtype uint16, timeout time.Duration) (*dns.Msg, error) {
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn(name), dns.TypeA)
+	m.SetQuestion(dns.Fqdn(name), qtype)
 	c := &dns.Client{Timeout: timeout}
 	resp, _, err := c.Exchange(m, addr)
 	return resp, err
 }
 
-func TestHeldDNSQueryIsAnsweredAfterApprovalAndRefusedOtherwise(t *testing.T) {
-	e := startHoldProxy(t, "allowlist", "30s", true)
-	addr := startDNS(t, e)
+func (e *holdEnv) deniedRows() []monitordb.DeniedHost {
+	e.t.Helper()
+	db, err := monitordb.Open(e.db)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := monitordb.All(db, monitordb.Filter{Session: "s1"})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return rows
+}
 
-	type result struct {
-		resp *dns.Msg
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		r, err := query(addr, "localhost", 8*time.Second)
-		ch <- result{r, err}
-	}()
-	select {
-	case r := <-ch:
-		t.Fatalf("the query was answered while it should be held: %v %v", r.resp, r.err)
-	case <-time.After(700 * time.Millisecond):
-	}
-	e.allow("localhost")
-	select {
-	case r := <-ch:
-		if r.err != nil || r.resp.Rcode == dns.RcodeRefused {
-			t.Fatalf("approved query: %v %v", r.resp, r.err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("approved query never answered")
-	}
-
-	if err := config.SetApprovalWait(e.cfgPath, "600ms"); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(400 * time.Millisecond)
+func (e *holdEnv) assertRefusedQuietly(addr, name string, qtype uint16) {
+	e.t.Helper()
 	start := time.Now()
-	resp, err := query(addr, "never-approved.test", 5*time.Second)
+	resp, err := query(addr, name, qtype, 5*time.Second)
 	if err != nil || resp.Rcode != dns.RcodeRefused {
-		t.Fatalf("unapproved query: %v %v", resp, err)
+		e.t.Fatalf("query %s type %d: %v %v", name, qtype, resp, err)
 	}
-	if time.Since(start) < 500*time.Millisecond {
-		t.Fatalf("refused after only %s", time.Since(start))
+	if time.Since(start) > time.Second {
+		e.t.Fatalf("query %s was refused only after %s", name, time.Since(start))
+	}
+	if e.activeHolds() != 0 {
+		e.t.Fatalf("active holds = %d after a refused lookup", e.activeHolds())
+	}
+	if rows := e.deniedRows(); len(rows) != 0 {
+		e.t.Fatalf("a refused lookup was recorded as a denial: %+v", rows)
 	}
 }
 
-func TestDNSHoldIsCappedBelowResolverPatience(t *testing.T) {
-	if dnsHoldLimit > 9*time.Second || dnsHoldLimit < 3*time.Second {
-		t.Fatalf("dnsHoldLimit = %s", dnsHoldLimit)
+func TestRefusedDNSLookupIsNotRecordedOrHeld(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "30s", true)
+	addr := startDNS(t, e)
+	e.assertRefusedQuietly(addr, "never-approved.test", dns.TypeA)
+	e.assertRefusedQuietly(addr, "never-approved.test", dns.TypeTXT)
+	e.assertRefusedQuietly(addr, "never-approved.test", dns.TypeHTTPS)
+}
+
+func TestDNSInNoneModeIsRefusedQuietly(t *testing.T) {
+	e := startHoldProxy(t, "none", "30s", true)
+	addr := startDNS(t, e)
+	e.assertRefusedQuietly(addr, "never-approved.test", dns.TypeA)
+}
+
+func TestDNSAnswersAllowlistedNamesAndFollowsApprovals(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "30s", true)
+	addr := startDNS(t, e)
+	resp, err := query(addr, "localhost", dns.TypeA, 5*time.Second)
+	if err == nil && resp.Rcode != dns.RcodeRefused {
+		t.Fatalf("an allowlisted name was refused: %v", resp)
+	}
+	e.assertRefusedQuietly(addr, "later.test", dns.TypeA)
+	e.allow("later.test")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := query(addr, "later.test", dns.TypeA, 5*time.Second)
+		if err == nil && resp.Rcode != dns.RcodeRefused {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the approved name is still refused: %v %v", resp, err)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

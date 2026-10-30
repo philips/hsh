@@ -12,11 +12,7 @@ import (
 	"hsh/internal/monitordb"
 )
 
-const (
-	holdPoll = 250 * time.Millisecond
-
-	dnsHoldLimit = 9 * time.Second
-)
+const holdPoll = 250 * time.Millisecond
 
 var denialMessage = "hsh: egress to %s is blocked on purpose by the sandbox policy; this is not an outage.\n" +
 	"The user has been notified and can approve it with `hsh monitor`.\n" +

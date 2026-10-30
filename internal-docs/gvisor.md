@@ -147,8 +147,10 @@ is answered with a placeholder address from `198.18.0.0/15` (TTL 1, and an
 empty AAAA answer) instead of being refused. The client then connects,
 the proxy maps the placeholder back to the name, records the denial, and
 holds or denies the connection. If the name is approved, the proxy dials
-it by name. A pure DNS lookup of a denied name is therefore not recorded
-as a denial; only the connection attempt is.
+it by name. A pure DNS lookup of a denied name is never recorded as a
+denial, in this runtime or the default one; only the connection attempt is.
+Other query types for a non-allowed name (TXT, HTTPS, ...) are refused and
+logged.
 
 ## Reaching servers inside the session
 
