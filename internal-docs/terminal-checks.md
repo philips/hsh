@@ -48,8 +48,10 @@ Mark each pass, fail, or n/a, and describe any failure.
 ### Review screen
 
 7. Ctrl+Space (with something pending): the whole screen switches to the
-   `hsh monitor` view and the status line turns red; Ctrl+Space again,
-   `q`, or Esc closes it and the session screen is exactly as it was.
+   `hsh monitor` review list and the status line turns red; Ctrl+Space
+   again or `q` closes it and the session screen is exactly as it was; Esc
+   goes to the command palette and Esc there closes it. With nothing
+   pending Ctrl+Space opens the command palette; typing filters it.
 8. With the review screen open, Ctrl+C closes it and does not interrupt
    whatever is running in the session (try it while `sleep 30` runs, then
    confirm `sleep` is still going).

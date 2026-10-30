@@ -51,6 +51,12 @@ func (m fakeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s := msg.String(); s == "q" || s == "esc" {
 			return m, tea.Quit
 		}
+		if msg.String() == "K" {
+			return m, func() tea.Msg {
+				k, _ := ParseKey("ctrl-a")
+				return KeyChange{Key: k}
+			}
+		}
 	}
 	return m, nil
 }
@@ -279,7 +285,7 @@ func TestPauseKeepsTheUserTerminalIdenticalToTheEmulator(t *testing.T) {
 	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
 		t.Fatal("overlay not drawn")
 	}
-	if !strings.Contains(h.statusRow(), "REVIEW") {
+	if !strings.Contains(h.statusRow(), "MONITOR") {
 		t.Fatalf("status row: %q", h.statusRow())
 	}
 	for i := 1; i <= 30; i++ {
@@ -351,7 +357,7 @@ func TestOverlayTakesOverTheWholeScreenReceivesKeysAndRestores(t *testing.T) {
 			t.Fatalf("session text still visible under the full-screen overlay: %q", l)
 		}
 	}
-	if !strings.Contains(h.statusRow(), "REVIEW") {
+	if !strings.Contains(h.statusRow(), "MONITOR") {
 		t.Fatalf("status row: %q", h.statusRow())
 	}
 
@@ -775,5 +781,57 @@ func TestClosingWhileTheSessionIsInTheAlternateScreenLeavesIt(t *testing.T) {
 	}
 	if strings.Index(closing, "\x1b[?1049l") > strings.Index(closing, "\x1b[r") {
 		t.Fatal("the alternate screen must be left before the scroll region and status row are cleaned up")
+	}
+}
+
+func TestKeyChangeFromTheOverlaySwitchesTheMonitorKey(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run("echo hi")
+	h.press("\x00")
+	h.waitFor("the overlay", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	h.press("K")
+	h.waitFor("the new key in the status line", func() bool { return strings.Contains(h.statusRow(), "Ctrl+A closes") })
+	h.press("\x00")
+	time.Sleep(200 * time.Millisecond)
+	if !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") {
+		t.Fatal("the old key still closes the overlay")
+	}
+	h.press("\x01")
+	h.waitFor("the new key to close the overlay", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	if !strings.Contains(h.statusRow(), "nothing to review") {
+		t.Fatalf("status row: %q", h.statusRow())
+	}
+	h.press("\x01")
+	h.waitFor("the new key to open the overlay", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+}
+
+func TestStatusLineNamesTheConfiguredKey(t *testing.T) {
+	key, _ := ParseKey("ctrl-o")
+	h := newHarnessKey(t, true, 50*time.Millisecond, `stty -echo; while IFS= read -r l; do eval "$l"; done`, key)
+	h.pending.Store(2)
+	h.waitFor("the status line", func() bool { return strings.Contains(h.statusRow(), "Ctrl+O to review") })
+}
+
+func TestKeyNamesAreAllValid(t *testing.T) {
+	names := KeyNames()
+	if names[0] != "ctrl-space" {
+		t.Fatalf("first key %q", names[0])
+	}
+	for _, n := range names {
+		k, err := ParseKey(n)
+		if err != nil {
+			t.Errorf("%s: %v", n, err)
+		}
+		if k.Name != DisplayName(n) {
+			t.Errorf("%s: name %q", n, k.Name)
+		}
+	}
+	for n, want := range map[string]string{"ctrl-space": "Ctrl+Space", "ctrl-a": "Ctrl+A", `ctrl-\`: `Ctrl+\`, "ctrl-_": "Ctrl+_"} {
+		if got := DisplayName(n); got != want {
+			t.Errorf("%s: %q want %q", n, got, want)
+		}
+	}
+	if len(names) != len(validMonitorKeys(t)) {
+		t.Errorf("KeyNames lists %d keys, the security tests cover %d", len(names), len(validMonitorKeys(t)))
 	}
 }

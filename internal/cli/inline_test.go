@@ -10,6 +10,7 @@ import (
 
 	"hsh/internal/config"
 	"hsh/internal/monitordb"
+	"hsh/internal/settings"
 	"hsh/internal/state"
 )
 
@@ -160,5 +161,46 @@ func TestCtrlCClosesTheMonitorOverlayInsteadOfInterruptingTheSession(t *testing.
 	}
 	if _, ok := cmd().(tea.QuitMsg); !ok {
 		t.Fatal("Ctrl+C did not quit the overlay model")
+	}
+}
+
+func TestOverlayOpensThePaletteWhenNothingNeedsReview(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	src := &sessionDenials{dbPath: filepath.Join(dir, "monitor.db"), session: "s1", configKey: "ctrl-b"}
+	defer src.Close()
+	model := src.Overlay(100, 30)
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	view := model.View()
+	for _, want := range []string{"Proxy: review denied requests", "Global Settings: change monitor key", "current: Ctrl+B"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in\n%s", want, view)
+		}
+	}
+	if err := settings.SetMonitorKey(settings.Path(), "ctrl-o"); err != nil {
+		t.Fatal(err)
+	}
+	if view := src.Overlay(100, 30).View(); !strings.Contains(view, "current: Ctrl+O") {
+		t.Errorf("the global setting does not override the config key:\n%s", view)
+	}
+}
+
+func TestEffectiveMonitorKey(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if k, warn := effectiveMonitorKey("ctrl-b"); k != "ctrl-b" || warn != "" {
+		t.Fatalf("no settings: %q %q", k, warn)
+	}
+	if err := settings.SetMonitorKey(settings.Path(), "ctrl-o"); err != nil {
+		t.Fatal(err)
+	}
+	if k, _ := effectiveMonitorKey("ctrl-b"); k != "ctrl-o" {
+		t.Fatalf("the global setting lost: %q", k)
+	}
+	if err := os.WriteFile(settings.Path(), []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if k, warn := effectiveMonitorKey("ctrl-b"); k != "ctrl-b" || !strings.Contains(warn, "ignoring global settings") {
+		t.Fatalf("broken settings: %q %q", k, warn)
 	}
 }

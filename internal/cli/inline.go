@@ -19,8 +19,9 @@ import (
 	"hsh/internal/config"
 	"hsh/internal/monitordb"
 	"hsh/internal/relay"
+	"hsh/internal/settings"
 	"hsh/internal/state"
-	"hsh/internal/tui/proxywatch"
+	"hsh/internal/tui/palette"
 	"hsh/internal/vt"
 )
 
@@ -48,16 +49,32 @@ func newInlineMonitor(cfg *config.Config, session, dbPath, configPath string, in
 	case !vt.Available():
 		return nil, "hsh: built without GOEXPERIMENT=simd; the inline proxy review (status line and Ctrl+Space dialog) is disabled"
 	}
-	if _, err := relay.ParseKey(cfg.Monitor.Key); err != nil {
+	name, warn := effectiveMonitorKey(cfg.Monitor.Key)
+	if warn != "" {
+		fmt.Fprintln(os.Stderr, warn)
+	}
+	if _, err := relay.ParseKey(name); err != nil {
 		return nil, "hsh: " + err.Error() + "; the inline proxy review is disabled"
 	}
 	return &inlineMonitor{session: session, dbPath: dbPath, configPath: configPath, monitor: cfg.Monitor}, ""
 }
 
+func effectiveMonitorKey(configKey string) (string, string) {
+	s, err := settings.Load(settings.Path())
+	if err != nil {
+		return configKey, "hsh: ignoring global settings: " + err.Error()
+	}
+	if s.MonitorKey != "" {
+		return s.MonitorKey, ""
+	}
+	return configKey, ""
+}
+
 type sessionDenials struct {
-	dbPath  string
-	session string
-	cfgPath string
+	dbPath    string
+	session   string
+	cfgPath   string
+	configKey string
 
 	mu sync.Mutex
 	db *sql.DB
@@ -124,7 +141,11 @@ func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	if err != nil {
 		return errorModel{err: err}
 	}
-	return proxywatch.New(db, filter, pending, ignored, false)
+	name, _ := effectiveMonitorKey(s.configKey)
+	return palette.New(palette.Options{
+		DB: db, Filter: filter, Pending: pending, Ignored: ignored,
+		SettingsPath: settings.Path(), MonitorKey: name,
+	})
 }
 
 type errorModel struct{ err error }
@@ -146,11 +167,12 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	if err != nil {
 		return attachContainer(name, flags, running, nil)
 	}
-	key, err := relay.ParseKey(im.monitor.Key)
+	keyName, _ := effectiveMonitorKey(im.monitor.Key)
+	key, err := relay.ParseKey(keyName)
 	if err != nil {
 		return 0, err
 	}
-	source := &sessionDenials{dbPath: im.dbPath, session: im.session, cfgPath: im.configPath}
+	source := &sessionDenials{dbPath: im.dbPath, session: im.session, cfgPath: im.configPath, configKey: im.monitor.Key}
 	defer source.Close()
 
 	master, slave, err := pty.Open()

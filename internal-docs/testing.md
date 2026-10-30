@@ -118,7 +118,8 @@ proxy, the monitor database, and the example image:
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,
   space+enter adds the host to the session config, `q` closes and delivers
-  the held output, and `monitor.enabled=false` attaches directly. `internal/relay` has Go tests for the pause/restore
+  the held output, with nothing pending Ctrl+Space opens the command palette
+  and its "add new allowlist item" command updates the session config, and `monitor.enabled=false` attaches directly. `internal/relay` has Go tests for the pause/restore
   equivalence (the user's terminal, a second emulator fed only the
   relay's output, equals the relay's emulator), the status row under
   scroll, `clear`, the alternate screen and scroll-region resets, a

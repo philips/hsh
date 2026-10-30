@@ -402,7 +402,7 @@ The host-side commands work with the database:
 hsh proxy denied [--session ID] [--workspace PATH] [--watch]   list the queue
 hsh proxy allow --all --session ID [--watch]                   allow every pending host
 hsh proxy allow --session ID https://example.com [--watch]    allow one host
-hsh monitor [--session ID] [--workspace PATH] [--all]         interactive review (TUI)
+hsh monitor [--session ID] [--workspace PATH] [--all]         command palette (TUI)
 ```
 
 `proxy denied` prints pending rows (`allowed = 0`) as a table (session
@@ -741,13 +741,17 @@ sessions per workspace.
   review screen closes. The pty is one row shorter than the terminal and the
   terminal's scroll region excludes the last row; the relay rewrites a
   child's scroll-region resets (`ESC[r`) to stay inside it and repaints the
-  row after `clear` or alternate-screen switches. The review screen is the
-  `hsh monitor` bubbletea model (`internal/tui/proxywatch`) filtered to the
-  session; the relay drives it directly (key parsing, running its commands,
+  row after `clear` or alternate-screen switches. The monitor is the
+  `hsh monitor` command palette (`internal/tui/palette`, which embeds the
+  review list `internal/tui/proxywatch`) filtered to the session; the relay drives it directly (key parsing, running its commands,
   drawing its `View()` over every row) instead of starting a second
   program, so no terminal modes change. Opening it pauses the session by
   not reading the pty. Denial data comes from `monitor.db` and approvals use
-  the same code as `hsh monitor`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
+  the same code as `hsh monitor`. Changing the monitor key in the palette
+  returns a `relay.KeyChange` message from its command; the relay switches
+  the key it matches on and forwards the message to the palette. A second
+  press of the monitor key while the monitor is open closes it and writes
+  that key's bytes to the pty. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
   session is stripped and only triggers an immediate poll of that queue.
   On `--resume` the relay briefly changes the pty width by one column and
   back so the shell repaints. See [config.md](config.md#inline-proxy-review)

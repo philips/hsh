@@ -15,7 +15,6 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -240,20 +239,7 @@ func (p *Proxy) secretsFor(host string) []config.ResolvedSecret {
 }
 
 func HostMatches(list []string, host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	for _, entry := range list {
-		e := strings.ToLower(strings.TrimSuffix(entry, "."))
-		if e == host {
-			return true
-		}
-		if strings.HasPrefix(e, "*.") {
-			suffix := e[1:]
-			if strings.HasSuffix(host, suffix) && len(host) > len(suffix) {
-				return true
-			}
-		}
-	}
-	return false
+	return config.HostMatches(list, host)
 }
 
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {

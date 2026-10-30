@@ -5,13 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -44,25 +41,6 @@ func proxyCommand() *ff.Command {
 
 func hostURL(h string) string {
 	return "https://" + h
-}
-
-func hostFromRef(ref string) string {
-	s := ref
-	if i := strings.Index(s, "://"); i >= 0 {
-		if u, err := url.Parse(s); err == nil && u.Hostname() != "" {
-			return u.Hostname()
-		}
-		s = s[i+3:]
-	}
-	if i := strings.Index(s, "/"); i >= 0 {
-		s = s[:i]
-	}
-	if i := strings.LastIndex(s, ":"); i >= 0 && !strings.Contains(s, "]") {
-		if _, err := strconv.Atoi(s[i+1:]); err == nil {
-			s = s[:i]
-		}
-	}
-	return s
 }
 
 func sessionConfigPath(session string) (string, error) {
@@ -232,7 +210,7 @@ func proxyAllowCommand() *ff.Command {
 			defer watchSessions(monitordb.Filter{Session: session})()
 		}
 		if !all {
-			host := hostFromRef(args[0])
+			host := config.HostFromRef(args[0])
 			if host == "" {
 				return fmt.Errorf("could not extract a host from %q", args[0])
 			}
@@ -245,7 +223,7 @@ func proxyAllowCommand() *ff.Command {
 		}
 		var onlyHost string
 		if !all {
-			onlyHost = hostFromRef(args[0])
+			onlyHost = config.HostFromRef(args[0])
 		}
 		approved := map[string]bool{}
 		approve := func() error {

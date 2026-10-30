@@ -110,6 +110,14 @@ func New(db *sql.DB, filter monitordb.Filter, pending, ignored []monitordb.Denie
 	return m
 }
 
+func (m Model) Filtering() bool {
+	return m.filtering
+}
+
+func (m Model) PendingCount() int {
+	return len(m.pendingRows)
+}
+
 func (m Model) allRows() []monitordb.DeniedHost {
 	var rows []monitordb.DeniedHost
 	rows = append(rows, m.pendingRows...)

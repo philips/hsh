@@ -93,6 +93,10 @@ func (r *Relay) handleMsgLocked(msg tea.Msg, gen int) {
 	case nil:
 	case tea.QuitMsg:
 		r.closeReviewLocked()
+	case KeyChange:
+		r.cfg.Key = m.Key
+		r.dirty = true
+		r.updateOverlayLocked(msg)
 	case tea.BatchMsg:
 		for _, c := range m {
 			r.runCmdLocked(c, gen)
@@ -160,7 +164,7 @@ func (r *Relay) statusLineLocked() string {
 	switch {
 	case r.review.open:
 		sgr = sgrRed
-		text = " hsh | REVIEW | same keys as `hsh monitor` | q or Esc closes"
+		text = " hsh | MONITOR | Esc goes back | " + r.keyName() + " closes"
 	default:
 		sgr = sgrGreen
 		if r.pending > 0 {
@@ -174,12 +178,19 @@ func (r *Relay) statusLineLocked() string {
 		case n == 0:
 			text = " hsh | " + name + " | proxy: nothing to review"
 		case n == 1:
-			text = " hsh | " + name + " | * 1 proxy request needs review" + heldNote + " | Ctrl+Space to review"
+			text = " hsh | " + name + " | * 1 proxy request needs review" + heldNote + " | " + r.keyName() + " to review"
 		default:
-			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review%s | Ctrl+Space to review", name, n, heldNote)
+			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review%s | %s to review", name, n, heldNote, r.keyName())
 		}
 	}
 	return sgr + padTo(text, r.cols) + "\x1b[0m"
+}
+
+func (r *Relay) keyName() string {
+	if r.cfg.Key.Name == "" {
+		return "Ctrl+Space"
+	}
+	return r.cfg.Key.Name
 }
 
 func (r *Relay) pasteModeLocked() string {

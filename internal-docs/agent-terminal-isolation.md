@@ -71,8 +71,9 @@ the color, and the pause are all yours.
 
 ## Changing the key
 
-`monitor.key` (see [config.md](config.md#inline-proxy-review)) can move the
-trigger to any Ctrl key. The isolation holds for every valid key, not just
+`monitor.key` or the global `monitor_key` setting (see
+[config.md](config.md#the-monitor)) can move the trigger to any Ctrl key.
+The palette changes the key only from keystrokes the user typed into it. The isolation holds for every valid key, not just
 the default Ctrl+Space, and the tests cover the whole valid set.
 
 ## For developers

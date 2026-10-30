@@ -372,21 +372,20 @@ agent cannot trigger or forge any of it itself
 - the bottom terminal row is a status line: green with `proxy: nothing to
   review`, **blue** with `* N proxy requests need review | Ctrl+Space to
   review` (plus `(M held)` when requests are waiting on you) as the proxy
-  records denials for the session, and red while the review screen is open
-  (`"status_line": false` removes the reserved row)
-- `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`,
-  `ctrl-^`, `ctrl-_`) turns the line red and takes over the whole screen with
-  the same view and keys as `hsh monitor`, scoped to this session: up/down
-  select, space selects, enter approves the selected hosts (adding them to
-  the session config's `network.allow`), `i` ignores, `a`/`n` select all or
-  none, `t` toggles ignored hosts, `/` filters, `r` refreshes, `q` or Esc
-  closes (as does the review key again)
-- pressing the review key twice in a row sends the key itself to the
+  records denials for the session, and red while the monitor is open
+  (`"status_line": false` removes the reserved row). The line names the
+  configured key
+- the monitor key turns the line red and takes over the whole screen with
+  the [`hsh monitor`](#the-monitor) command palette, scoped to this session.
+  When the session has proxy requests waiting for review it opens straight
+  into the review list instead. The monitor key again closes it from any
+  screen
+- pressing the monitor key twice in a row sends the key itself to the
   program in the session, as tmux does with its prefix: the first press
-  opens the review screen, the second closes it and forwards the key
-  (in the encoding the terminal sent it). Choose another `monitor.key` if a
-  program you use needs that key often
-- while the review screen is up `hsh run` stops reading the session's output,
+  opens the monitor, the second closes it and forwards the key (in the
+  encoding the terminal sent it). Choose another key if a program you use
+  needs that key often
+- while the monitor is up `hsh run` stops reading the session's output,
   so the container blocks in `write()` instead of printing; closing repaints
   the session screen from the emulator and delivers the held output with
   nothing lost
@@ -397,6 +396,48 @@ agent cannot trigger or forge any of it itself
 Binaries built without `GOEXPERIMENT=simd` have no terminal emulator
 (`hsh version` says so) and attach directly. The review list comes from the
 proxy's monitor database, never from what the session prints.
+
+## The monitor
+
+`hsh monitor` (and the monitor key inside a session) opens a type-ahead
+command palette. Typing filters the commands fuzzily, up/down (or
+Ctrl+P/Ctrl+N, Tab/Shift+Tab) move, Enter runs the selected command, Esc
+closes. The commands:
+
+- **Proxy: review denied requests** — the review list: up/down move, space
+  selects, enter approves the selected hosts (adding them to the session
+  config's `network.allow`), `i` ignores, `a`/`n` select all or none, `t`
+  toggles ignored hosts, `w` toggles holding, `/` filters, `r` refreshes,
+  Esc goes back to the palette, `q` closes the monitor
+- **Proxy: add new allowlist item** — type `example.com`, `*.example.com`,
+  or a URL (reduced to its host) and press Enter. It is added to the
+  session config's `network.allow` and any pending denials it matches are
+  approved. Inside a session (or with `hsh monitor --session ID`) it goes
+  to that session; otherwise a fuzzy session picker (id and workspace)
+  asks which one
+- **Global Settings: change monitor key** — pick any valid key
+  (`ctrl-space`, `ctrl-a`..`ctrl-z` except Backspace, Tab, and Enter,
+  `ctrl-\`, `ctrl-^`, `ctrl-_`). It is saved in the global settings file
+  and, when changed from inside a session, takes effect there at once;
+  other attached sessions keep their key until they are re-attached
+
+`hsh monitor` opens straight into the review list when something is
+pending, like the in-session monitor. Ctrl+C closes it from any screen.
+
+### Global settings
+
+`$XDG_CONFIG_HOME/hsh/settings.json` (default `~/.config/hsh/settings.json`)
+holds user preferences that apply to every session, written by the monitor:
+
+```json
+{
+  "monitor_key": "ctrl-a"
+}
+```
+
+`monitor_key`, when set, overrides `monitor.key` from the session config.
+Unknown fields are an error; an unreadable file is ignored with a warning
+and the config's key is used.
 
 ## Managing the allowlist
 
@@ -409,7 +450,7 @@ Two subcommands manage it:
 hsh proxy denied [--session ID] [--watch]   # list the review queue
 hsh proxy allow --all --session ID          # allow a session's pending hosts
 hsh proxy allow --session ID https://h      # allow one host
-hsh monitor                                 # interactive review (TUI)
+hsh monitor                                 # command palette (TUI)
 ```
 
 `hsh proxy allow` rewrites the session's config copy as canonical JSON (keys

@@ -9,6 +9,32 @@ import (
 type Key struct {
 	Byte byte
 	Code rune
+	Name string
+}
+
+type KeyChange struct {
+	Key Key
+}
+
+func KeyNames() []string {
+	names := []string{"ctrl-space"}
+	for c := 'a'; c <= 'z'; c++ {
+		if _, err := ParseKey("ctrl-" + string(c)); err == nil {
+			names = append(names, "ctrl-"+string(c))
+		}
+	}
+	return append(names, `ctrl-\`, "ctrl-^", "ctrl-_")
+}
+
+func DisplayName(name string) string {
+	rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(name)), "ctrl-")
+	if !ok {
+		return name
+	}
+	if rest == "space" || rest == "@" {
+		return "Ctrl+Space"
+	}
+	return "Ctrl+" + strings.ToUpper(rest)
 }
 
 const keyHelp = "want ctrl-space, ctrl-a..ctrl-z, ctrl-\\, ctrl-^ or ctrl-_"
@@ -30,6 +56,7 @@ func ParseKey(name string) (Key, error) {
 	case 0x08, 0x09, 0x0a, 0x0d:
 		return Key{}, fmt.Errorf("monitor key %q is Backspace, Tab, or Enter and cannot be used", name)
 	}
+	k.Name = DisplayName(n)
 	return k, nil
 }
 
