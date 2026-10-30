@@ -1,3 +1,11 @@
+## First run experience from README
+
+Embed a little parser that will ask the user if they want to read examples about Pi+Mistral, OpenAI Codex or Claude.
+
+Keep these tutorials in the README with Collapsed sections: https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/organizing-information-with-collapsed-sections
+
+Have a tutorial subcommand that is launched after install.sh finishes that uses the README information from <!--- install.sh START --> to <!--- install.sh END -->.
+
 ## fuzzy matching for rm
 
 typing the full session number is no fun

@@ -14,16 +14,13 @@ The goals of `hsh` isolation include:
 
 - Single install binary
 - Rootless Linux containers
+- Optional gVisor support for VM-like isolation
 - Dynamic egress network isolation
+- Simple OCI (docker) agent packaging
 
 The goal is to make it easy to hack on software alongside an agent harness like
 `pi`, `codex`, `claude-code`, etc while protecting you from moderate dangers of
-agents like credential exfiltration to the open internet OR local filesystem
-damage.
-
-If you are dealing with a potentially persistent attacker or hostile inference
-provider consider additional protection like a virtual machine (which may be
-supported via libkrun later).
+agent credential exfiltration to the open internet OR local filesystem damage.
 
 Install `hsh`
 
@@ -37,13 +34,12 @@ Create a workspace for your agent to work under.
 This will be mounted to `/workspace` in container.
 
 ```
-mkdir agent-pen
-cd agent-pen
+mkdir my-project
+cd my-project
 ```
 
-Setup your mistral credentials (or openai/claude/etc).
-
-The egress proxy will inject the correct Authorization header.
+Setup your mistral.ai credentials and the egress proxy will inject the correct
+Authorization header.
 
 ```
 hsh secret add mistral-api-key
@@ -52,21 +48,18 @@ hsh secret add mistral-api-key
 Run pi and configure it to use mistral
 
 ```
-hsh run pi
-/login mistral
-<type foo or anything as the API key>
+hsh run pi .
 ```
 
-By default `hsh run pi` will have an allowlist egress network policy.
+`hsh run pi` will configure a egress network policy allowing the agent to
+connect to OpenAI, Anthropic, and Mistral LLM domains. If the agent tries to
+access something else it will fail to connect.
 
-In a separate window run `hsh monitor`. This TUI enables you to filter and
-approve domain names quickly without editing JSON.
+For example, tell the agent to install golang. Then watch hsh's egress monitor
+by pressing Ctrl+<Space>.
 
-`monitor` views all hsh sessions on the host. Type `/` to filter.
-
-```
-hsh monitor
-```
+Press `a` to approve all of the requested hostnames and press enter to add them
+to this session's allowlist.
 
 Start vibing
 
