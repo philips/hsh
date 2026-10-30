@@ -71,6 +71,14 @@ Coupled with this we should probably
 
 Longerterm it would be awesome to get services to publish those policy files themselves. 
 
+## stop modifying config.json for every monitor add
+
+I think modifying the users config.json is dangerous because we might get schema drift if the user provides a config.json with fields unknown to the current version of hsh.
+
+Instead I would like to have a single `~/.local/state/hsh/session/<id>/session.db` with tables for secrets, network policy, etc.
+
+See plans/0036-session-db-policy.md (plan, awaiting review).
+
 ## Add a "report" network policy
 
 Users may want to monitor what their agent is doing for awhile. Add a report table to session.db.
