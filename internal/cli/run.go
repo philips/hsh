@@ -236,7 +236,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return sessionConfigError(sessionID, err)
 		}
 		if !podExists(podName) {
-			return fmt.Errorf("session %s has no pod (remove orphaned session state with: hsh gc)", sessionID)
+			return fmt.Errorf("session %s has no pod (remove orphaned session state with: hsh rm --garbage)", sessionID)
 		}
 		mounts, err = cfg.ParsedMounts(sessionDir)
 		if err != nil {
@@ -756,7 +756,7 @@ func sessionConfigError(sessionID string, err error) error {
 	case errors.As(err, &ve):
 		return fmt.Errorf("session %s: %w", sessionID, err)
 	}
-	return fmt.Errorf("session %s: %w (remove orphaned session state with: hsh gc)", sessionID, err)
+	return fmt.Errorf("session %s: %w (remove orphaned session state with: hsh rm --garbage)", sessionID, err)
 }
 
 func resolveImage(ref string, pull string) (string, error) {

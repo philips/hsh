@@ -238,18 +238,17 @@ print("PASS: Ctrl+] sent in the kitty keyboard encoding still detaches (the rela
 subprocess.run(["pkill", "-f", "hsh-reaper --pod " + session2], capture_output=True)
 time.sleep(0.5)
 if reaper_alive(session2):
-    fail("could not stop the reaper for the gc check")
+    fail("could not stop the reaper for the rm --exited check")
 subprocess.run(["podman", "stop", "-t", "1", ws2], capture_output=True)
 time.sleep(1)
 if "Shell exited" not in hsh_ls():
     fail("hsh ls does not show Shell exited: " + hsh_ls())
-gc = out(hsh, "gc")
-if "stopped session %s" % sid2 not in gc:
-    fail("gc did not stop the leftover session: " + gc)
+rmx = out(hsh, "rm", "--exited")
+if "removed %s" % session2 not in rmx:
+    fail("rm --exited did not remove the leftover session: " + rmx)
 if os.path.exists(secrets2):
-    fail("gc left secrets.json behind")
-print("PASS: with no reaper, hsh ls shows Shell exited and hsh gc stops the pod and scrubs secrets")
-out(hsh, "rm", "-f", session2)
+    fail("rm --exited left secrets.json behind")
+print("PASS: with no reaper, hsh ls shows Shell exited and hsh rm --exited removes the pod and its secrets")
 
 before = pods()
 pid, fd = spawn("run", "--rm", "--pull=never", image)

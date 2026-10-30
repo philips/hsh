@@ -68,7 +68,7 @@ func hostFromRef(ref string) string {
 func sessionConfigPath(session string) (string, error) {
 	p := filepath.Join(state.SessionDir(session), "config.json")
 	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("session %s has no config copy at %s (remove orphaned session state with: hsh gc)", session, p)
+		return "", fmt.Errorf("session %s has no config copy at %s (remove orphaned session state with: hsh rm --garbage)", session, p)
 	}
 	return p, nil
 }

@@ -360,7 +360,8 @@ workspace     file with the absolute path of the workspace
 - sessions do not share approved proxy configuration on purpose: one
   session's allowlist is that session's policy
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
-  every sandbox; `hsh gc` collects session state whose pod is gone
+  every sandbox; `hsh rm --exited` removes exited sandboxes; `hsh rm
+  --garbage` collects session state whose pod is gone
 
 ### Detach key
 

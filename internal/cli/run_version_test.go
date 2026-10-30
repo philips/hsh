@@ -21,7 +21,7 @@ func TestSessionConfigErrorHints(t *testing.T) {
 		t.Fatalf("missing: %q", got)
 	}
 	got = sessionConfigError("abc123", errors.New("boom")).Error()
-	if got != "session abc123: boom (remove orphaned session state with: hsh gc)" {
+	if got != "session abc123: boom (remove orphaned session state with: hsh rm --garbage)" {
 		t.Fatalf("other: %q", got)
 	}
 }

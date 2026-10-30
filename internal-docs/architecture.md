@@ -652,7 +652,10 @@ hsh ls -q --sort name                     # quiet, sorted
 hsh ls --workspace ~/repo                 # the sandbox for one workspace
 hsh rm 53bd3fc7e5ba                       # remove a leftover by session id (refuses if running)
 hsh rm -f hsh-53bd3fc7e5ba                # stop running containers, then remove
+hsh rm 53bd                               # a unique session id prefix is enough
 hsh rm ~/repo                             # remove via the workspace path
+hsh rm --exited                           # remove every exited session
+hsh rm --garbage                          # remove session state whose pod is gone
 hsh rm --all -f                           # full cleanup
 ```
 
@@ -660,9 +663,12 @@ hsh rm --all -f                           # full cleanup
 `-t/--time`, `-i/--ignore`, `-l/--latest`, `-a/--all`). A sandbox with
 running containers is refused without `--force`, exactly like
 `podman pod rm`. Removing a sandbox also removes its session state
-directory, and `rm --all` sweeps everything. `hsh gc` collects session
-state directories whose pod is already gone. Pods that are not hsh
-sandboxes are never touched.
+directory, and `rm --all` sweeps everything. `--exited` removes every
+exited sandbox (forcing the stop of a proxy left running after its shell
+exited), and `--garbage` removes session state directories whose pod is
+already gone. A SANDBOX argument may be the full pod name, a session id,
+or a unique prefix of one. Pods that are not hsh sandboxes are never
+touched.
 
 ## Sessions and workspaces
 
@@ -755,7 +761,7 @@ sessions per workspace.
 - `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
   client), or `Shell exited` (shell gone while the proxy still runs, which
-  `hsh gc` cleans up).
+  `hsh rm --exited` cleans up).
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
 - `hsh run --resume` re-enters the current workspace's session (or the
@@ -767,8 +773,9 @@ sessions per workspace.
   On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one.
 - `hsh rm` removes a session and its state; `rm --all` sweeps everything;
-  `hsh gc` collects session state whose pod is gone and stops pods whose
-  shell has exited.
+  `rm --exited` removes sessions that have exited, including those whose
+  shell exited under a running proxy; `rm --garbage` collects session
+  state whose pod is gone.
 - On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one; the proxy's
   listeners keep working across this.

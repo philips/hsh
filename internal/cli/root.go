@@ -83,7 +83,6 @@ func Root() *ff.Command {
 			forwardCommand(),
 			lsCommand(),
 			rmCommand(),
-			gcCommand(),
 			detachCommand(),
 			versionCommand(),
 			updateCommand(),

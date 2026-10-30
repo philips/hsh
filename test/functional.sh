@@ -351,12 +351,12 @@ pass "hsh run --resume <id> re-enters the chosen session"
 ORPHAN="deadsession01"
 mkdir -p "$XDG_STATE_HOME/hsh/sessions/$ORPHAN"
 echo '{}' >"$XDG_STATE_HOME/hsh/sessions/$ORPHAN/config.json"
-"$HSH" gc >"$TMP/gc.out" || fail "hsh gc failed"
-grep -q "removed session state $ORPHAN" "$TMP/gc.out" || fail "hsh gc did not collect the orphaned session state"
+"$HSH" rm --garbage >"$TMP/gc.out" || fail "hsh rm --garbage failed"
+grep -q "removed session state $ORPHAN" "$TMP/gc.out" || fail "hsh rm --garbage did not collect the orphaned session state"
 if [ -d "$XDG_STATE_HOME/hsh/sessions/$ORPHAN" ]; then
-	fail "hsh gc left the orphaned session state behind"
+	fail "hsh rm --garbage left the orphaned session state behind"
 fi
-pass "hsh gc collects session state whose pod is gone"
+pass "hsh rm --garbage collects session state whose pod is gone"
 
 rm_test_sessions
 RESUME_POD=""
@@ -870,7 +870,7 @@ EOF
 	podman build -q -t localhost/hsh-detach-test:latest -f "$TMP/detach.Containerfile" "$TMP" >/dev/null || fail "could not build the detach test image"
 	mkdir -p "$TMP/detachws"
 	python3 "$REPO/test/detach.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" || fail "the detach/attach driver failed"
-	pass "detach, attach, closed terminals, the reaper, and gc behave as planned"
+	pass "detach, attach, closed terminals, the reaper, and rm --garbage behave as planned"
 else
 	echo "SKIP: detach/attach checks (no python3 for the pty driver)"
 fi

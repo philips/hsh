@@ -130,3 +130,27 @@ func sweepSessionDirs() (int, error) {
 	}
 	return removed, nil
 }
+
+func collectGarbage() (int, error) {
+	base := filepath.Join(state.Dir(), "sessions")
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	removed := 0
+	for _, e := range entries {
+		id := e.Name()
+		if id == "" || podExists("hsh-"+id) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(base, id)); err != nil {
+			return removed, err
+		}
+		fmt.Printf("removed session state %s\n", id)
+		removed++
+	}
+	return removed, nil
+}

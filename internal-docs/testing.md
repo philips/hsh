@@ -30,7 +30,7 @@ proxy, the monitor database, and the example image:
   scrubbed; bare `--resume` re-enters the workspace's only session with
   state, proxy, and DNS intact; `--rm` runs remove themselves; a second
   session makes bare `--resume` list the ids; `--resume <id>` picks one;
-  `hsh gc` collects orphaned session state
+  `hsh rm --garbage` collects orphaned session state
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
 - **step 7**: `hsh monitor` refuses to run without a terminal, and the
   old subcommand names are gone
@@ -60,7 +60,7 @@ proxy, the monitor database, and the example image:
   nothing; `hsh run --resume` re-enters the same shell; closing the
   terminal detaches; the reaper scrubs secrets and stops the pod when a
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
-  and `hsh gc` cleans up; `hsh detach` force-detaches an attached
+  and `hsh rm --exited` removes it; `hsh detach` force-detaches an attached
   terminal; `--resume` refuses a session attached elsewhere and
   `--resume --take-over` takes it over; `--rm` sessions cannot detach
 - **step 19**: held requests — in an `allowlist` session with
