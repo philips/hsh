@@ -21,39 +21,66 @@ type inputParser struct {
 }
 
 func (ip *inputParser) feed(p []byte) []tea.KeyMsg {
+	msgs, _ := ip.feedTracked(p)
+	return msgs
+}
+
+func (ip *inputParser) feedTracked(p []byte) ([]tea.KeyMsg, []int) {
+	heldLen := len(ip.held)
 	data := append(append([]byte(nil), ip.held...), p...)
 	ip.held = nil
-	var out []tea.KeyMsg
-	for len(data) > 0 {
-		if ip.pasting {
-			j := bytes.Index(data, pasteEnd)
-			if j < 0 {
-				keep := partialSuffix(data, pasteEnd)
-				ip.paste = append(ip.paste, pasteRunes(data[:len(data)-keep])...)
-				ip.held = append([]byte(nil), data[len(data)-keep:]...)
-				return out
-			}
-			ip.paste = append(ip.paste, pasteRunes(data[:j])...)
-			out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: ip.paste, Paste: true})
-			ip.paste, ip.pasting = nil, false
-			data = data[j+len(pasteEnd):]
-			continue
+	var msgs []tea.KeyMsg
+	var ends []int
+	off := func(pos int) int {
+		if pos < heldLen {
+			return 0
 		}
-		j := bytes.Index(data, pasteStart)
+		return pos - heldLen
+	}
+	pos := 0
+	for pos < len(data) {
+		if ip.pasting {
+			j := bytes.Index(data[pos:], pasteEnd)
+			if j < 0 {
+				keep := partialSuffix(data[pos:], pasteEnd)
+				ip.paste = append(ip.paste, pasteRunes(data[pos:len(data)-keep])...)
+				ip.held = append([]byte(nil), data[len(data)-keep:]...)
+				return msgs, ends
+			}
+			ip.paste = append(ip.paste, pasteRunes(data[pos:pos+j])...)
+			msgs = append(msgs, tea.KeyMsg{Type: tea.KeyRunes, Runes: ip.paste, Paste: true})
+			pos += j + len(pasteEnd)
+			ends = append(ends, off(pos))
+				ip.paste, ip.pasting = nil, false
+				continue
+			}
+		j := bytes.Index(data[pos:], pasteStart)
 		if j < 0 {
-			keep := partialSuffix(data, pasteStart)
-			if n := partialRune(data[:len(data)-keep]); n > keep {
+			keep := partialSuffix(data[pos:], pasteStart)
+			if n := partialRune(data[pos : len(data)-keep]); n > keep {
 				keep = n
 			}
-			out = append(out, parseInput(data[:len(data)-keep])...)
+			for _, u := range parseUnits(data[pos : len(data)-keep]) {
+				pos += u.width
+				if u.msg != nil {
+					msgs = append(msgs, *u.msg)
+					ends = append(ends, off(pos))
+				}
+			}
 			ip.held = append([]byte(nil), data[len(data)-keep:]...)
-			return out
+			return msgs, ends
 		}
-		out = append(out, parseInput(data[:j])...)
+		for _, u := range parseUnits(data[pos : pos+j]) {
+			pos += u.width
+			if u.msg != nil {
+					msgs = append(msgs, *u.msg)
+					ends = append(ends, off(pos))
+			}
+		}
+		pos += len(pasteStart)
 		ip.pasting = true
-		data = data[j+len(pasteStart):]
 	}
-	return out
+	return msgs, ends
 }
 
 func partialRune(data []byte) int {
@@ -86,8 +113,13 @@ func pasteRunes(b []byte) []rune {
 	return []rune(text)
 }
 
-func parseInput(p []byte) []tea.KeyMsg {
-	var out []tea.KeyMsg
+type inputUnit struct {
+	msg   *tea.KeyMsg
+	width int
+}
+
+func parseUnits(p []byte) []inputUnit {
+	var out []inputUnit
 	for i := 0; i < len(p); {
 		b := p[i]
 		switch {
@@ -96,33 +128,48 @@ func parseInput(p []byte) []tea.KeyMsg {
 			if width == 0 {
 				width = 1
 			}
-			if msg != nil {
-				out = append(out, *msg)
-			}
+			out = append(out, inputUnit{msg, width})
 			i += width
 		case b == '\r' || b == '\n':
-			out = append(out, tea.KeyMsg{Type: tea.KeyEnter})
+			m := tea.KeyMsg{Type: tea.KeyEnter}
+			out = append(out, inputUnit{&m, 1})
 			i++
 		case b == '\t':
-			out = append(out, tea.KeyMsg{Type: tea.KeyTab})
+			m := tea.KeyMsg{Type: tea.KeyTab}
+			out = append(out, inputUnit{&m, 1})
 			i++
 		case b == 0x7f || b == 0x08:
-			out = append(out, tea.KeyMsg{Type: tea.KeyBackspace})
+			m := tea.KeyMsg{Type: tea.KeyBackspace}
+			out = append(out, inputUnit{&m, 1})
 			i++
 		case b == ' ':
-			out = append(out, tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}})
+			m := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+			out = append(out, inputUnit{&m, 1})
 			i++
 		case b < 0x20:
-			out = append(out, tea.KeyMsg{Type: tea.KeyType(b)})
+			m := tea.KeyMsg{Type: tea.KeyType(b)}
+			out = append(out, inputUnit{&m, 1})
 			i++
 		default:
 			r, size := utf8.DecodeRune(p[i:])
 			if r == utf8.RuneError && size <= 1 {
+				out = append(out, inputUnit{nil, 1})
 				i++
 				continue
 			}
-			out = append(out, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+			out = append(out, inputUnit{&m, size})
 			i += size
+		}
+	}
+	return out
+}
+
+func parseInput(p []byte) []tea.KeyMsg {
+	var out []tea.KeyMsg
+	for _, u := range parseUnits(p) {
+		if u.msg != nil {
+			out = append(out, *u.msg)
 		}
 	}
 	return out

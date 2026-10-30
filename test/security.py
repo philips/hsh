@@ -119,8 +119,10 @@ os.write(fd, b"\x1b[<0;10;5M\x1b[M !!\x1b[32;5:3u\x1b[32;1u\x1b[32u\x1b[99;5u\x1
 os.write(fd, b"\x1b[200~\x1b[201~")
 absent(fd, "denied hosts awaiting review", "a terminal reply opened the monitor view")
 absent(fd, "REVIEW", "a terminal reply painted the review status line")
-expect(fd, "nothing to review", 10)
-print("PASS: agent-provoked terminal queries and replies never open the monitor")
+mark = len(transcript)
+type_line(fd, "echo alive-$((6*7))", "alive-42")
+expect(fd, "nothing to review", 10, since=mark)
+print("PASS: agent-provoked terminal queries and replies never open the monitor, and the session repaints an untainted status line")
 
 # 3. a pending request exists; the agent keeps spraying queries and the
 #    split-write scroll-region smuggle aimed at the status row.
@@ -137,8 +139,10 @@ if "1 proxy request needs review" not in transcript[mark:]:
 print("PASS: with a request pending, agent output cannot open the monitor or take out the status line")
 
 # 4. the genuine key still opens the dialog; the isolation did not break
-#    the feature.
+#    the feature. Widen the terminal first: at 80 columns the URL column
+#    truncates the host.
 mark = len(transcript)
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
 os.write(fd, b"\x00")
 expect(fd, "denied hosts awaiting review", 10, since=mark)
 expect(fd, "https://blocked.example.test", 10, since=mark)

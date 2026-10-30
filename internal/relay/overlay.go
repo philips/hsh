@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -60,7 +61,15 @@ func (r *Relay) updateOverlayLocked(msg tea.Msg) {
 	}
 	model, cmd := r.review.model.Update(msg)
 	r.review.model = model
+	if isQuitCmd(cmd) {
+		r.closeReviewLocked()
+		return
+	}
 	r.runCmdLocked(cmd, r.review.gen)
+}
+
+func isQuitCmd(cmd tea.Cmd) bool {
+	return cmd != nil && reflect.ValueOf(cmd).Pointer() == reflect.ValueOf(tea.Quit).Pointer()
 }
 
 func (r *Relay) runCmdLocked(cmd tea.Cmd, gen int) {
@@ -94,32 +103,42 @@ func (r *Relay) handleMsgLocked(msg tea.Msg, gen int) {
 }
 
 func (r *Relay) reviewInputLocked(p []byte) []byte {
-	for len(p) > 0 && r.review.open {
-		idx, width := r.cfg.Key.find(p)
-		chunk := p
+	rest := p
+	for r.review.open && len(rest) > 0 {
+		idx, width := r.cfg.Key.find(rest)
+		chunk := rest
 		if idx >= 0 {
-			chunk = p[:idx]
+			chunk = rest[:idx]
 		}
-		for _, km := range r.review.parser.feed(chunk) {
+		msgs, ends := r.review.parser.feedTracked(chunk)
+		lastEnd := 0
+		for i, km := range msgs {
 			if !r.review.open {
 				break
 			}
 			r.updateOverlayLocked(km)
+			lastEnd = ends[i]
 		}
-		if idx < 0 {
-			p = nil
+		if !r.review.open {
+			out := append([]byte(nil), chunk[lastEnd:]...)
+			if idx >= 0 {
+				out = append(out, rest[idx:]...)
+			}
+			rest = out
 			break
 		}
-		p = p[idx+width:]
-		if r.review.open {
-			r.closeReviewLocked()
+		if idx < 0 {
+			rest = nil
+			break
 		}
+		rest = rest[idx+width:]
+		r.closeReviewLocked()
 	}
 	r.paintLocked()
 	if r.review.open {
 		return nil
 	}
-	return p
+	return rest
 }
 
 func padTo(text string, width int) string {
