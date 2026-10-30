@@ -6,22 +6,6 @@ Keep these tutorials in the README with Collapsed sections: https://docs.github.
 
 Have a tutorial subcommand that is launched after install.sh finishes that uses the README information from <!--- install.sh START --> to <!--- install.sh END -->.
 
-## fuzzy matching for rm
-
-typing the full session number is no fun
-
-## hsh rm --exited
-
-remove all exited sessions
-
-## hsh rm --garbage
-
-Lets remove `hsh gc` as it is a small problem 
-
-## hsh run --session EXITED
-
-Is it possible to restart an exited session
-
 ## hsh resume subcommand
 
 remove `hsh run --resume` as that is a confusing use case
@@ -34,7 +18,15 @@ hsh run pi .
 hsh resume .
 ```
 
-Need to consider how resume might interact with gVisor 
+Need to consider how resume might interact with gVisor with checkpoint/restore. I think for that use case we can have a workflow like
+
+```
+hsh run pi .
+ctrl+space select "suspend" OR hsh suspend --session
+hsh 
+```
+
+## 
 
 ## networking modes
 
@@ -107,10 +99,6 @@ the status bar flickers with dns install and other commands with a spinner. anno
 
 - do the full emulator with libghostty (gah!)
 - only pop-up the status bar when there is an approval needed
-
-## Tell agents about the network restrictions
-
-See plans/0028-network-notice.md (plan, awaiting review).
 
 ## Migrate forwarding to `hsh-sshd` and drop the relay
 
