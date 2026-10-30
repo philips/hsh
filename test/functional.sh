@@ -918,9 +918,10 @@ start_attended_loop() {
 		for _ in $(seq 1 3000); do
 			kill -0 "$out_pid" 2>/dev/null || exit 0
 			for d in "$XDG_STATE_HOME"/hsh/sessions/*/; do
+				[ -d "$d" ] || continue
 				id="$(basename "$d")"
 				case " $before " in *" $id "*) continue ;; esac
-				touch "$d/attended"
+				touch "$d/attended" 2>/dev/null || true
 			done
 			sleep 0.2
 		done
