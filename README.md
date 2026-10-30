@@ -68,10 +68,11 @@ Start vibing
 
 ## Additional Documentation
 
-- [Sessions](Documentation/sessions.md]
-- [Inspiration](Documentation/inspiration.md]
+**User Docs**
+- [Sessions](Documentation/sessions.md)
 
+**Meta Docs**
+- [Inspiration](Documentation/inspiration.md)
 
-## TODO
-
-See [TODO.md](TODO.md)
+**Tracking Docs**
+- [TODO.md](TODO.md)
