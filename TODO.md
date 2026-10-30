@@ -1,12 +1,8 @@
-# default to gvisor
-
-lets default to gvisor and let users specify `hsh run --runtime container` 
-
 ## Migrate forwarding to `hsh-sshd` and drop the relay
 
 Serve `hsh forward`, `--forward`, `ssh hsh-<id>`, and `hsh oauth callback` from `/hsh-sshd` in both runtimes. In the default runtime it enters the shell's network namespace by setns plus re-exec. Remove the in-sandbox relay (`10.77.0.2:7788`) and `/hsh-workspace-inner --ssh-stdio`/`--ssh-session`/`--callback-relay`/`--oauth-deliver`. Sessions created before the change get a recreate message. See plans/0034-sshd-everywhere.md.
 
-## add monitor subcommand for forward
+## add monitor subcommand for starting/stopping forward
 
 ## add monitor subcommand for oauth callback
 
