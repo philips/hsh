@@ -61,7 +61,7 @@ func findRunsc() (string, error) {
 	}
 	p, err := exec.LookPath("runsc")
 	if err != nil {
-		return "", fmt.Errorf("--runtime gvisor needs runsc and this hsh build does not embed it: install it from https://gvisor.dev/docs/user_guide/install/#install-latest (keep gvisor-bin/ next to runsc) and put it on PATH, or set HSH_RUNSC")
+		return "", fmt.Errorf("--runtime gvisor needs runsc and this hsh build does not embed it: build with `bash internal/gvisor/payload.sh && go build -tags gvisor_embed .`, or install runsc from https://gvisor.dev/docs/user_guide/install/#install-latest (keep gvisor-bin/ next to runsc) and put it on PATH or set HSH_RUNSC")
 	}
 	return filepath.Abs(p)
 }

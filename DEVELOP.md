@@ -12,6 +12,19 @@ GOEXPERIMENT=simd CGO_ENABLED=0 go build -o hsh .
 Without `GOEXPERIMENT=simd` everything still builds and tests pass, but the
 emulator (`internal/vt`) is compiled out and its tests are skipped.
 
+To embed gVisor's runsc for `hsh run --runtime gvisor` (as release builds do),
+generate the payload for your architecture once, then build with the
+`gvisor_embed` tag:
+
+```
+bash internal/gvisor/payload.sh
+GOEXPERIMENT=simd CGO_ENABLED=0 go build -tags gvisor_embed -o hsh .
+```
+
+`hsh version` reports whether gVisor is embedded. Without the tag,
+`--runtime gvisor` uses `runsc` from `HSH_RUNSC` or `PATH`. See
+[docs/gvisor.md](docs/gvisor.md).
+
 Build the example pi container
 
 ```
