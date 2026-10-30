@@ -5,7 +5,7 @@
 syscalls are served by gVisor's userspace kernel, and its network is
 handed, as raw IP packets, to the egress proxy, which stays in its own
 ordinary container. The runtime is recorded in the session
-(`$XDG_STATE_HOME/hsh/sessions/<id>/runtime`) and `--resume` keeps it.
+(`$XDG_STATE_HOME/hsh/sessions/<id>/runtime`) and `hsh resume` keeps it.
 
 Status: prototype. It is opt-in and the default runtime is unchanged.
 
@@ -102,7 +102,7 @@ flowchart LR
   on the socket. `hsh run` removes a stale socket before starting the
   proxy and waits for the new one before starting the workspace, because
   runsc dials the socket once at sandbox start and fails if no one is
-  listening. Each workspace start (including `--resume`) is a new
+  listening. Each workspace start (including `hsh resume`) is a new
   connection; the proxy runs one TCP/IP stack per connection and drops
   it when the sandbox disconnects.
 - runsc copies the workspace container's network namespace (its single
@@ -116,7 +116,7 @@ flowchart LR
   (any address works, since every packet goes to the proxy), installs
   the session CA, and drops capabilities as in the default runtime.
 - `--overlay2=none` makes the container's root filesystem changes land in
-  podman's container layer, so they survive stop and `--resume`. Without
+  podman's container layer, so they survive stop and `hsh resume`. Without
   it runsc keeps them in a sandbox-private overlay that is discarded.
 - `--ignore-cgroups` is required for rootless runsc under podman, so
   gVisor sessions have no cgroup resource limits.

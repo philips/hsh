@@ -149,7 +149,7 @@ fi
 pass "api.mistral.ai added to the session's config copy (seed config untouched)"
 
 echo "== step 3: sandbox session — allowed endpoint, workspace mount, pi through the proxy"
-"$HSH" run --resume "$DB_SESSION" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
+"$HSH" resume "$DB_SESSION" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
 echo "--- curl to the now-allowed endpoint (intercepted, secret injected):"
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
@@ -278,13 +278,13 @@ pass "standalone proxy denies non-allowlisted hosts with 403"
 kill "$PROXY_PID" 2>/dev/null || true
 PROXY_PID=""
 
-echo "== step 5: sessions persist by default; --resume re-enters; idle pods are stopped"
+echo "== step 5: sessions persist by default; resume re-enters; idle pods are stopped"
 rm_test_sessions
-if (cd "$TMP/workspace" && "$HSH" run --resume >"$TMP/resume-none.out" 2>&1); then
-	fail "hsh run --resume with no session unexpectedly succeeded"
+if (cd "$TMP/workspace" && "$HSH" resume >"$TMP/resume-none.out" 2>&1); then
+	fail "hsh resume with no session unexpectedly succeeded"
 fi
-grep -q "no session to resume" "$TMP/resume-none.out" || fail "resume without sessions did not explain: $(cat "$TMP/resume-none.out")"
-pass "hsh run --resume with no session fails clearly"
+grep -q "no session for workspace" "$TMP/resume-none.out" || fail "resume without sessions did not explain: $(cat "$TMP/resume-none.out")"
+pass "hsh resume with no session fails clearly"
 
 cp "$TMP/config.hsh" "$TMP/workspace/config.hsh"
 (cd "$TMP/workspace" && "$HSH" run --config config.hsh) >"$TMP/resume1.out" 2>&1 <<'CMDS' || true
@@ -306,7 +306,7 @@ if [ -f "$XDG_STATE_HOME/hsh/sessions/$RESUME_SESSION/secrets.json" ]; then
 fi
 pass "idle sessions stop their pod and scrub secrets.json"
 
-(cd "$TMP/workspace" && "$HSH" run --resume) >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/workspace" && "$HSH" resume) >"$TMP/resume2.out" 2>&1 <<'CMDS' || true
 echo "--- marker from the previous launch (same container?):"
 cat /home/hsh/marker.txt
 echo "--- proxied request after re-entry:"
@@ -315,8 +315,8 @@ echo "--- DNS after re-entry:"
 getent hosts host.containers.internal | head -1
 exit
 CMDS
-grep -qx 'resume-marker' "$TMP/resume2.out" || fail "container state did not persist across --resume launches"
-pass "bare --resume enters the workspace's only session; state persisted"
+grep -qx 'resume-marker' "$TMP/resume2.out" || fail "container state did not persist across resume launches"
+pass "bare resume enters the workspace's only session; state persisted"
 grep -Eq '^code=200$' "$TMP/resume2.out" || fail "proxy not working after re-entry: $(cat "$TMP/resume2.out")"
 pass "proxy works after re-entry"
 grep -Eq '^[0-9a-fA-F:.]+[[:space:]]+host\.containers\.internal' "$TMP/resume2.out" || fail "DNS not working after re-entry"
@@ -334,19 +334,30 @@ pass "hsh run --rm removes its pod and state at exit"
 echo second > /home/hsh/second.txt
 exit
 CMDS
-if (cd "$TMP/workspace" && "$HSH" run --resume) >"$TMP/resume-multi.out" 2>&1; then
+if (cd "$TMP/workspace" && "$HSH" resume) >"$TMP/resume-multi.out" 2>&1; then
 	fail "resume with multiple sessions unexpectedly succeeded"
 fi
 grep -q "multiple sessions for workspace" "$TMP/resume-multi.out" || fail "no multiple-sessions error: $(cat "$TMP/resume-multi.out")"
 grep -q "$RESUME_SESSION" "$TMP/resume-multi.out" || fail "the error does not list the session ids"
 pass "resume lists the sessions when a workspace has several"
 
-(cd "$TMP/workspace" && "$HSH" run --resume "$RESUME_SESSION") >"$TMP/resume3.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/workspace" && "$HSH" resume "$RESUME_SESSION") >"$TMP/resume3.out" 2>&1 <<'CMDS' || true
 cat /home/hsh/marker.txt
 exit
 CMDS
-grep -qx 'resume-marker' "$TMP/resume3.out" || fail "--resume <id> did not re-enter the chosen session"
-pass "hsh run --resume <id> re-enters the chosen session"
+grep -qx 'resume-marker' "$TMP/resume3.out" || fail "resume <id> did not re-enter the chosen session"
+pass "hsh resume <id> re-enters the chosen session"
+
+(cd "$TMP" && "$HSH" resume "$TMP/workspace" >"$TMP/resume-multi-dir.out" 2>&1) && fail "resume of a directory with several sessions unexpectedly succeeded"
+grep -q "multiple sessions for workspace" "$TMP/resume-multi-dir.out" || fail "resume DIR did not list the sessions: $(cat "$TMP/resume-multi-dir.out")"
+pass "hsh resume DIR resolves the workspace from another directory"
+
+(cd "$TMP" && "$HSH" resume "${RESUME_SESSION:0:6}") >"$TMP/resume-prefix.out" 2>&1 <<'CMDS' || true
+cat /home/hsh/marker.txt
+exit
+CMDS
+grep -qx 'resume-marker' "$TMP/resume-prefix.out" || fail "resume <id prefix> did not re-enter the chosen session: $(cat "$TMP/resume-prefix.out")"
+pass "hsh resume <id prefix> works from any directory"
 
 ORPHAN="deadsession01"
 mkdir -p "$XDG_STATE_HOME/hsh/sessions/$ORPHAN"
@@ -983,7 +994,7 @@ pass "holding is off by default: a denied request fails at once, with a message 
 OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
 "$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off, the default" || fail "hsh proxy hold did not report that holding is off by default"
 "$HSH" proxy hold --session "$OFF_SESSION" 4s | grep -q "up to 4s" || fail "hsh proxy hold 4s did not apply"
-(cd "$HOLD_WS" && "$HSH" run --monitor-db "$DB" --resume "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
+(cd "$HOLD_WS" && "$HSH" resume --monitor-db "$DB" "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
 sleep 3
 curl -s -m 30 -w '\nfourgs-result code=%{http_code} time=%{time_total}\n' http://blocked-four.example.test/ 2>&1
 exit
@@ -1160,10 +1171,10 @@ SESS_DB="$SESS_XDG/hsh/sessions/$SESS_ID/session.db"
 [ -f "$SESS_DB" ] || fail "session.db was not created: $(cat "$TMP/sess1.out")"
 grep -aq 'created' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no created event"
 grep -aq 'hsh dev' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db does not record the creating binary's version"
-(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/au-a/hsh" run --config "$TMP/sess.config.hsh" --monitor-db "$TMP/sess-deny.db" --resume "$SESS_ID") >"$TMP/sess2.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/au-a/hsh" resume --monitor-db "$TMP/sess-deny.db" "$SESS_ID") >"$TMP/sess2.out" 2>&1 <<'CMDS' || true
 exit
 CMDS
-grep -aq 'resumed' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no resumed event after --resume: $(cat "$TMP/sess2.out")"
+grep -aq 'resumed' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no resumed event after resume: $(cat "$TMP/sess2.out")"
 grep -aq 'hsh v2.0.0' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db does not record the resuming binary's version"
 pass "session.db records every binary that created or re-entered the session"
 env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" rm "hsh-$SESS_ID" >/dev/null 2>&1 || podman pod rm -f "hsh-$SESS_ID" >/dev/null 2>&1 || true
@@ -1310,7 +1321,7 @@ grep -qx 'HOMEBLOCKS=1' "$TMP/notice-on.out" || fail "the managed block was not 
 [ -f "$XDG_STATE_HOME/hsh/sessions/$NOTICE_SESSION/notice/network-policy.md" ] || fail "the notice was not written into the session directory"
 pass "the notice is mounted read-only and {network_policy} expands to its path"
 
-"$HSH" run --monitor-db "$DB" --resume "$NOTICE_SESSION" >"$TMP/notice-resume.out" 2>&1 </dev/null || fail "resuming the notice session failed: $(cat "$TMP/notice-resume.out")"
+"$HSH" resume --monitor-db "$DB" "$NOTICE_SESSION" >"$TMP/notice-resume.out" 2>&1 </dev/null || fail "resuming the notice session failed: $(cat "$TMP/notice-resume.out")"
 sed -i 's/\r$//' "$TMP/notice-resume.out"
 grep -qx 'SECOND=/hsh-run/notice/network-policy.md' "$TMP/notice-resume.out" || fail "the resumed agent did not get the notice: $(cat "$TMP/notice-resume.out")"
 [ "$(grep -c 'hsh:network-policy begin' "$TMP/notice-ws/ctx.md")" = 1 ] || fail "two starts did not leave exactly one managed block: $(cat "$TMP/notice-ws/ctx.md")"
@@ -1517,10 +1528,10 @@ grep -q 'after:.*response 403' "$TMP/ver-live.out" || fail "the running proxy st
 podman logs "hsh-$VER_SESSION-proxy" 2>&1 | grep -q "configuration reload failed.*newer than this hsh reads" || fail "the proxy did not log the failed reload: $(podman logs "hsh-$VER_SESSION-proxy" 2>&1 | tail -5)"
 pass "a running proxy keeps its last readable policy when the session config becomes unreadable, and logs why"
 
-"$HSH" run --monitor-db "$DB" --resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
+"$HSH" resume --monitor-db "$DB" "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
 grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
 printf '%s\n' '{ "image": "localhost/hsh-example:latest" }' >"$VER_CFG"
-"$HSH" run --monitor-db "$DB" --resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
+"$HSH" resume --monitor-db "$DB" "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
 grep -q "remove the session with: hsh rm $VER_SESSION" "$TMP/ver.out" || fail "resume did not say how to remove the stale session: $(cat "$TMP/ver.out")"
 "$HSH" rm "hsh-$VER_SESSION" >/dev/null 2>&1 || fail "hsh rm could not remove a session whose config is unreadable"
 [ ! -e "$XDG_STATE_HOME/hsh/sessions/$VER_SESSION" ] || fail "hsh rm left the session state"

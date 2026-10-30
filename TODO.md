@@ -20,6 +20,18 @@ Keep these tutorials in the README with Collapsed sections: https://docs.github.
 
 Have a tutorial subcommand that is launched after install.sh finishes that uses the README information from <!--- install.sh START --> to <!--- install.sh END -->.
 
+## gVisor suspend/resume
+
+`hsh resume` re-enters sessions (see plans/0041-resume-subcommand.md). Add checkpoint/restore for gVisor sessions:
+
+```
+hsh run --runtime gvisor pi .
+ctrl+space select "suspend" OR hsh suspend --session
+hsh resume .
+```
+
+`hsh resume` would restore from a checkpoint image in the session directory instead of starting the container. Obstacles: the embedded runsc payload drops `checkpointgofer`, `podman container checkpoint` expects CRIU-style runtime flags, and the proxy's netstack socket is recreated on each start so a restored sandbox must reconnect.
+
 ## networking modes
 
 rename https mode to tls_passthrough

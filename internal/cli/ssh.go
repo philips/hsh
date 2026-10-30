@@ -123,7 +123,7 @@ func sshProxyCommand() *ff.Command {
 			}
 			wsName := "hsh-" + sessionID + "-ws"
 			if !containerRunning(wsName) {
-				return fmt.Errorf("session %s has no running workspace container; start or resume it with hsh run", sessionID)
+				return fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
 			}
 			cmd := exec.CommandContext(ctx, "podman", sessionSSHArgs(sessionID)...)
 			cmd.Stdin = os.Stdin

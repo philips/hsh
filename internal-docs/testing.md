@@ -25,11 +25,13 @@ proxy, the monitor database, and the example image:
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 403
-- **step 5**: the session model — resume without a session fails clearly;
+- **step 5**: the session model — `hsh resume` without a session fails clearly;
   plain runs persist their pod; idle pods are `Exited` with `secrets.json`
-  scrubbed; bare `--resume` re-enters the workspace's only session with
+  scrubbed; bare `hsh resume` re-enters the workspace's only session with
   state, proxy, and DNS intact; `--rm` runs remove themselves; a second
-  session makes bare `--resume` list the ids; `--resume <id>` picks one;
+  session makes bare `hsh resume` list the ids; `hsh resume <id>` and
+  `hsh resume <id prefix>` pick one; `hsh resume DIR` resolves the workspace
+  from another directory;
   `hsh rm --garbage` collects orphaned session state
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
 - **step 7**: `hsh monitor` refuses to run without a terminal, and the
@@ -57,12 +59,12 @@ proxy, the monitor database, and the example image:
   warning without editing the config
 - **step 17** (`test/detach.py`, a pty driver): `hsh detach` detaches and
   leaves the shell, secrets, and a reaper running; podman's Ctrl-P Ctrl-Q does
-  nothing; `hsh run --resume` re-enters the same shell; closing the
+  nothing; `hsh resume` re-enters the same shell; closing the
   terminal detaches; the reaper scrubs secrets and stops the pod when a
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
   and `hsh rm --exited` removes it; `hsh detach` force-detaches an attached
-  terminal; `--resume` refuses a session attached elsewhere and
-  `--resume --take-over` takes it over; `--rm` sessions are removed when the shell exits
+  terminal; `hsh resume` refuses a session attached elsewhere and
+  `hsh resume --take-over` takes it over; `--rm` sessions are removed when the shell exits
 - **step 19**: held requests — in an `allowlist` session with
   `approval_wait` set and someone watching (the `attended` marker), a denied
   CONNECT stays pending until `hsh proxy allow` approves it and then
@@ -112,7 +114,7 @@ proxy, the monitor database, and the example image:
   and `monitor.db` with a newer `user_version` are refused; in a live session
   the session config is replaced by a newer-version file, `hsh proxy allow`
   refuses and leaves it unchanged, the running proxy keeps denying a host the
-  new file would allow and logs the failed reload, `--resume` explains and
+  new file would allow and logs the failed reload, `hsh resume` explains and
   names `hsh rm`, and `hsh rm` still removes the session
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the

@@ -34,3 +34,21 @@ func TestDetachClientIgnoresMissingAndForeignClients(t *testing.T) {
 		t.Fatal("the stale client file was left behind")
 	}
 }
+
+func TestIsHshClientArgs(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want bool
+	}{
+		{[]string{"/usr/bin/hsh", "run", "pi", "."}, true},
+		{[]string{"hsh", "resume", "abc"}, true},
+		{[]string{"hsh", "resume", "--take-over", "abc"}, true},
+		{[]string{"hsh", "ls"}, false},
+		{[]string{"sleep", "run"}, false},
+		{nil, false},
+	} {
+		if got := isHshClientArgs(c.args); got != c.want {
+			t.Errorf("isHshClientArgs(%v) = %v, want %v", c.args, got, c.want)
+		}
+	}
+}

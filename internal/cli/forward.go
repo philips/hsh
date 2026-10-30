@@ -20,7 +20,7 @@ import (
 func connectSession(sessionID string) (*ssh.Client, error) {
 	wsName := "hsh-" + sessionID + "-ws"
 	if !containerRunning(wsName) {
-		return nil, fmt.Errorf("session %s has no running workspace container; start or resume it with hsh run", sessionID)
+		return nil, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
 	}
 	cmd := exec.Command("podman", sessionSSHArgs(sessionID)...)
 	cmd.Stderr = os.Stderr

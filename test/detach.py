@@ -149,14 +149,14 @@ if not reaper_alive(session):
     fail("no reaper is watching the detached session")
 print("PASS: hsh detach detaches: the shell keeps running, secrets stay, hsh ls shows Detached, a reaper watches it")
 
-pid, fd = spawn("run", "--resume", sid)
+pid, fd = spawn("resume", sid)
 transcript_mark = len(transcript)
 time.sleep(2)
 os.write(fd, b"\x15echo resumed-$X-$((6*7))\r")
 expect(fd, "resumed-kept-var-42", 20, since=transcript_mark)
 if "Attached" not in hsh_ls():
     fail("hsh ls does not show the resumed session as Attached")
-print("PASS: hsh run --resume attaches to the same running shell (its variables survived)")
+print("PASS: hsh resume attaches to the same running shell (its variables survived)")
 
 os.close(fd)
 reap(pid)
@@ -173,7 +173,7 @@ def settle(fd, seconds):
         pump(fd, 0.1)
 
 
-pid, fd = spawn("run", "--resume", sid)
+pid, fd = spawn("resume", sid)
 settle(fd, 3)
 type_line(fd, "echo second-attach-$((6*7))", "second-attach-42")
 mark = len(transcript)
@@ -195,15 +195,15 @@ if "is not attached" not in again.stdout:
     fail("detaching an unattached session did not say so: %r" % again.stdout)
 print("PASS: hsh detach force-detaches the attached terminal; the session keeps running")
 
-pid_a, fd_a = spawn("run", "--resume", sid)
+pid_a, fd_a = spawn("resume", sid)
 settle(fd_a, 3)
-pid_b, fd_b = spawn("run", "--resume", sid)
+pid_b, fd_b = spawn("resume", sid)
 mark = len(transcript)
 code_b = reap(pid_b)
 pump(fd_b, 0.5)
 if code_b == 0 or "attached from another terminal" not in transcript[mark:]:
-    fail("a second --resume was not refused while the session is attached (exit %d)" % code_b)
-pid_c, fd_c = spawn("run", "--resume", "--take-over", sid)
+    fail("a second resume was not refused while the session is attached (exit %d)" % code_b)
+pid_c, fd_c = spawn("resume", "--take-over", sid)
 if reap(pid_a) != 0:
     fail("--take-over did not detach the first client cleanly")
 settle(fd_c, 3)
@@ -212,7 +212,7 @@ out(hsh, "detach", sid)
 reap(pid_c)
 if not running(ws):
     fail("--take-over ended the session")
-print("PASS: --resume refuses a session attached elsewhere; --resume --take-over detaches it and attaches here")
+print("PASS: resume refuses a session attached elsewhere; resume --take-over detaches it and attaches here")
 
 subprocess.run(["podman", "stop", "-t", "1", ws], capture_output=True)
 wait_for(lambda: not os.path.exists(secrets), "the reaper to scrub secrets.json")

@@ -344,19 +344,20 @@ workspace     file with the absolute path of the workspace
 - `hsh detach` (or **Session: detach session** in the
   [monitor](#the-monitor)) leaves an interactive session running in the
   background; closing the terminal does the same.
-  `hsh run --resume` re-attaches to the same shell, and `hsh ls` shows
+  `hsh resume` re-attaches to the same shell, and `hsh ls` shows
   `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
   scrubs secrets and stops the pod if the shell exits while detached.
   `--rm` and `--tasks` sessions cannot detach
-- only one terminal is attached to a session at a time: `hsh run --resume`
+- only one terminal is attached to a session at a time: `hsh resume`
   refuses a session that is attached elsewhere. `hsh detach [<session id>]`
-  detaches whatever terminal is attached (that `hsh run` restores its
+  detaches whatever terminal is attached (that `hsh run` or `hsh resume` restores its
   terminal and exits; the session keeps running), and
-  `hsh run --resume --take-over <id>` does that and attaches here
+  `hsh resume --take-over <id>` does that and attaches here
 - `hsh run --rm` makes a run temporary: pod and state are removed at exit
-- `hsh run --resume` re-enters the current workspace's session - the only
-  one directly, or lists the ids when there are several
-  (`hsh run --resume <id>` picks one; the full pod name also works)
+- `hsh resume [SESSION | WORKSPACE-DIR]` re-enters an existing session:
+  the current directory's only session directly, or it lists the ids when
+  there are several (`hsh resume <id>` picks one; an id prefix or the full
+  pod name also works; a directory argument selects that workspace)
 - sessions do not share approved proxy configuration on purpose: one
   session's allowlist is that session's policy
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
@@ -431,7 +432,7 @@ closes. The commands:
   to detach, unless `--session` names one
 - **Session: exit session** — asks for confirmation, then stops the session
   as if its shell had exited: the pod stops and `secrets.json` is scrubbed;
-  the state is kept for `hsh run --resume`. Inside a session `hsh run` reports
+  the state is kept for `hsh resume`. Inside a session `hsh run` reports
   `exited session ID (requested by the monitor)` and exits 0. In
   `hsh monitor` it asks which session, unless `--session` names one
 

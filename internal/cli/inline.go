@@ -179,13 +179,13 @@ func monitorSessionOps() *palette.SessionOps {
 			if !attached {
 				return "session " + id + " is not attached", nil
 			}
-			return "detached session " + id + "; re-enter with: hsh run --resume " + id, nil
+			return "detached session " + id + "; re-enter with: hsh resume " + id, nil
 		},
 		Exit: func(id string) (string, error) {
 			if err := exitSession(id); err != nil {
 				return "", err
 			}
-			return "exited session " + id + "; start it again with: hsh run --resume " + id, nil
+			return "exited session " + id + "; start it again with: hsh resume " + id, nil
 		},
 	}
 }

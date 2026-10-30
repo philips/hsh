@@ -66,17 +66,20 @@ func readClientPID(sessionDir string) int {
 	return pid
 }
 
-func isHshRun(pid int) bool {
+func isHshClient(pid int) bool {
 	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
 	if err != nil {
 		return false
 	}
-	args := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
+	return isHshClientArgs(strings.Split(strings.TrimRight(string(data), "\x00"), "\x00"))
+}
+
+func isHshClientArgs(args []string) bool {
 	if len(args) == 0 || !strings.HasPrefix(filepath.Base(args[0]), "hsh") {
 		return false
 	}
 	for _, a := range args[1:] {
-		if a == "run" {
+		if a == "run" || a == "resume" {
 			return true
 		}
 	}
@@ -88,12 +91,12 @@ func detachClient(sessionDir string, wait time.Duration) (bool, error) {
 	if pid == 0 || syscall.Kill(pid, 0) != nil {
 		return false, nil
 	}
-	if !isHshRun(pid) {
+	if !isHshClient(pid) {
 		_ = os.Remove(clientPIDPath(sessionDir))
 		return false, nil
 	}
 	if err := syscall.Kill(pid, syscall.SIGUSR1); err != nil {
-		return false, fmt.Errorf("signalling hsh run (pid %d): %w", pid, err)
+		return false, fmt.Errorf("signalling hsh client (pid %d): %w", pid, err)
 	}
 	deadline := time.Now().Add(wait)
 	for time.Now().Before(deadline) {
@@ -102,7 +105,7 @@ func detachClient(sessionDir string, wait time.Duration) (bool, error) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return true, fmt.Errorf("hsh run (pid %d) did not detach within %s", pid, wait)
+	return true, fmt.Errorf("hsh client (pid %d) did not detach within %s", pid, wait)
 }
 
 func resolveSessionArg(args []string) (string, error) {
@@ -154,7 +157,7 @@ func detachCommand() *ff.Command {
 			fmt.Printf("session %s is not attached\n", id)
 			return nil
 		}
-		fmt.Printf("detached session %s; re-enter with: hsh run --resume %s\n", id, id)
+		fmt.Printf("detached session %s; re-enter with: hsh resume %s\n", id, id)
 		return nil
 	})
 }

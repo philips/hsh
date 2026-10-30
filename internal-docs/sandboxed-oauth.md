@@ -11,7 +11,7 @@ https://nono.sh/docs/cli/features/sandboxed-oauth-logins — phantom
 tokens, an out-of-sandbox capture store, endpoint-scoped resolution, and
 a fail-closed capture path. The sections below adapt that model to hsh's
 existing pieces (the egress proxy, TLS interception, the allowlist, the
-secret store from plans/0009-secret-store.md, and `--resume`).
+secret store from plans/0009-secret-store.md, and `hsh resume`).
 
 ```
 OAuth provider ──► hsh proxy ──► sandboxed agent
@@ -73,7 +73,7 @@ directly against the provider.
 | credential routes / `api_hosts` | the provider's `apiHosts` (must also be allowlisted) |
 | per-session trust bundle + `ca_env_vars` | the existing MITM CA installed in the workspace; per-client CA env vars are a phase-2 addition |
 | helpers (`status`/`login`/`logout`) | `hsh oauth status` / `hsh oauth logout` (host-side, shape only) |
-| session persistence | `--resume` keeps the workspace container (where the client persists phantoms); the host-side store keeps the mapping across launches |
+| session persistence | `hsh resume` keeps the workspace container (where the client persists phantoms); the host-side store keeps the mapping across launches |
 
 ## Flow
 
@@ -280,14 +280,14 @@ CREATE TABLE IF NOT EXISTS oauth_phantoms (
   ```
 
   Run it from the workspace directory (the session is resolved the same
-  way `hsh run --resume` resolves it; `--session` picks explicitly) and
+  way `hsh resume` resolves it; `--session` picks explicitly) and
   promptly — authorization codes are short-lived. The pasted URL's
   `state` makes mis-delivery fail safe: a wrong session's CLI rejects
   it. Non-loopback URLs are refused. The reverse path is a small
   per-session callback relay on the workspace veth (`10.77.0.2:7788`)
   that dials the session's loopback on demand; the workspace-inner
   starts it automatically.
-- **Persistence**: with `--resume`, the workspace container keeps the
+- **Persistence**: with `hsh resume`, the workspace container keeps the
   client's stored phantoms across launches, and the host-side store keeps
   the phantom→real mapping — a logged-in session survives `hsh` restarts.
 - **Helpers** (host-side, never print values):

@@ -32,21 +32,20 @@ import (
 )
 
 type runOptions struct {
-	configPath   string
-	workdir      string
-	workspaceSel string
-	monitorDB    string
-	secretDB     string
-	tasksPath    string
-	networkMode  string
-	pull         string
-	verbose      bool
-	resume       bool
-	takeOver     bool
-	fresh        bool
-	rm           bool
-	forwards     stringArray
-	runtime      string
+	configPath  string
+	workdir     string
+	sessionID   string
+	monitorDB   string
+	secretDB    string
+	tasksPath   string
+	networkMode string
+	pull        string
+	verbose     bool
+	resume      bool
+	takeOver    bool
+	rm          bool
+	forwards    stringArray
+	runtime     string
 }
 
 func runCommand() *ff.Command {
@@ -58,35 +57,21 @@ func runCommand() *ff.Command {
 	fs := ff.NewFlagSet("run")
 	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
 	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point)")
-	fs.StringVar(&ro.workspaceSel, 0, "workspace", "", "with --resume: select the session by host workspace directory")
 	fs.StringVar(&ro.monitorDB, 0, "monitor-db", monitordb.DefaultPath(), "monitor database")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
 	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
 	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
-	fs.BoolVar(&ro.resume, 0, "resume", "re-enter a session for this workspace (positional: session id)")
-	fs.BoolVar(&ro.takeOver, 0, "take-over", "with --resume: detach whatever terminal is attached to the session first")
-	fs.BoolVar(&ro.fresh, 0, "fresh", "with --resume: discard the session and start a new one")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
 	fs.StringVar(&ro.runtime, 0, "runtime", "", "sandbox runtime for a new session: gvisor (needs runsc), or omit for the default container runtime")
 	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
 		Name:      "run",
 		Usage:     "hsh run [FLAGS] IMAGE [WORKSPACE-DIR]",
-		ShortHelp: "start a sandboxed shell (persistent session; re-enter with --resume)",
+		ShortHelp: "start a new sandboxed session (re-enter it later with hsh resume)",
 		Flags:     fs,
 		Exec: func(ctx context.Context, args []string) error {
-			if ro.resume {
-				if len(args) > 1 {
-					return fmt.Errorf("unexpected arguments %v: with --resume at most one positional (session id) is accepted, and flags must come before it", args)
-				}
-				sessionArg := ""
-				if len(args) == 1 {
-					sessionArg = args[0]
-				}
-				return run(ctx, ro, sessionArg, "")
-			}
 			if len(args) > 2 {
 				return fmt.Errorf("unexpected arguments %v: at most two positionals (IMAGE and WORKSPACE-DIR) are accepted, and flags must come before them", args)
 			}
@@ -107,9 +92,6 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if ro.verbose {
 		verbose = true
 	}
-	if ro.workspaceSel != "" && !ro.resume {
-		return fmt.Errorf("--workspace selects a session to resume and requires --resume; to start a session in a directory pass it positionally: hsh run IMAGE WORKSPACE-DIR")
-	}
 	switch ro.networkMode {
 	case "", "https", "allowlist", "none":
 	default:
@@ -123,18 +105,6 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if err := validRuntime(ro.runtime); err != nil {
 		return err
 	}
-	if ro.runtime != runtimeDefault && ro.resume && !ro.fresh {
-		return fmt.Errorf("--runtime applies to new sessions; a resumed session keeps the runtime it was created with")
-	}
-	if ro.rm && ro.resume {
-		return fmt.Errorf("--rm and --resume are mutually exclusive: --rm sessions are removed at exit, --resume re-enters a persistent one")
-	}
-	if ro.fresh && !ro.resume {
-		return fmt.Errorf("--fresh requires --resume")
-	}
-	if ro.takeOver && !ro.resume {
-		return fmt.Errorf("--take-over requires --resume")
-	}
 	forwardSpecs, err := forward.ParseSpecs(ro.forwards)
 	if err != nil {
 		return err
@@ -147,12 +117,8 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		return err
 	}
 	workspaceRoot := cwd
-	wsArg := workspaceArg
-	if ro.resume {
-		wsArg = ro.workspaceSel
-	}
-	if wsArg != "" {
-		workspaceRoot, err = filepath.Abs(wsArg)
+	if workspaceArg != "" {
+		workspaceRoot, err = filepath.Abs(workspaceArg)
 		if err != nil {
 			return err
 		}
@@ -196,29 +162,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 
 	var sessionID string
 	resumeSession := false
-	freshImage := ""
 	if ro.resume {
 		resumeSession = true
-		if positional != "" {
-			sessionID = strings.TrimPrefix(positional, "hsh-")
-		} else {
-			pods, err := listSandboxes("label=hsh.workspace=" + workspaceRoot)
-			if err != nil {
-				return err
-			}
-			switch len(pods) {
-			case 0:
-				return fmt.Errorf("no session to resume, try: hsh run IMAGE")
-			case 1:
-				sessionID = strings.TrimPrefix(pods[0].Name, "hsh-")
-			default:
-				var ids []string
-				for _, p := range pods {
-					ids = append(ids, strings.TrimPrefix(p.Name, "hsh-"))
-				}
-				return fmt.Errorf("multiple sessions for workspace %s:\n  %s\nre-enter with: hsh run --resume <session id>", workspaceRoot, strings.Join(ids, "\n  "))
-			}
-		}
+		sessionID = strings.TrimPrefix(ro.sessionID, "hsh-")
 	} else {
 		sessionID = newSessionID()
 	}
@@ -246,26 +192,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if ro.runtime == runtimeDefault {
 			ro.runtime = readSessionRuntime(sessionDir)
 		}
-		if ro.fresh {
-			infof("hsh: discarding session %s (--fresh)\n", sessionID)
-			_, _ = podman("pod", "rm", "-f", "--time", "0", podName)
-			_ = os.RemoveAll(sessionDir)
-			freshImage = cfg.Image
-			resumeSession = false
-			ro.resume = false
-			ro.fresh = false
-			sessionID = newSessionID()
-			podName = "hsh-" + sessionID
-			sessionDir = state.SessionDir(sessionID)
-			sessionConfig = filepath.Join(sessionDir, "config.json")
-		}
 	}
 
 	if !resumeSession {
 		image := positional
-		if image == "" && freshImage != "" {
-			image = freshImage
-		}
 		if image != "" {
 			image, err = resolveImage(image, ro.pull)
 			if err != nil {
@@ -362,7 +292,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	failureCleanup := true
 	defer func() {
-		if failureCleanup && !resumeSession && !ro.resume {
+		if failureCleanup && !resumeSession {
 			removeSessionState(podName, sessionDir)
 		}
 	}()
@@ -663,7 +593,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	exitWith := func(code int) error {
 		if reason := exitReason.Load(); reason != nil {
-			fmt.Fprintf(os.Stderr, "hsh: exited session %s (requested by %s); start it again with: hsh run --resume %s\n", sessionID, *reason, sessionID)
+			fmt.Fprintf(os.Stderr, "hsh: exited session %s (requested by %s); start it again with: hsh resume %s\n", sessionID, *reason, sessionID)
 			code = 0
 		}
 		if code != 0 {
@@ -679,7 +609,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if reason := detachReason.Load(); reason != nil {
 			by = " (requested by " + *reason + ")"
 		}
-		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh run --resume %s\n", sessionID, by, sessionID)
+		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh resume %s\n", sessionID, by, sessionID)
 		return true
 	}
 	if reattach {
@@ -689,7 +619,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		if running && clientAttached(sessionDir) {
 			if !ro.takeOver {
-				return fmt.Errorf("session %s is attached from another terminal (hsh run, pid %d); detach it with: hsh detach %s, or take it over with: hsh run --resume --take-over %s", sessionID, readClientPID(sessionDir), sessionID, sessionID)
+				return fmt.Errorf("session %s is attached from another terminal (hsh, pid %d); detach it with: hsh detach %s, or take it over with: hsh resume --take-over %s", sessionID, readClientPID(sessionDir), sessionID, sessionID)
 			}
 			if _, err := detachClient(sessionDir, 10*time.Second); err != nil {
 				return err

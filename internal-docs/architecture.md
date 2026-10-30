@@ -24,7 +24,7 @@ containers (`/hsh-proxy` in the proxy, `/hsh-workspace` and
 entrypoints; the role is dispatched on argv[0], so the container plumbing
 is not part of the user-facing command set. The `proxy`, `workspace`, and
 `workspace-inner` subcommand names remain as aliases (and keep
-`--resume` sessions created before the rename re-attachable).
+sessions created before the rename resumable with `hsh resume`).
 
 ## Pod layout
 
@@ -647,7 +647,7 @@ operate on pods whose name contains `hsh-` and follow the flags and
 semantics of `podman pod ls` / `podman pod rm`:
 
 ```
-hsh ls                                    # SESSION first (usable with --session, --resume, rm), then status and WORKSPACE
+hsh ls                                    # SESSION first (usable with --session, resume, rm), then status and WORKSPACE
 hsh ls -q --sort name                     # quiet, sorted
 hsh ls --workspace ~/repo                 # the sandbox for one workspace
 hsh rm 53bd3fc7e5ba                       # remove a leftover by session id (refuses if running)
@@ -686,7 +686,7 @@ session.db    append-only event log: the hsh version of every entry
 `session.db` is a sqlite database (same driver, open pattern, and
 `user_version` schema check as the other host-side databases) whose `events` table records one row per
 `hsh run` entry — `created` when the session is created, `resumed` on
-every `--resume` — with an RFC3339 timestamp and the full
+every `hsh resume` — with an RFC3339 timestamp and the full
 `hsh version` string of the binary that ran it. Because the update flow
 below replaces the binary in place while sessions may outlive (and be
 resumed by) different versions, this log answers after the fact which
@@ -714,7 +714,7 @@ sessions per workspace.
   Ctrl-P Ctrl-Q is disabled; no key detaches). `hsh detach`, or closing the
   terminal, ends only the podman client; conmon keeps the
   container's pty, so the shell and agent keep running, and
-  `hsh run --resume` runs `podman attach` to the same shell. When the
+  `hsh resume` runs `podman attach` to the same shell. When the
   client returns and the workspace container is still running, `hsh run`
   reports the detach and leaves the pod, proxy, and `secrets.json` alone.
   Output produced while detached is not replayed, and the screen is not
@@ -753,28 +753,34 @@ sessions per workspace.
   press of the monitor key while the monitor is open closes it and writes
   that key's bytes to the pty. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
   session is stripped and only triggers an immediate poll of that queue.
-  On `--resume` the relay briefly changes the pty width by one column and
+  On `hsh resume` the relay briefly changes the pty width by one column and
   back so the shell repaints. See [config.md](config.md#inline-proxy-review)
   and [agent-terminal-isolation.md](agent-terminal-isolation.md) for why
   the agent cannot open the review screen or forge the status line.
-- **One client at a time.** `hsh run --resume` refuses a session whose
-  `client.pid` names a live `hsh run`. `hsh detach` and
-  `hsh run --resume --take-over` send that process SIGUSR1; it terminates
+- **One client at a time.** `hsh resume` refuses a session whose
+  `client.pid` names a live `hsh run` or `hsh resume`. `hsh detach` and
+  `hsh resume --take-over` send that process SIGUSR1; it terminates
   its podman client (which, with `--sig-proxy=false`, leaves the container
   running), restores the terminal, and exits reporting the detach. The
   monitor's "detach session" command does the same from inside the
   process; its "exit session" command stops the pod, so the attach returns
   with the container stopped and `hsh run` runs its normal idle cleanup.
-- `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
+- `hsh ls` shows `Attached` (a live `hsh run` or `hsh resume` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
   client), or `Shell exited` (shell gone while the proxy still runs, which
   `hsh rm --exited` cleans up).
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
-- `hsh run --resume` re-enters the current workspace's session (or the
-  one named by `--workspace DIR`) — the only one directly, or it lists
-  the ids; `hsh run --resume <id>` picks one (the full pod name also
-  works). Re-entry reattaches to the
+- `hsh resume [SESSION | WORKSPACE-DIR]` re-enters an existing session;
+  `hsh run` only creates sessions. With no argument it uses the current
+  directory as the workspace. An existing directory argument selects the
+  sessions of that workspace; anything else is a session id, the full pod
+  name, or a unique prefix of either (a directory wins over an id of the
+  same name). A workspace with one session resumes it directly; with
+  several, `hsh resume` lists their ids, status, and creation time and
+  asks for one. `hsh resume` takes no `--config`, `--runtime`, `--network`,
+  or `--tasks`: the session keeps its stored config, runtime, and network
+  mode. Re-entry reattaches to the
   **same container**, so state inside the workspace container (pi's
   `~/.pi` sign-in, installed packages, files in its home) survives.
   On re-entry the workspace entrypoint deletes the stale veth pair left
@@ -788,13 +794,11 @@ sessions per workspace.
   listeners keep working across this.
 - Secrets are re-resolved from the host environment on every launch and
   pushed to the running proxy via its hot-reloaded `secrets.json`.
-- `--fresh` discards the existing pod and starts a new one for the same
-  workspace (the CA and session state are kept). Two concurrent
-  `--resume` sessions for the same workspace are refused — exit the
-  running one first.
+- Two terminals cannot be attached to one session; `hsh resume` refuses
+  a session that is attached elsewhere unless given `--take-over`.
 
-A reused sandbox accumulates container state; use `--fresh` (or
-`hsh rm -f <sandbox>` followed by a fresh `--resume`) to reset it.
+A reused sandbox accumulates container state; reset it with
+`hsh rm <sandbox>` followed by `hsh run IMAGE DIR`.
 
 ## Crash log
 

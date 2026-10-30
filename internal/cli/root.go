@@ -75,6 +75,7 @@ func Root() *ff.Command {
 		},
 		Subcommands: []*ff.Command{
 			runCommand(),
+			resumeCommand(),
 			secretCommand(),
 			proxyCommand(),
 			monitorCommand(),

@@ -189,7 +189,7 @@ if not running(session + "-ws"):
     fail("detaching from the palette stopped the session")
 print("PASS: Session: detach session in the palette detaches; the session keeps running")
 
-pid, fd = spawn("run", "--resume", sid)
+pid, fd = spawn("resume", sid)
 time.sleep(3)
 type_line(fd, "echo resumed-$((6*7))", "resumed-42")
 mark = len(transcript)

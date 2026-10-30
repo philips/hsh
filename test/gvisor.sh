@@ -116,7 +116,7 @@ fi
 pass "denials are recorded in monitor.db with the session id"
 
 echo "== step 2: resuming a stopped gVisor session reconnects the netstack"
-"$HSH" run --resume "$SESSION" >"$TMP/run2.out" 2>&1 <<'CMDS' || true
+"$HSH" resume "$SESSION" >"$TMP/run2.out" 2>&1 <<'CMDS' || true
 cat /home/hsh/marker.txt
 curl -sS -o /dev/null -w 'resumed=%{http_code}\n' --max-time 15 http://host.containers.internal:8899/v1/models
 exit
@@ -126,7 +126,7 @@ grep -qx 'resumed=200' "$TMP/run2.out" || fail "network did not work after resum
 pass "resume restarts the proxy and the sandbox reconnects"
 
 echo "== step 3: killing the proxy cuts all egress"
-"$HSH" run --resume "$SESSION" >"$TMP/run3.out" 2>&1 <<'CMDS' &
+"$HSH" resume "$SESSION" >"$TMP/run3.out" 2>&1 <<'CMDS' &
 curl -sS -o /dev/null -w 'before=%{http_code}\n' --max-time 15 http://host.containers.internal:8899/v1/models
 sleep 8
 curl -sS -o /dev/null -w 'after=%{http_code}\n' --max-time 5 http://host.containers.internal:8899/v1/models || true
@@ -144,7 +144,7 @@ pass "the workspace has no egress without the proxy"
 
 echo "== step 4: /hsh-sshd forwards ports, opens shells, and delivers callbacks inside the sandbox"
 podman pod stop -t 2 "hsh-$SESSION" >/dev/null 2>&1 || true
-"$HSH" run --resume "$SESSION" >"$TMP/run4.out" 2>&1 <<'CMDS' &
+"$HSH" resume "$SESSION" >"$TMP/run4.out" 2>&1 <<'CMDS' &
 (while true; do /hsh-workspace-inner --http-echo 8000 >/dev/null 2>&1; done &)
 sleep 40
 exit

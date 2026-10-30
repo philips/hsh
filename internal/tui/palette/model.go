@@ -588,7 +588,7 @@ func (m Model) View() string {
 			titleStyle.Render("Session: exit session " + m.target + "?"),
 			"",
 			"Its shell and everything running in it stop. The session's state is kept;",
-			"hsh run --resume " + m.target + " starts a new shell.",
+			"hsh resume " + m.target + " starts a new shell.",
 			"",
 			m.statusView(),
 			helpStyle.Render("  enter exit the session • esc cancel"),

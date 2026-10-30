@@ -30,6 +30,8 @@ func TestHelpEverywhere(t *testing.T) {
 	cases := [][]string{
 		{"run", "--help"},
 		{"run", "-h"},
+		{"resume", "--help"},
+		{"resume", "-h"},
 		{"secret", "--help"},
 		{"secret"},
 		{"proxy", "--help"},
