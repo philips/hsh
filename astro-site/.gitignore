@@ -1,0 +1,25 @@
+node_modules/
+.DS_Store
+*.log
+*.tmp
+*.swp
+
+# Astro
+dist/
+.astro/
+.cache/
+
+# IDE
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+
+# OS
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+src/env.d.ts

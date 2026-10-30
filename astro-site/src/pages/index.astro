@@ -1,0 +1,27 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { readmeSections } from '../lib/readme.js';
+
+const { explainer, overview, install } = readmeSections();
+---
+
+<Layout title="hsh - Developer Focused Linux Container Sandbox">
+  <div class="container mt-5">
+    <div class="col-12 text-center mb-4">
+      <img src="/hsh-logo.jpg" alt="hsh logo - whisper face emoji in watercolor and ink" class="rounded-lg" style="max-width: 300px; width: 100%;">
+      <h1 class="mt-3">hsh</h1>
+    </div>
+
+    <div class="col-12">
+      <div class="lead" set:html={explainer} />
+
+      <h2 class="mt-5">Install</h2>
+      <div class="install" set:html={install} />
+
+      <h2 class="mt-5">Overview</h2>
+      <div set:html={overview} />
+
+      <p class="mt-4"><a href="https://github.com/philips/hsh/blob/main/README.md">README</a> | <a href="https://github.com/philips/hsh">GitHub</a></p>
+    </div>
+  </div>
+</Layout>

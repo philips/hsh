@@ -1,14 +1,20 @@
 # hsh
 
+<!--- website explainer START -->
+
 `hsh` (pronounced hush) is a developer focused Linux container sandbox to keep the agents under your care from chatting with systems you don't want them to using a MitM proxy HTTPS proxy with secret injection and containerized filesystem access.
 
 To use an analogy: `hsh` is the exam proctor keeping the room quiet so your little agents [don't cheat](https://en.wikipedia.org/wiki/OpenAI_rogue_agent_breach_of_Hugging_Face).
+
+<!--- website explainer END -->
 
 <p align="right">
     <img src="assets/hsh-logo.jpg" alt="emoji whisper face in water color and inked lines" width="300">
 </p>
 
 ## Overview
+
+<!--- website overview START -->
 
 The goals of `hsh` isolation include:
 
@@ -23,11 +29,17 @@ The goal is to make it easy to hack on software alongside an agent harness like
 `pi`, `codex`, `claude-code`, etc while protecting you from moderate dangers of
 agent credential exfiltration to the open internet OR local filesystem damage.
 
+<!--- website overview END -->
+
+<!--- website install START -->
+
 Install `hsh`
 
 ```
 curl -fsSL https://raw.githubusercontent.com/philips/hsh/main/install.sh | sh
 ```
+
+<!--- website install END -->
 
 <!--- install.sh START -->
 
