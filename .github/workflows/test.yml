@@ -35,6 +35,17 @@ jobs:
       - name: static build check
         run: CGO_ENABLED=0 go build -o hsh .
 
+      - uses: actions/cache@v4
+        with:
+          path: internal/gvisor/.cache
+          key: gvisor-payload-${{ hashFiles('internal/gvisor/payload.sh') }}
+
+      - name: release build (./build.sh, embedded gVisor)
+        run: ./build.sh -o hsh-release
+
+      - name: vet with embedded gVisor
+        run: go vet -tags gvisor_embed ./...
+
   # The functional test runs real sandboxes with rootless podman and
   # exercises the fixture image (built from test/fixtures/) plus live
   # api.mistral.ai egress, so it needs internet and a few minutes.
@@ -64,3 +75,44 @@ jobs:
 
       - name: functional test
         run: ./test/functional.sh
+
+  gvisor:
+    name: gvisor (podman + runsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: install rootless podman networking
+        run: sudo apt-get update && sudo apt-get install -y passt uidmap
+
+      - name: ensure subuid/subgid entries for the runner user
+        run: |
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subuid
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subgid
+          fi
+
+      - name: allow unprivileged user namespaces for runsc
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: verify rootless podman
+        run: podman info --format 'podman {{.Version.Version}} on {{.Host.Arch}}'
+
+      - uses: actions/cache@v4
+        with:
+          path: internal/gvisor/.cache
+          key: gvisor-payload-${{ hashFiles('internal/gvisor/payload.sh') }}
+
+      - name: gVisor payload
+        run: bash internal/gvisor/payload.sh
+
+      - name: gvisor test
+        run: ./test/gvisor.sh

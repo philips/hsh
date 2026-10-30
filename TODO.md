@@ -59,3 +59,7 @@ the status bar flickers with dns install and other commands with a spinner. anno
 ## Tell agents about the network restrictions
 
 See plans/0028-network-notice.md (plan, awaiting review).
+
+## Migrate forwarding to `hsh-sshd` and drop the relay
+
+Serve `hsh forward`, `--forward`, `ssh hsh-<id>`, and `hsh oauth callback` from `/hsh-sshd` in both runtimes. In the default runtime it enters the shell's network namespace by setns plus re-exec. Remove the in-sandbox relay (`10.77.0.2:7788`) and `/hsh-workspace-inner --ssh-stdio`/`--ssh-session`/`--callback-relay`/`--oauth-deliver`. Sessions created before the change get a recreate message. See plans/0034-sshd-everywhere.md.
