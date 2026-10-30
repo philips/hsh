@@ -5,7 +5,7 @@
 To use an analogy: `hsh` is the exam proctor keeping the room quiet so your little agents [don't cheat](https://en.wikipedia.org/wiki/OpenAI_rogue_agent_breach_of_Hugging_Face).
 
 <p align="right">
-    <img src="docs/hsh-logo.jpg" alt="emoji whisper face in water color and inked lines" width="300">
+    <img src="assets/hsh-logo.jpg" alt="emoji whisper face in water color and inked lines" width="300">
 </p>
 
 ## Overview
