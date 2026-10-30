@@ -21,9 +21,9 @@ Status: prototype. It is opt-in and the default runtime is unchanged.
 
 ## Embedded runsc
 
-Release binaries are built with `-tags gvisor_embed`, which embeds
-`internal/gvisor/payload.tar.gz` with `go:embed`. `internal/gvisor/payload.sh
-GOARCH` produces that payload:
+Release binaries are built by `./build.sh` with `-tags gvisor_embed`, which
+embeds `internal/gvisor/payload.tar.gz` with `go:embed`. `internal/gvisor/payload.sh
+GOARCH` (run by `build.sh`) produces that payload:
 
 - It downloads the pinned gVisor release tarball for the architecture
   from `storage.googleapis.com/gvisor/releases/release/<version>/<arch>/`
@@ -36,7 +36,10 @@ GOARCH` produces that payload:
   dropped. It adds `LICENSE` and `VERSION`.
 - It writes a reproducible tar.gz (sorted names, zero mtimes and owners,
   `gzip -n`), plus `payload.version` and `payload.sha256`, which are
-  embedded too. The payload files are generated, not committed.
+  embedded too. The payload files are generated, not committed. A copy per
+  architecture is kept in `internal/gvisor/.cache/<GOARCH>/` and reused when
+  its stamp (version, architecture, upstream SHA-512) matches, so rebuilds
+  do not download again.
 
 This adds about 30 MB to the binary (amd64: 21 MB → 53 MB; arm64: 47 MB).
 Upgrading gVisor means changing the version and hashes in `payload.sh`,

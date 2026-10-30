@@ -18,6 +18,28 @@ arm64) ARCH=aarch64 SHA512=$SHA512_AARCH64 ;;
 esac
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CACHE="$HERE/.cache/$GOARCH"
+STAMP="release-$VERSION $GOARCH $SHA512"
+FILES_OUT="payload.tar.gz payload.version payload.sha256 payload.stamp"
+
+valid() {
+	[ -f "$1/payload.stamp" ] && [ "$(cat "$1/payload.stamp")" = "$STAMP" ] &&
+		[ -f "$1/payload.tar.gz" ] && [ -f "$1/payload.version" ] && [ -f "$1/payload.sha256" ] &&
+		[ "$(sha256sum "$1/payload.tar.gz" | cut -d' ' -f1)" = "$(cat "$1/payload.sha256")" ]
+}
+
+if [ "${PAYLOAD_FORCE:-}" != "1" ]; then
+	if valid "$HERE"; then
+		echo "gVisor release-$VERSION payload for $GOARCH is up to date"
+		exit 0
+	fi
+	if valid "$CACHE"; then
+		for f in $FILES_OUT; do cp "$CACHE/$f" "$HERE/$f"; done
+		echo "gVisor release-$VERSION payload for $GOARCH restored from $CACHE"
+		exit 0
+	fi
+fi
+rm -f "$HERE/payload.stamp"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -35,4 +57,7 @@ tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
 	-C "$WORK/out" -cf - VERSION LICENSE $FILES | gzip -n -9 >"$HERE/payload.tar.gz"
 printf 'release-%s' "$VERSION" >"$HERE/payload.version"
 sha256sum "$HERE/payload.tar.gz" | cut -d' ' -f1 >"$HERE/payload.sha256"
+echo "$STAMP" >"$HERE/payload.stamp"
+mkdir -p "$CACHE"
+for f in $FILES_OUT; do cp "$HERE/$f" "$CACHE/$f"; done
 echo "wrote $HERE/payload.tar.gz (gVisor release-$VERSION, $ARCH, $(wc -c <"$HERE/payload.tar.gz") bytes)"

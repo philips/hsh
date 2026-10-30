@@ -4,3 +4,5 @@
 /internal/gvisor/payload.tar.gz
 /internal/gvisor/payload.version
 /internal/gvisor/payload.sha256
+/internal/gvisor/payload.stamp
+/internal/gvisor/.cache/

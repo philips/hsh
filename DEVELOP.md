@@ -1,29 +1,31 @@
 ## Getting Started
 
-Build the project (Go 1.27; the terminal emulator needs the simd
-experiment, set it in the environment or with `go env -w GOEXPERIMENT=simd`):
+Build the project (Go 1.27):
 
 ```
 git clone https://github.com/philips/hsh
 cd hsh
-GOEXPERIMENT=simd CGO_ENABLED=0 go build -o hsh .
+./build.sh
 ```
 
-Without `GOEXPERIMENT=simd` everything still builds and tests pass, but the
-emulator (`internal/vt`) is compiled out and its tests are skipped.
+`./build.sh` builds `./hsh` the way the release workflow does: it sets
+`GOEXPERIMENT=simd` (the terminal emulator needs it), `CGO_ENABLED=0`, and
+`GOOS=linux`, and embeds gVisor's runsc for `hsh run --runtime gvisor`. On
+first use it downloads the pinned gVisor release for `GOARCH`, verifies it,
+and keeps the trimmed payload in `internal/gvisor/.cache/<GOARCH>/` (git
+ignored), so later builds and architecture switches are offline.
 
-To embed gVisor's runsc for `hsh run --runtime gvisor` (as release builds do),
-generate the payload for your architecture once, then build with the
-`gvisor_embed` tag:
+- `./build.sh --no-gvisor` skips gVisor (about 30 MB smaller, no download);
+  `--runtime gvisor` then uses `runsc` from `HSH_RUNSC` or `PATH`.
+- `-o PATH` sets the output; other flags go to `go build`
+  (`./build.sh -trimpath -ldflags="-s -w"`).
+- `GOARCH=arm64 ./build.sh -o hsh-arm64` cross-compiles.
+- `PAYLOAD_FORCE=1 ./build.sh` refetches the gVisor payload.
 
-```
-bash internal/gvisor/payload.sh
-GOEXPERIMENT=simd CGO_ENABLED=0 go build -tags gvisor_embed -o hsh .
-```
-
-`hsh version` reports whether gVisor is embedded. Without the tag,
-`--runtime gvisor` uses `runsc` from `HSH_RUNSC` or `PATH`. See
-[docs/gvisor.md](docs/gvisor.md).
+`hsh version` shows whether the terminal emulator and gVisor are built in.
+A plain `go build .` also works: without `GOEXPERIMENT=simd` the emulator
+(`internal/vt`) is compiled out and its tests are skipped, and without
+`-tags gvisor_embed` gVisor is not embedded. See [docs/gvisor.md](docs/gvisor.md).
 
 Build the example pi container
 
