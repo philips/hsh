@@ -45,6 +45,14 @@ def pump(fd, timeout=0.2):
     transcript += chunk.decode(errors="replace")
 
 
+def drain(fd, quiet=0.5):
+    while True:
+        before = len(transcript)
+        pump(fd, quiet)
+        if len(transcript) == before:
+            return
+
+
 def expect(fd, needle, timeout=30, since=None):
     start = len(transcript) if since is None else since
     end = time.time() + timeout
@@ -172,7 +180,7 @@ os.write(fd, b"detach")
 time.sleep(0.3)
 os.write(fd, b"\r")
 code = reap(pid)
-pump(fd, 0.5)
+drain(fd)
 if code != 0:
     fail("detaching from the palette exited %d" % code)
 if "detached from session %s (requested by the monitor)" % sid not in transcript[mark:]:
@@ -193,7 +201,7 @@ os.write(fd, b"\r")
 expect(fd, "exit session %s?" % sid, 10, since=mark)
 os.write(fd, b"\r")
 code = reap(pid, 30)
-pump(fd, 0.5)
+drain(fd)
 if code != 0:
     fail("exiting from the palette exited %d" % code)
 if "exited session %s (requested by the monitor)" % sid not in transcript[mark:]:
