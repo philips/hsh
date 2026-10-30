@@ -23,10 +23,8 @@ Need to consider how resume might interact with gVisor with checkpoint/restore. 
 ```
 hsh run pi .
 ctrl+space select "suspend" OR hsh suspend --session
-hsh 
+hsh resume .
 ```
-
-## 
 
 ## networking modes
 
