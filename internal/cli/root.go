@@ -9,6 +9,7 @@ import (
 	"github.com/peterbourgon/ff/v4"
 	"github.com/peterbourgon/ff/v4/ffhelp"
 
+	"hsh/internal/gvisor"
 	"hsh/internal/monitordb"
 	"hsh/internal/secretstore"
 	"hsh/internal/version"
@@ -140,6 +141,11 @@ func versionCommand() *ff.Command {
 			fmt.Printf("terminal emulator: %s (inline proxy review enabled)\n", vt.Backend)
 		} else {
 			fmt.Println("terminal emulator: none (built without GOEXPERIMENT=simd; inline proxy review disabled)")
+		}
+		if gvisor.Embedded() {
+			fmt.Printf("gVisor: %s (embedded; hsh run --runtime gvisor)\n", gvisor.Version())
+		} else {
+			fmt.Println("gVisor: not embedded (hsh run --runtime gvisor uses runsc from HSH_RUNSC or PATH)")
 		}
 		return nil
 	})

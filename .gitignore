@@ -1,3 +1,6 @@
 /hsh
 /dist/
 .env
+/internal/gvisor/payload.tar.gz
+/internal/gvisor/payload.version
+/internal/gvisor/payload.sha256

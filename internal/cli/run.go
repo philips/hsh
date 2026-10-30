@@ -352,7 +352,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	var gv *gvisorSession
 	if ro.runtime == runtimeGVisor {
-		gv, err = prepareGVisor(sessionDir)
+		gv, err = prepareGVisor(sessionDir, resumeSession && containerRunning(podName+"-ws"))
 		if err != nil {
 			return err
 		}

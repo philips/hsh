@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"hsh/internal/gvisor"
+	"hsh/internal/state"
 )
 
 const (
@@ -48,18 +51,33 @@ func findRunsc() (string, error) {
 	if p := os.Getenv("HSH_RUNSC"); p != "" {
 		return filepath.Abs(p)
 	}
+	if gvisor.Embedded() {
+		runsc, err := gvisor.Install(state.Dir())
+		if err != nil {
+			return "", fmt.Errorf("%w; or install runsc yourself and set HSH_RUNSC", err)
+		}
+		gvisor.Prune(state.Dir(), filepath.Dir(runsc), runscInUse)
+		return runsc, nil
+	}
 	p, err := exec.LookPath("runsc")
 	if err != nil {
-		return "", fmt.Errorf("--runtime gvisor needs runsc: install it from https://gvisor.dev/docs/user_guide/install/#install-latest (keep gvisor-bin/ next to runsc) and put it on PATH, or set HSH_RUNSC")
+		return "", fmt.Errorf("--runtime gvisor needs runsc and this hsh build does not embed it: install it from https://gvisor.dev/docs/user_guide/install/#install-latest (keep gvisor-bin/ next to runsc) and put it on PATH, or set HSH_RUNSC")
 	}
 	return filepath.Abs(p)
 }
 
-func prepareGVisor(sessionDir string) (*gvisorSession, error) {
-	runsc, err := findRunsc()
-	if err != nil {
-		return nil, err
+func runscInUse(dir string) bool {
+	wrappers, _ := filepath.Glob(filepath.Join(state.SessionsDir(), "*", "runsc"))
+	for _, w := range wrappers {
+		data, err := os.ReadFile(w)
+		if err == nil && strings.Contains(string(data), shellQuote(filepath.Join(dir, "runsc"))) {
+			return true
+		}
 	}
+	return false
+}
+
+func prepareGVisor(sessionDir string, keepWrapper bool) (*gvisorSession, error) {
 	g := &gvisorSession{
 		wrapper: filepath.Join(sessionDir, "runsc"),
 		sockDir: filepath.Join(sessionDir, "netstack"),
@@ -69,6 +87,13 @@ func prepareGVisor(sessionDir string) (*gvisorSession, error) {
 		return nil, fmt.Errorf("netstack socket path %s is longer than a unix socket address allows", g.sock)
 	}
 	if err := os.MkdirAll(g.sockDir, 0o700); err != nil {
+		return nil, err
+	}
+	if keepWrapper && fileExists(g.wrapper) {
+		return g, nil
+	}
+	runsc, err := findRunsc()
+	if err != nil {
 		return nil, err
 	}
 	script := "#!/bin/sh\nexec " + shellQuote(runsc) + " --ignore-cgroups --overlay2=none --network-proxy-path=" + shellQuote(g.sock) + " \"$@\"\n"

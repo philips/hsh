@@ -3,8 +3,12 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -z "${HSH_RUNSC:-}" ] && ! command -v runsc >/dev/null 2>&1; then
-	echo "SKIP: runsc not found (install gVisor or set HSH_RUNSC)"
+TAGS=""
+if [ -f "$REPO/internal/gvisor/payload.tar.gz" ]; then
+	TAGS="gvisor_embed"
+	unset HSH_RUNSC
+elif [ -z "${HSH_RUNSC:-}" ] && ! command -v runsc >/dev/null 2>&1; then
+	echo "SKIP: runsc not found (run internal/gvisor/payload.sh to embed it, install gVisor, or set HSH_RUNSC)"
 	exit 0
 fi
 
@@ -38,7 +42,7 @@ pass() {
 }
 
 echo "== building hsh and the dummy endpoint"
-(cd "$REPO" && go build -o "$TMP/hsh" .)
+(cd "$REPO" && go build -tags "$TAGS" -o "$TMP/hsh" .)
 (cd "$REPO" && go build -o "$TMP/dummyopenai" ./test/dummyopenai)
 HSH="$TMP/hsh"
 
@@ -100,6 +104,14 @@ grep -qx 'iplit=000' "$TMP/run1.out" || fail "a direct connection to an IP liter
 grep -qx 'ping=blocked' "$TMP/run1.out" || fail "ICMP left the sandbox"
 pass "IP literals and ICMP are refused"
 SESSION="$(ls "$XDG_STATE_HOME/hsh/sessions" | head -1)"
+if [ -n "$TAGS" ]; then
+	RUNSC_DIR="$(ls -d "$XDG_STATE_HOME"/hsh/gvisor/*/ | head -1)"
+	[ -x "${RUNSC_DIR}runsc" ] && [ -f "${RUNSC_DIR}.complete" ] || fail "the embedded gVisor was not extracted under the state directory"
+	[ "$(stat -c %a "$XDG_STATE_HOME/hsh/gvisor")" = "700" ] || fail "the gVisor install directory is not private"
+	grep -q "${RUNSC_DIR}runsc" "$XDG_STATE_HOME/hsh/sessions/$SESSION/runsc" || fail "the session does not use the embedded runsc"
+	"$HSH" version | grep -q '^gVisor: release-' || fail "hsh version does not report the embedded gVisor"
+	pass "the embedded gVisor is extracted privately under the state directory and used"
+fi
 "$HSH" proxy denied --db "$XDG_STATE_HOME/hsh/monitor.db" 2>/dev/null | grep "$SESSION" | grep -q 'api.mistral.ai' || fail "the denial was not recorded in monitor.db"
 pass "denials are recorded in monitor.db with the session id"
 

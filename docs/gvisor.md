@@ -11,11 +11,61 @@ Status: prototype. It is opt-in and the default runtime is unchanged.
 
 ## Requirements
 
-- `runsc` from the upstream release tarball
-  (https://gvisor.dev/docs/user_guide/install/#install-latest), with its
-  `gvisor-bin/` directory next to it, on `PATH` or named by `HSH_RUNSC`.
 - Rootless podman with pasta. No `/dev/kvm` is needed (gVisor's default
   `systrap` platform).
+- runsc. Release builds of hsh embed it (see below), so nothing else
+  needs installing. `HSH_RUNSC=/path/to/runsc` overrides the embedded
+  copy. A build without it (a plain `go build`) uses `runsc` from `PATH`,
+  installed from https://gvisor.dev/docs/user_guide/install/#install-latest
+  with its `gvisor-bin/` directory next to it.
+
+## Embedded runsc
+
+Release binaries are built with `-tags gvisor_embed`, which embeds
+`internal/gvisor/payload.tar.gz` with `go:embed`. `internal/gvisor/payload.sh
+GOARCH` produces that payload:
+
+- It downloads the pinned gVisor release tarball for the architecture
+  from `storage.googleapis.com/gvisor/releases/release/<version>/<arch>/`
+  and gVisor's Apache-2.0 `LICENSE` from the matching GitHub tag. Both are
+  checked against SHA-512 and SHA-256 hashes pinned in the script.
+- It keeps only what rootless podman needs: `runsc` and
+  `gvisor-bin/{gvisor_sentry,gvisor-sentry-prewarmer,gvisor-proc-umounter,runsc-fd-parking}`
+  (runsc refuses to start without each of these sidecars). The
+  containerd shim, `checkpointgofer`, and `runsc-metric-server` are
+  dropped. It adds `LICENSE` and `VERSION`.
+- It writes a reproducible tar.gz (sorted names, zero mtimes and owners,
+  `gzip -n`), plus `payload.version` and `payload.sha256`, which are
+  embedded too. The payload files are generated, not committed.
+
+This adds about 30 MB to the binary (amd64: 21 MB → 53 MB; arm64: 47 MB).
+Upgrading gVisor means changing the version and hashes in `payload.sh`,
+which ships in the next hsh release through the normal `hsh update`.
+
+On first use (`hsh run --runtime gvisor`),
+`internal/gvisor` installs the payload under
+`$XDG_STATE_HOME/hsh/gvisor/<first 16 hex of the payload SHA-256>/`:
+
+- `gvisor/` is created 0700 and must be a directory owned by the user
+  and not writable by others (no symlink). Each install directory has
+  the same checks. Nothing goes to a shared temporary directory, where
+  another user could plant a binary that podman would then run.
+- The payload's SHA-256 is checked against the embedded `payload.sha256`,
+  and the payload is extracted into a fresh `.extract-*` directory next to
+  the target. Only regular files and directories with local relative
+  names are accepted; files get the archive's owner bits only (0700 or
+  0600). A `.complete` marker is written, then the directory is renamed
+  into place. A concurrent extraction that loses the rename uses the
+  winner's directory. A directory without `.complete` is never used.
+- Later runs reuse a complete directory without rehashing the payload.
+  Extraction takes about a third of a second.
+- After installing, versions that are neither current nor named by any
+  session's `runsc` wrapper are removed, along with `.extract-*` leftovers
+  older than an hour. A running session keeps its wrapper, even across an
+  hsh upgrade, so `podman exec` and `stop` keep using the runsc that
+  started its sandbox. The wrapper is rewritten the next time the
+  session's container starts.
+- `hsh version` reports the embedded gVisor release.
 
 ## Layout
 
