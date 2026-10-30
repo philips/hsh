@@ -327,3 +327,144 @@ func TestWithoutADatabaseTheReviewIsUnavailable(t *testing.T) {
 		t.Fatal("opened a review with no database")
 	}
 }
+
+type fakeOps struct {
+	attached map[string]bool
+	calls    []string
+	err      error
+}
+
+func (f *fakeOps) ops() *SessionOps {
+	return &SessionOps{
+		Attached: func(id string) bool { return f.attached[id] },
+		Detach: func(id string) (string, error) {
+			f.calls = append(f.calls, "detach "+id)
+			return "detached " + id, f.err
+		},
+		Exit: func(id string) (string, error) {
+			f.calls = append(f.calls, "exit "+id)
+			return "exited " + id, f.err
+		},
+	}
+}
+
+func (e *env) sessionModel(t *testing.T, session string, inSession bool, f *fakeOps) Model {
+	t.Helper()
+	m := New(Options{DB: e.db, Filter: monitordb.Filter{Session: session}, SettingsPath: e.settings,
+		Sessions: f.ops(), InSession: inSession})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	return updated.(Model)
+}
+
+func pick(t *testing.T, m Model, query string) (Model, tea.Cmd) {
+	t.Helper()
+	m, _ = press(t, m, typed(query))
+	it, _ := m.commands.selected()
+	if !strings.HasPrefix(it.text, "Session: ") {
+		t.Fatalf("%q selected %q", query, it.text)
+	}
+	return press(t, m, enter)
+}
+
+func TestSessionCommandsNeedSessionOps(t *testing.T) {
+	e := newEnv(t)
+	if strings.Contains(e.model(t, "").View(), "Session:") {
+		t.Fatal("session commands listed without session operations")
+	}
+	view := e.sessionModel(t, "", false, &fakeOps{}).View()
+	if !strings.Contains(view, "Session: detach session") || !strings.Contains(view, "Session: exit session") {
+		t.Fatalf("session commands missing:\n%s", view)
+	}
+}
+
+func TestDetachFromInsideTheSessionClosesTheMonitor(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeOps{}
+	m := e.sessionModel(t, "s1", true, f)
+	m, cmd := pick(t, m, "detach")
+	if _, quit := m.Update(cmd()); !isQuit(quit) {
+		t.Fatal("detaching this session did not close the monitor")
+	}
+	if strings.Join(f.calls, ",") != "detach s1" {
+		t.Fatalf("calls %v", f.calls)
+	}
+}
+
+func TestExitAsksFirst(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeOps{}
+	m := e.sessionModel(t, "s1", true, f)
+	m, cmd := pick(t, m, "exit")
+	if cmd != nil || m.view != viewConfirmExit || !strings.Contains(m.View(), "exit session s1?") {
+		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+	m, _ = press(t, m, esc)
+	if m.view != viewCommands || len(f.calls) != 0 {
+		t.Fatalf("esc did not cancel: %v", f.calls)
+	}
+	m, _ = pick(t, m, "exit")
+	m, cmd = press(t, m, enter)
+	if _, quit := m.Update(cmd()); !isQuit(quit) {
+		t.Fatal("exiting this session did not close the monitor")
+	}
+	if strings.Join(f.calls, ",") != "exit s1" {
+		t.Fatalf("calls %v", f.calls)
+	}
+}
+
+func TestDetachFromHshMonitorPicksAnAttachedSession(t *testing.T) {
+	e := newEnv(t)
+	e.session(t, "aaa", "/one")
+	e.session(t, "bbb", "/two")
+	f := &fakeOps{attached: map[string]bool{"bbb": true}}
+	m := e.sessionModel(t, "", false, f)
+	m, _ = pick(t, m, "detach")
+	if m.view != viewSessionPick || strings.Contains(m.View(), "aaa") || !strings.Contains(m.View(), "bbb  /two") {
+		t.Fatalf("the picker does not list just the attached session:\n%s", m.View())
+	}
+	m, cmd := press(t, m, enter)
+	updated, quit := m.Update(cmd())
+	m = updated.(Model)
+	if isQuit(quit) || m.view != viewCommands || !strings.Contains(m.View(), "detached bbb") {
+		t.Fatalf("detaching another session should report and stay:\n%s", m.View())
+	}
+}
+
+func TestExitFromHshMonitorListsEverySession(t *testing.T) {
+	e := newEnv(t)
+	e.session(t, "aaa", "/one")
+	e.session(t, "bbb", "/two")
+	f := &fakeOps{attached: map[string]bool{"bbb": true}}
+	m := e.sessionModel(t, "", false, f)
+	m, _ = pick(t, m, "exit")
+	view := m.View()
+	if !strings.Contains(view, "aaa  /one") || !strings.Contains(view, "bbb  /two  attached") {
+		t.Fatalf("picker:\n%s", view)
+	}
+	m, _ = press(t, m, enter)
+	if m.view != viewConfirmExit || !strings.Contains(m.View(), "exit session aaa?") {
+		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+}
+
+func TestDetachWithNoAttachedSessions(t *testing.T) {
+	e := newEnv(t)
+	e.session(t, "aaa", "/one")
+	m := e.sessionModel(t, "", false, &fakeOps{})
+	m, cmd := pick(t, m, "detach")
+	if cmd != nil || m.view != viewCommands || !strings.Contains(m.View(), "no attached sessions") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestSessionOperationErrorsAreShown(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeOps{err: os.ErrPermission}
+	m := e.sessionModel(t, "s1", true, f)
+	m, cmd := pick(t, m, "detach")
+	updated, quit := m.Update(cmd())
+	m = updated.(Model)
+	if isQuit(quit) || !strings.Contains(m.View(), "error: permission denied") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}

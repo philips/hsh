@@ -761,7 +761,10 @@ sessions per workspace.
   `client.pid` names a live `hsh run`. `hsh detach` and
   `hsh run --resume --take-over` send that process SIGUSR1; it terminates
   its podman client (which, with `--sig-proxy=false`, leaves the container
-  running), restores the terminal, and exits reporting the detach.
+  running), restores the terminal, and exits reporting the detach. The
+  monitor's "detach session" command does the same from inside the
+  process; its "exit session" command stops the pod, so the attach returns
+  with the container stopped and `hsh run` runs its normal idle cleanup.
 - `hsh ls` shows `Attached` (a live `hsh run` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
   client), or `Shell exited` (shell gone while the proxy still runs, which

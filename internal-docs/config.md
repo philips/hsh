@@ -341,8 +341,9 @@ workspace     file with the absolute path of the workspace
   proxy included) and the resolved `secrets.json` is scrubbed, so an idle
   session holds no key material; re-entry re-resolves secrets from the
   session config
-- `hsh detach` leaves an interactive session running in the background;
-  closing the terminal does the same.
+- `hsh detach` (or **Session: detach session** in the
+  [monitor](#the-monitor)) leaves an interactive session running in the
+  background; closing the terminal does the same.
   `hsh run --resume` re-attaches to the same shell, and `hsh ls` shows
   `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
   scrubs secrets and stops the pod if the shell exits while detached.
@@ -423,6 +424,16 @@ closes. The commands:
   `ctrl-\`, `ctrl-^`, `ctrl-_`). It is saved in the global settings file
   and, when changed from inside a session, takes effect there at once;
   other attached sessions keep their key until they are re-attached
+
+- **Session: detach session** — inside a session, detaches this terminal
+  (as `hsh detach` does; `hsh run` reports `requested by the monitor`) and
+  the session keeps running. In `hsh monitor` it asks which attached session
+  to detach, unless `--session` names one
+- **Session: exit session** — asks for confirmation, then stops the session
+  as if its shell had exited: the pod stops and `secrets.json` is scrubbed;
+  the state is kept for `hsh run --resume`. Inside a session `hsh run` reports
+  `exited session ID (requested by the monitor)` and exits 0. In
+  `hsh monitor` it asks which session, unless `--session` names one
 
 `hsh monitor` opens straight into the review list when something is
 pending, like the in-session monitor. The review list's empty state is a

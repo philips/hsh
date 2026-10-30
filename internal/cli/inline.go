@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/creack/pty"
@@ -145,7 +146,48 @@ func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	return palette.New(palette.Options{
 		DB: db, Filter: filter, Pending: pending, Ignored: ignored,
 		SettingsPath: settings.Path(), MonitorKey: name,
+		Sessions: inSessionOps(), InSession: true,
 	})
+}
+
+func inSessionOps() *palette.SessionOps {
+	return &palette.SessionOps{
+		Attached: func(id string) bool { return clientAttached(state.SessionDir(id)) },
+		Detach: func(id string) (string, error) {
+			return "detaching", requestDetach("the monitor")
+		},
+		Exit: func(id string) (string, error) {
+			reason := "the monitor"
+			exitReason.Store(&reason)
+			if err := exitSession(id); err != nil {
+				exitReason.Store(nil)
+				return "", err
+			}
+			return "exiting", nil
+		},
+	}
+}
+
+func monitorSessionOps() *palette.SessionOps {
+	return &palette.SessionOps{
+		Attached: func(id string) bool { return clientAttached(state.SessionDir(id)) },
+		Detach: func(id string) (string, error) {
+			attached, err := detachClient(state.SessionDir(id), 10*time.Second)
+			if err != nil {
+				return "", err
+			}
+			if !attached {
+				return "session " + id + " is not attached", nil
+			}
+			return "detached session " + id + "; re-enter with: hsh run --resume " + id, nil
+		},
+		Exit: func(id string) (string, error) {
+			if err := exitSession(id); err != nil {
+				return "", err
+			}
+			return "exited session " + id + "; start it again with: hsh run --resume " + id, nil
+		},
+	}
 }
 
 type errorModel struct{ err error }

@@ -34,7 +34,7 @@ func monitorCommand() *ff.Command {
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
-		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key}
+		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps()}
 		if monitordb.Exists(dbPath) {
 			db, err := monitordb.Open(dbPath)
 			if err != nil {

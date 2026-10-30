@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,21 +18,40 @@ import (
 )
 
 var (
-	activeClient    atomic.Pointer[os.Process]
-	detachRequested atomic.Bool
+	activeClient atomic.Pointer[os.Process]
+	detachReason atomic.Pointer[string]
+	exitReason   atomic.Pointer[string]
 )
+
+func requestDetach(reason string) error {
+	p := activeClient.Load()
+	if p == nil {
+		return errors.New("this terminal is not attached to a session")
+	}
+	detachReason.Store(&reason)
+	return p.Signal(syscall.SIGTERM)
+}
 
 func watchDetachSignal() {
 	ch := make(chan os.Signal, 1)
 	notifyDetach(ch)
 	go func() {
 		for range ch {
-			detachRequested.Store(true)
-			if p := activeClient.Load(); p != nil {
-				_ = p.Signal(syscall.SIGTERM)
-			}
+			_ = requestDetach("hsh detach or --take-over")
 		}
 	}()
+}
+
+func exitSession(id string) error {
+	pod := "hsh-" + id
+	if !podExists(pod) {
+		return fmt.Errorf("no session %s (see: hsh ls)", id)
+	}
+	_ = os.Remove(filepath.Join(state.SessionDir(id), "secrets.json"))
+	if out, err := podman("pod", "stop", "--time", "2", pod); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+	}
+	return nil
 }
 
 func readClientPID(sessionDir string) int {

@@ -165,10 +165,44 @@ time.sleep(0.3)
 type_line(fd, "echo after-palette-$((6*7))", "after-palette-42")
 print("PASS: with nothing to review Ctrl+Space opens the command palette; adding an allowlist entry there updates the session config")
 
-out(hsh, "detach", sid)
-reap(pid)
+mark = len(transcript)
+os.write(fd, b"\x00")
+expect(fd, "Session: detach session", 10, since=mark)
+os.write(fd, b"detach")
+time.sleep(0.3)
+os.write(fd, b"\r")
+code = reap(pid)
+pump(fd, 0.5)
+if code != 0:
+    fail("detaching from the palette exited %d" % code)
+if "detached from session %s (requested by the monitor)" % sid not in transcript[mark:]:
+    fail("detaching from the palette did not report it")
+if not running(session + "-ws"):
+    fail("detaching from the palette stopped the session")
+print("PASS: Session: detach session in the palette detaches; the session keeps running")
+
+pid, fd = spawn("run", "--resume", sid)
+time.sleep(3)
+type_line(fd, "echo resumed-$((6*7))", "resumed-42")
+mark = len(transcript)
+os.write(fd, b"\x00")
+expect(fd, "Session: exit session", 10, since=mark)
+os.write(fd, b"exit sess")
+time.sleep(0.3)
+os.write(fd, b"\r")
+expect(fd, "exit session %s?" % sid, 10, since=mark)
+os.write(fd, b"\r")
+code = reap(pid, 30)
+pump(fd, 0.5)
+if code != 0:
+    fail("exiting from the palette exited %d" % code)
+if "exited session %s (requested by the monitor)" % sid not in transcript[mark:]:
+    fail("exiting from the palette did not report it")
+wait_for(lambda: not running(session + "-ws"), "the session to stop")
+if os.path.exists(os.path.join(state, "sessions", sid, "secrets.json")):
+    fail("exiting from the palette left secrets.json behind")
 out(hsh, "rm", "-f", session)
-print("PASS: the session stays usable and detaches normally after the dialog")
+print("PASS: Session: exit session asks first, then stops the session and scrubs its secrets")
 
 if plain_image:
     before = pods()

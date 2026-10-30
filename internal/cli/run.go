@@ -662,6 +662,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		defer stopForwards()
 	}
 	exitWith := func(code int) error {
+		if reason := exitReason.Load(); reason != nil {
+			fmt.Fprintf(os.Stderr, "hsh: exited session %s (requested by %s); start it again with: hsh run --resume %s\n", sessionID, *reason, sessionID)
+			code = 0
+		}
 		if code != 0 {
 			os.Exit(code)
 		}
@@ -672,8 +676,8 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return false
 		}
 		by := ""
-		if detachRequested.Load() {
-			by = " (requested by hsh detach or --take-over)"
+		if reason := detachReason.Load(); reason != nil {
+			by = " (requested by " + *reason + ")"
 		}
 		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh run --resume %s\n", sessionID, by, sessionID)
 		return true

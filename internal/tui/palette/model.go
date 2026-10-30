@@ -28,6 +28,14 @@ type Options struct {
 	Ignored      []monitordb.DeniedHost
 	SettingsPath string
 	MonitorKey   string
+	Sessions     *SessionOps
+	InSession    bool
+}
+
+type SessionOps struct {
+	Attached func(id string) bool
+	Detach   func(id string) (string, error)
+	Exit     func(id string) (string, error)
 }
 
 type view int
@@ -37,6 +45,8 @@ const (
 	viewReview
 	viewAllowHost
 	viewAllowSession
+	viewSessionPick
+	viewConfirmExit
 	viewMonitorKey
 )
 
@@ -44,7 +54,15 @@ const (
 	cmdReview = "review"
 	cmdAllow  = "allow"
 	cmdKey    = "key"
+	cmdDetach = "detach"
+	cmdExit   = "exit"
 )
+
+type sessionOpMsg struct {
+	text string
+	quit bool
+	err  error
+}
 
 type allowMsg struct {
 	session string
@@ -64,6 +82,8 @@ type Model struct {
 	keys       picker
 	host       textinput.Model
 	allowEntry string
+	pickFor    string
+	target     string
 	review     proxywatch.Model
 	hasReview  bool
 	reviewOnly bool
@@ -116,11 +136,18 @@ func (m *Model) refreshCommands() {
 	if s := m.opts.Filter.Session; s != "" {
 		allow = "session " + s
 	}
-	m.commands.setItems([]item{
+	items := []item{
 		{id: cmdReview, text: "Proxy: review denied requests", note: review},
 		{id: cmdAllow, text: "Proxy: add new allowlist item", note: allow},
 		{id: cmdKey, text: "Global Settings: change monitor key", note: "current: " + m.monitorKey},
-	})
+	}
+	if m.opts.Sessions != nil {
+		items = append(items,
+			item{id: cmdDetach, text: "Session: detach session", note: allow},
+			item{id: cmdExit, text: "Session: exit session", note: allow},
+		)
+	}
+	m.commands.setItems(items)
 }
 
 func (m Model) Init() tea.Cmd {
@@ -146,6 +173,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatus(fmt.Sprintf("monitor key is now %s (other attached sessions keep their key until re-attached)", msg.Key.Name), false)
 		m.back()
 		m.refreshCommands()
+		return m, nil
+	case sessionOpMsg:
+		if msg.err != nil {
+			m.setStatus("error: "+msg.err.Error(), true)
+			m.back()
+			return m, nil
+		}
+		m.setStatus(msg.text, false)
+		m.back()
+		if msg.quit {
+			return m, tea.Quit
+		}
 		return m, nil
 	case keyErrMsg:
 		m.setStatus("error: "+msg.err.Error(), true)
@@ -212,6 +251,27 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.sessions.update(msg)
+	case viewSessionPick:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.back()
+			return m, nil
+		case tea.KeyEnter:
+			if it, ok := m.sessions.selected(); ok {
+				return m.sessionAction(m.pickFor, it.id)
+			}
+			return m, nil
+		}
+		return m, m.sessions.update(msg)
+	case viewConfirmExit:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.back()
+			return m, nil
+		case tea.KeyEnter:
+			return m, m.sessionOpCmd(cmdExit, m.target)
+		}
+		return m, nil
 	case viewMonitorKey:
 		switch msg.Type {
 		case tea.KeyEsc:
@@ -252,6 +312,23 @@ func (m Model) run() (tea.Model, tea.Cmd) {
 	case cmdAllow:
 		m.host.SetValue("")
 		m.view = viewAllowHost
+	case cmdDetach, cmdExit:
+		if s := m.opts.Filter.Session; s != "" {
+			return m.sessionAction(it.id, s)
+		}
+		items := m.sessionItems(it.id == cmdDetach)
+		if len(items) == 0 {
+			if it.id == cmdDetach {
+				m.setStatus("no attached sessions", false)
+			} else {
+				m.setStatus("no sessions", false)
+			}
+			return m, nil
+		}
+		m.pickFor = it.id
+		m.sessions.setItems(items)
+		m.sessions.reset()
+		m.view = viewSessionPick
 	case cmdKey:
 		m.keys.setItems(keyItems(m.monitorKey))
 		m.keys.reset()
@@ -259,6 +336,43 @@ func (m Model) run() (tea.Model, tea.Cmd) {
 		m.view = viewMonitorKey
 	}
 	return m, nil
+}
+
+func (m Model) sessionItems(attachedOnly bool) []item {
+	var out []item
+	for _, it := range listSessions() {
+		attached := m.opts.Sessions.Attached != nil && m.opts.Sessions.Attached(it.id)
+		if attachedOnly && !attached {
+			continue
+		}
+		if attached && !attachedOnly {
+			it.note = "attached"
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+func (m Model) sessionAction(kind, id string) (tea.Model, tea.Cmd) {
+	m.target = id
+	if kind == cmdExit {
+		m.view = viewConfirmExit
+		return m, nil
+	}
+	return m, m.sessionOpCmd(kind, id)
+}
+
+func (m Model) sessionOpCmd(kind, id string) tea.Cmd {
+	ops := m.opts.Sessions
+	quit := m.opts.InSession && id == m.opts.Filter.Session
+	return func() tea.Msg {
+		op := ops.Detach
+		if kind == cmdExit {
+			op = ops.Exit
+		}
+		text, err := op(id)
+		return sessionOpMsg{text: text, quit: quit && err == nil, err: err}
+	}
 }
 
 func keyItems(current string) []item {
@@ -455,6 +569,29 @@ func (m Model) View() string {
 			"",
 			m.statusView(),
 			helpStyle.Render("  type to filter • ↑/↓ move • enter add • esc back"),
+		}
+	case viewSessionPick:
+		heading := "Session: detach which session?"
+		if m.pickFor == cmdExit {
+			heading = "Session: exit which session?"
+		}
+		sections = []string{
+			titleStyle.Render(heading),
+			"",
+			m.sessions.view(listRows),
+			"",
+			m.statusView(),
+			helpStyle.Render("  type to filter • ↑/↓ move • enter choose • esc back"),
+		}
+	case viewConfirmExit:
+		sections = []string{
+			titleStyle.Render("Session: exit session " + m.target + "?"),
+			"",
+			"Its shell and everything running in it stop. The session's state is kept;",
+			"hsh run --resume " + m.target + " starts a new shell.",
+			"",
+			m.statusView(),
+			helpStyle.Render("  enter exit the session • esc cancel"),
 		}
 	case viewMonitorKey:
 		sections = []string{
