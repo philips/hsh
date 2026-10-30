@@ -1,4 +1,4 @@
-## First run experience from README
+# First run experience from README
 
 Embed a little parser that will ask the user if they want to read examples about Pi+Mistral, OpenAI Codex or Claude.
 
@@ -14,9 +14,35 @@ typing the full session number is no fun
 
 remove all exited sessions
 
+## hsh rm --garbage
+
+Lets remove `hsh gc` as it is a small problem 
+
 ## hsh run --session EXITED
 
 Is it possible to restart an exited session
+
+## hsh resmue subcommand
+
+remove `hsh run --resume` as that is a confusing use case
+
+the ideal workflow for me would be:
+
+```
+hsh run pi .
+<exit container>
+hsh resume .
+```
+
+## networking modes
+
+## monitor proactive add URLs
+
+It would be nice if a user could open the monitor, press a key, and past in URLs that they want to add to the current session's allow or denylist
+
+## monitor suspend command
+
+the monitor needs to be expanded to support additional 
 
 ## create policy config files
 
