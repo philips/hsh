@@ -22,7 +22,7 @@ Lets remove `hsh gc` as it is a small problem
 
 Is it possible to restart an exited session
 
-## hsh resmue subcommand
+## hsh resume subcommand
 
 remove `hsh run --resume` as that is a confusing use case
 
@@ -33,6 +33,8 @@ hsh run pi .
 <exit container>
 hsh resume .
 ```
+
+Need to consider how resume might interact with gVisor 
 
 ## networking modes
 

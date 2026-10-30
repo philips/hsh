@@ -66,14 +66,11 @@ Start vibing
 
 <!--- install.sh END -->
 
-## Inspiration
+## Additional Documentation
 
-These projects inspired some of the ideas behind hsh
+- [Sessions](Documentation/sessions.md]
+- [Inspiration](Documentation/inspiration.md]
 
-- https://github.com/agent-substrate/substrate/blob/main/docs/egress-credential-injection.md
-- https://github.com/superhq-ai/shuru
-- https://nono.sh/
-- https://github.com/EddyPronk/podman-agent-sandbox
 
 ## TODO
 

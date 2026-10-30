@@ -4,6 +4,16 @@
 together in a secure sandbox. The sandbox may be isolated from the host via
 gVisor or Linux Containers.
 
+## Session Lifecycle
+
+Sessions have 3 common phases that are seen in `hsh ls`.
+
+- Running: session is running and attached to a terminal
+- Detached: session is running and detached from a terminal
+- Exited: session processes are not running and can be restarted
+
+In Detached and Exited states a user can resume the session with `hsh resume`.:
+
 ## Session Setup
 
 A session begins like `hsh run pi .` which does a sequence of tasks:
@@ -16,13 +26,3 @@ A session begins like `hsh run pi .` which does a sequence of tasks:
 - launches the agent process
 
 At this point the session can be used to do agentic work in Pi.
-
-## Session Lifecycle
-
-Sessions have 3 common phases that are seen in `hsh ls`.
-
-- Running: session is running and attached to a terminal
-- Detached: session is running and detached from a terminal
-- Exited: session processes are not running and can be restarted
-
-In Detached and Exited states a user can resume the session with `hsh resume`.:
