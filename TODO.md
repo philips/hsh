@@ -1,3 +1,15 @@
+## fuzzy matching for rm
+
+typing the full session number is no fun
+
+## hsh rm --exited
+
+remove all exited sessions
+
+## hsh run --session EXITED
+
+Is it possible to restart an exited session
+
 ## create policy config files
 
 It would be good to create and maintain "policy" files for popular services like sr.ht, gitlab, github, etc. 
@@ -21,13 +33,9 @@ Which would add a file to `~/.config/hsh/policy/network/github.com.json`
 
 Then a user could do something like `hsh policy list` and `hsh session apply-policy <session-id> <policy-id>`. Policies could also be referenced from config.json files.
 
+Coupled with this we should probably 
+
 Longerterm it would be awesome to get services to publish those policy files themselves. 
-
-## stop modifying config.json for every monitor add
-
-I think modifying the users config.json is dangerous because we might get schema drift if the user provides a config.json with fields unknown to the current version of hsh.
-
-Instead I would like to have a single `~/.local/state/hsh/session/<id>/session.db` with tables for secrets, network policy, etc.
 
 ## Add a "report" network policy
 
