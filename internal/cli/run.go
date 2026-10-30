@@ -551,6 +551,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			"--label", "hsh.workspace=" + workspaceSource}
 		if gv != nil {
 			podCreateArgs = append(podCreateArgs, "--infra=false", "--share", "")
+		} else if os.Getenv("HSH_NESTED") == "1" {
+			podCreateArgs = append(podCreateArgs, "--network", "none",
+				"--infra-image", cfg.Image, "--infra-command", "sleep infinity")
 		}
 		if out, err := podman(podCreateArgs...); err != nil {
 			return fmt.Errorf("create pod: %w\n%s", err, out)
@@ -582,6 +585,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	wsArgs := []string{
 		"create", "--pod", podName, "--name", wsName,
 		"--security-opt", "label=disable",
+	}
+	if os.Getenv("HSH_NESTING") == "1" {
+		wsArgs = append(wsArgs, "-e", "HSH_NESTING=1")
 	}
 	if gv != nil {
 		wsArgs = append(wsArgs, "--runtime", gv.wrapper, "-v", exe+":"+sshdPath+":ro")

@@ -196,7 +196,21 @@ func enterSession(opts InnerOptions) error {
 	//
 	// see
 	// https://thomasvanlaere.com/posts/2026/10/exploring-containers-part-4/
-	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
+	keepCaps := []int{unix.CAP_DAC_OVERRIDE}
+	if os.Getenv("HSH_NESTING") == "1" {
+		keepCaps = append(keepCaps,
+			unix.CAP_SETUID, unix.CAP_SETGID, unix.CAP_SETFCAP, unix.CAP_SETPCAP,
+			unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN,
+			unix.CAP_CHOWN, unix.CAP_FOWNER, unix.CAP_FSETID)
+		if err := dropBoundingSetKeep(keepCaps...); err != nil {
+			return err
+		}
+		if err := nestingStorageSetup(); err != nil {
+			return err
+		}
+		os.Setenv("HSH_NESTED", "1")
+	}
+	if err := dropCapsKeep(keepCaps...); err != nil {
 		return err
 	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
@@ -400,6 +414,47 @@ func stripSetuid(skip string) {
 
 func dropCaps() error {
 	return dropCapsKeep()
+}
+
+func nestingStorageSetup() error {
+	const dir = "/tmp/podman-nest"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	storage := filepath.Join(dir, "storage.conf")
+	storageContent := "[storage]\ndriver = \"vfs\"\nrunroot = \"" + filepath.Join(dir, "runroot") + "\"\ngraphroot = \"" + filepath.Join(dir, "store") + "\"\n"
+	if err := os.WriteFile(storage, []byte(storageContent), 0o644); err != nil {
+		return err
+	}
+	os.Setenv("CONTAINERS_STORAGE_CONF", storage)
+	containers := filepath.Join(dir, "containers.conf")
+	containersContent := "[containers]\ncgroups = \"disabled\"\ncgroupns = \"host\"\nnetns = \"host\"\ncgroup_manager = \"cgroupfs\"\n"
+	if err := os.WriteFile(containers, []byte(containersContent), 0o644); err != nil {
+		return err
+	}
+	os.Setenv("CONTAINERS_CONF_OVERRIDE", containers)
+	return nil
+}
+
+func dropBoundingSetKeep(keep ...int) error {
+	keepSet := make(map[int]bool, len(keep))
+	for _, c := range keep {
+		keepSet[c] = true
+	}
+	for c := 0; ; c++ {
+		isSet, err := unix.PrctlRetInt(unix.PR_CAPBSET_READ, uintptr(c), 0, 0, 0)
+		if err == unix.EINVAL {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if isSet == 1 && !keepSet[c] {
+			if err := unix.Prctl(unix.PR_CAPBSET_DROP, uintptr(c), 0, 0, 0); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func dropCapsKeep(keep ...int) error {

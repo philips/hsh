@@ -190,6 +190,12 @@ hsh forward / ssh hsh-<id> / hsh oauth callback      (host)
 
 - `tty` reports `ttyname error` inside the sandbox; the terminal itself
   (size, job control, detach/attach) works.
+- Running podman or hsh inside a gVisor sandbox: the runsc sentry does not
+  implement writing a nested user namespace's `uid_map`, so the nested
+  podman fails at its re-exec regardless of the session's capabilities
+  (`unshare -U` succeeds, `unshare -Ur` fails on the map write). Nesting
+  tests therefore use the default runtime only (see the nesting section in
+  docs/testing.md).
 
 ## Tests
 

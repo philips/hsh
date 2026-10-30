@@ -198,3 +198,76 @@ denials (it spends tokens and needs the `hsh://mistral-api-key` secret).
 `VARIANTS="v5 c0 c1"` runs the shipped notice through `{network_policy}` on a
 blocked host, and the over-caution pair: an `https`-mode task on a reachable
 host without (`c0`) and with (`c1`) the notice.
+
+## Nesting tests (hsh inside an hsh sandbox)
+
+Running hsh (and podman) inside an existing sandbox fails by design: the
+session entrypoint drops all capabilities except `CAP_DAC_OVERRIDE`, and
+podman inside a user namespace needs more than that to re-execute itself
+into a fresh user namespace, apply image layers, and create containers.
+
+`HSH_NESTING=1 hsh run ...` is a test-only escape hatch. The workspace
+container receives the variable, and the session entrypoint keeps this
+capability set alongside `CAP_DAC_OVERRIDE` (and trims the capability
+bounding set to the same set, so a nested podman prunes its container specs
+to what the session can grant):
+
+```
+CAP_SETUID CAP_SETGID CAP_SETFCAP CAP_SETPCAP
+CAP_SYS_ADMIN CAP_NET_ADMIN CAP_CHOWN CAP_FOWNER CAP_FSETID
+```
+
+The requirements behind each capability: `SETUID`/`SETGID`/`SETFCAP` for
+podman's user-namespace re-exec and `uid_map`/`gid_map` writes,
+`SYS_ADMIN`/`NET_ADMIN` for the inner runtime's mounts and networking,
+`CHOWN`/`FOWNER`/`FSETID` for applying image layers with the `vfs` driver,
+`SETPCAP` for the inner runtime's capability filtering. `NO_NEW_PRIVS` and
+the default seccomp profile stay in effect; no `--userns` changes are
+needed (the per-container user namespace of the session works).
+
+The session entrypoint also configures nested podman automatically, so a
+nested `hsh run` works without further setup:
+
+- a `vfs` storage config at `/tmp/podman-nest/storage.conf`, exported as
+  `CONTAINERS_STORAGE_CONF` (the default overlay driver cannot unpack
+  layers inside a sandbox: `after fallback to chroot: operation not
+  permitted`)
+- a `containers.conf` override at `/tmp/podman-nest/containers.conf`,
+  exported as `CONTAINERS_CONF_OVERRIDE`, with `cgroups = "disabled"`,
+  `cgroupns = "host"`, `netns = "host"`, and `cgroup_manager = "cgroupfs"`
+  (the cgroup filesystem and `/proc/sys` are read-only inside a sandbox:
+  without it, `podman pod create` fails at `creating cgroup path
+  /libpod_parent/...` and `podman run` fails at netavark sysctl writes)
+
+```
+podman pull docker.io/library/busybox
+podman run --rm docker.io/library/busybox echo ok
+```
+
+Inside a session the entrypoint also sets `HSH_NESTED=1`. A nested
+`hsh run` sees it and creates its pod with `--network none` and an infra
+container taken from the session image instead of the pause image (the
+pause image's rootfs is a native overlay mount, and netavark cannot set
+up a pod network on the read-only `/proc/sys` of a sandbox). The nested
+session is therefore network-isolated: its shell has no egress, but the
+nested `hsh run` can still pull images, since the pull happens in the
+outer session's shell before the pod is created.
+
+For nested `hsh run`, the session image must contain podman; any image with
+an `org.ifup.hsh` label works, e.g. build one from `quay.io/podman/stable`
+and run the inner hsh with the binary available in the workspace mount:
+
+```
+cat > nest.Containerfile <<'EOF'
+FROM quay.io/podman/stable:latest
+LABEL org.ifup.hsh='{"version":1,"shell":"/bin/bash"}'
+EOF
+podman build -t nest-podman nest.Containerfile
+HSH_NESTING=1 hsh run localhost/nest-podman .
+```
+
+Prefer testing nesting with a pre-pulled image (`hsh run --pull never`)
+to keep the inner environment off the network. Nesting is only supported
+on the default runtime and a real kernel; inside a gVisor sandbox the
+nested `uid_map` write is refused by the sentry regardless of capabilities
+(see docs/gvisor.md).
