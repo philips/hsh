@@ -17,7 +17,7 @@ func validMonitorKeys(t *testing.T) []Key {
 		}
 		names = append(names, "ctrl-"+string(c))
 	}
-	names = append(names, `ctrl-\`, "ctrl-]", "ctrl-^", "ctrl-_")
+	names = append(names, `ctrl-\`, "ctrl-^", "ctrl-_")
 	var keys []Key
 	for _, n := range names {
 		k, err := ParseKey(n)
@@ -162,14 +162,14 @@ func TestAgentQueriesAndRepliesCannotOpenTheOverlay(t *testing.T) {
 }
 
 func TestIsolationHoldsForOtherMonitorKeys(t *testing.T) {
-	for _, name := range []string{"ctrl-a", "ctrl-]"} {
+	for _, name := range []string{"ctrl-a", "ctrl-\\"} {
 		t.Run(name, func(t *testing.T) {
 			key, err := ParseKey(name)
 			if err != nil {
 				t.Fatal(err)
 			}
 			script := `stty -echo; while IFS= read -r l; do eval "$l"; done`
-			h := newHarnessKey(t, true, time.Hour, script, "", key)
+			h := newHarnessKey(t, true, time.Hour, script, key)
 			h.run("echo hi")
 			h.press(strings.Join(terminalReplyCorpus, ""))
 			h.relay.mu.Lock()
@@ -301,17 +301,5 @@ func TestRegionFilterNeverIncludesTheStatusRow(t *testing.T) {
 	got := string(out)
 	if !strings.Contains(got, "\x1b[1;29r") || !strings.Contains(got, "plain text") {
 		t.Fatalf("plain text was not preserved: %q", got)
-	}
-}
-
-func TestTranslateKeysLeavesTerminalRepliesAlone(t *testing.T) {
-	keys := ParseDetachKeys("ctrl-],ctrl-a")
-	for _, seq := range terminalReplyCorpus {
-		if got := string(translateKeys([]byte(seq), keys)); got != seq {
-			t.Errorf("detach keys rewrote a terminal reply: %q -> %q", seq, got)
-		}
-	}
-	if got := string(translateKeys([]byte("\x1b[93;5:3u"), keys)); got != "" {
-		t.Errorf("a detach key release event should be swallowed, got %q", got)
 	}
 }

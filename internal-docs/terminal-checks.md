@@ -77,9 +77,10 @@ Mark each pass, fail, or n/a, and describe any failure.
     `:set mouse=a`, or `htop`): click and scroll in it, then open the review
     screen and click and scroll: nothing happens in the review screen and
     nothing leaks into the session afterwards.
-16. Ctrl+] detaches (check this with a program running that enables the
-    kitty keyboard protocol, such as the pi harness). `hsh run --resume`
-    re-attaches and the screen repaints.
+16. Pressing Ctrl+Space twice in a row opens the review screen and then
+    closes it, and the program in the session receives one Ctrl+Space (check
+    this in a program that shows key codes, with and without the kitty
+    keyboard protocol enabled). The session screen repaints afterwards.
 17. Ctrl+Space with the kitty keyboard protocol active (pi running) still
     opens the review screen.
 

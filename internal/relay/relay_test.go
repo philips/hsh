@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -147,16 +148,16 @@ const (
 
 func newHarness(t *testing.T, status bool, pollEvery time.Duration) *harness {
 	t.Helper()
-	return newHarnessWith(t, status, pollEvery, `stty -echo; while IFS= read -r l; do eval "$l"; done`, "")
+	return newHarnessWith(t, status, pollEvery, `stty -echo; while IFS= read -r l; do eval "$l"; done`)
 }
 
-func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, detachKeys string) *harness {
+func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script string) *harness {
 	t.Helper()
 	key, _ := ParseKey("ctrl-space")
-	return newHarnessKey(t, status, pollEvery, script, detachKeys, key)
+	return newHarnessKey(t, status, pollEvery, script, key)
 }
 
-func newHarnessKey(t *testing.T, status bool, pollEvery time.Duration, script, detachKeys string, key Key) *harness {
+func newHarnessKey(t *testing.T, status bool, pollEvery time.Duration, script string, key Key) *harness {
 	t.Helper()
 	if !vt.Available() {
 		t.Skip("built without GOEXPERIMENT=simd")
@@ -178,7 +179,7 @@ func newHarnessKey(t *testing.T, status bool, pollEvery time.Duration, script, d
 	pr, pw := io.Pipe()
 	h := &harness{t: t, master: master, user: user, keys: pw, done: make(chan struct{})}
 	r, err := New(Config{In: pr, Out: user, Pty: master, Cols: userCols, Rows: userRows,
-		StatusLine: status, Key: key, DetachKeys: detachKeys, Name: "unit", PollEvery: pollEvery,
+		StatusLine: status, Key: key, Name: "unit", PollEvery: pollEvery,
 		Count: func() (int, int, error) {
 			h.polls.Add(1)
 			return int(h.pending.Load()), int(h.held.Load()), nil
@@ -457,14 +458,14 @@ func TestResizeResizesThePtyEmulatorAndTheOpenOverlay(t *testing.T) {
 }
 
 func TestParseKey(t *testing.T) {
-	cases := map[string]byte{"ctrl-space": 0, "": 0, "ctrl-a": 1, "ctrl-z": 26, "ctrl-\\": 0x1c, "ctrl-]": 0x1d}
+	cases := map[string]byte{"ctrl-space": 0, "": 0, "ctrl-a": 1, "ctrl-z": 26, "ctrl-\\": 0x1c}
 	for name, want := range cases {
 		k, err := ParseKey(name)
 		if err != nil || k.Byte != want {
 			t.Errorf("%q: %v %v", name, k, err)
 		}
 	}
-	for _, bad := range []string{"a", "ctrl-1", "ctrl-i", "ctrl-m", "ctrl-h", "alt-x", "ctrl-spacebar"} {
+	for _, bad := range []string{"a", "ctrl-1", "ctrl-i", "ctrl-m", "ctrl-h", "alt-x", "ctrl-spacebar", "ctrl-]"} {
 		if _, err := ParseKey(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -534,42 +535,47 @@ func TestEnhancedKeyEncodingsAreRecognised(t *testing.T) {
 	}
 }
 
-func TestTranslateKeysRewritesOnlyTheConfiguredKeys(t *testing.T) {
-	keys := ParseDetachKeys("ctrl-],ctrl-a,d")
-	if len(keys) != 2 {
-		t.Fatalf("parsed %d keys from the detach spec", len(keys))
-	}
-	cases := []struct{ in, want string }{
-		{"ab", "ab"},
-		{"x\x1b[93;5uy", "x\x1dy"},
-		{"\x1b[27;5;93~", "\x1d"},
-		{"\x1b[93;5:3u", ""},
-		{"\x1b[97;5u", "\x01"},
-		{"\x1b[98;5u", "\x1b[98;5u"},
-		{"\x1b[A\x1b[93;5u", "\x1b[A\x1d"},
-	}
-	for _, c := range cases {
-		if got := string(translateKeys([]byte(c.in), keys)); got != c.want {
-			t.Errorf("%q: got %q want %q", c.in, got, c.want)
-		}
-	}
-	if got := string(translateKeys([]byte("\x1b[93;5u"), nil)); got != "\x1b[93;5u" {
-		t.Errorf("no keys configured changed the input: %q", got)
+func TestDoubleTapForwardsTheMonitorKeyToTheChild(t *testing.T) {
+	for _, tc := range []struct{ name, tap, want string }{
+		{"legacy byte", "\x00\x00xy", "\x00xy"},
+		{"kitty encoding", "\x1b[32;5u\x1b[32;5uxy", "\x1b[32;5uxy"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			file := t.TempDir() + "/got"
+			h := newHarnessWith(t, true, time.Hour, "stty raw -echo; head -c "+strconv.Itoa(len(tc.want))+" > "+file)
+			time.Sleep(300 * time.Millisecond)
+			h.press(tc.tap)
+			h.waitFor("the child to read the forwarded key", func() bool {
+				b, _ := os.ReadFile(file)
+				return len(b) == len(tc.want)
+			})
+			b, _ := os.ReadFile(file)
+			if string(b) != tc.want {
+				t.Fatalf("child received %q, want %q", b, tc.want)
+			}
+			h.waitFor("the overlay to close", func() bool {
+				return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN")
+			})
+		})
 	}
 }
 
-func TestDetachKeyInKittyEncodingReachesTheChildAsTheLegacyByte(t *testing.T) {
+func TestSingleMonitorKeyIsNotForwardedToTheChild(t *testing.T) {
 	file := t.TempDir() + "/got"
-	h := newHarnessWith(t, true, time.Hour, "stty raw -echo; head -c 3 > "+file, "ctrl-]")
+	h := newHarnessWith(t, true, time.Hour, "stty raw -echo; head -c 2 > "+file)
 	time.Sleep(300 * time.Millisecond)
-	h.press("\x1b[93;5uxy")
-	h.waitFor("the child to read three bytes", func() bool {
+	h.press("\x00")
+	h.waitFor("the overlay", func() bool { return strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	h.press("q")
+	h.waitFor("the overlay to close", func() bool { return !strings.Contains(h.user.text(), "FAKE REVIEW SCREEN") })
+	h.press("xy")
+	h.waitFor("the child to read two bytes", func() bool {
 		b, _ := os.ReadFile(file)
-		return len(b) == 3
+		return len(b) == 2
 	})
 	b, _ := os.ReadFile(file)
-	if string(b) != "\x1dxy" {
-		t.Fatalf("child received %q, want the legacy Ctrl+] byte then xy", b)
+	if string(b) != "xy" {
+		t.Fatalf("child received %q, want only xy", b)
 	}
 }
 

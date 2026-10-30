@@ -710,9 +710,9 @@ sessions per workspace.
   scrubbed from the session directory: an idle session holds no key
   material. Re-entry re-resolves secrets from the session config.
 - **Detach and attach** use podman's own flow. Interactive sessions run
-  the podman client with `--sig-proxy=false --detach-keys=<detach_keys>`
-  (default Ctrl-]; podman's Ctrl-P Ctrl-Q is disabled). Detaching, or
-  closing the terminal, ends only the podman client; conmon keeps the
+  the podman client with `--sig-proxy=false --detach-keys=` (podman's
+  Ctrl-P Ctrl-Q is disabled; no key detaches). `hsh detach`, or closing the
+  terminal, ends only the podman client; conmon keeps the
   container's pty, so the shell and agent keep running, and
   `hsh run --resume` runs `podman attach` to the same shell. When the
   client returns and the workspace container is still running, `hsh run`

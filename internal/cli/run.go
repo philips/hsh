@@ -648,7 +648,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	infof("hsh: starting workspace (proxy logs: podman logs %s)\n", proxyName)
 	detachable := interactive && len(agentExec) == 0 && !ro.rm
-	flags := attachFlags(interactive, detachable, cfg.DetachKeys)
+	flags := attachFlags(interactive, detachable)
 	var inline *inlineMonitor
 	if detachable {
 		var warn string

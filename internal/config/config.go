@@ -147,7 +147,7 @@ type Config struct {
 	OAuth   map[string]OAuthProvider `json:"oauth"`
 	Agent   Agent                    `json:"agent"`
 
-	DetachKeys string  `json:"detach_keys"`
+	DetachKeys string  `json:"detach_keys,omitempty"`
 	Monitor    Monitor `json:"monitor"`
 }
 
@@ -158,8 +158,6 @@ type Monitor struct {
 }
 
 const DefaultMonitorKey = "ctrl-space"
-
-const DefaultDetachKeys = "ctrl-]"
 
 type Agent struct {
 	Command      []string `json:"command"`
@@ -201,8 +199,7 @@ func Default() *Config {
 		Shell:   "/bin/sh",
 		Mounts:  []string{".:/workspace"},
 
-		DetachKeys: DefaultDetachKeys,
-		Monitor:    Monitor{Enabled: true, StatusLine: true, Key: DefaultMonitorKey},
+		Monitor: Monitor{Enabled: true, StatusLine: true, Key: DefaultMonitorKey},
 	}
 }
 

@@ -55,14 +55,14 @@ proxy, the monitor database, and the example image:
   request log), and after `secret rm` the entry goes missing: a warning,
   no injection, the request still forwarded, and a dangling-reference
   warning without editing the config
-- **step 17** (`test/detach.py`, a pty driver): Ctrl-] detaches and leaves
-  the shell, secrets, and a reaper running; podman's Ctrl-P Ctrl-Q does
+- **step 17** (`test/detach.py`, a pty driver): `hsh detach` detaches and
+  leaves the shell, secrets, and a reaper running; podman's Ctrl-P Ctrl-Q does
   nothing; `hsh run --resume` re-enters the same shell; closing the
   terminal detaches; the reaper scrubs secrets and stops the pod when a
   detached shell exits; without a reaper `hsh ls` shows `Shell exited`
   and `hsh rm --exited` removes it; `hsh detach` force-detaches an attached
   terminal; `--resume` refuses a session attached elsewhere and
-  `--resume --take-over` takes it over; `--rm` sessions cannot detach
+  `--resume --take-over` takes it over; `--rm` sessions are removed when the shell exits
 - **step 19**: held requests — in an `allowlist` session with
   `approval_wait` set and someone watching (the `attended` marker), a denied
   CONNECT stays pending until `hsh proxy allow` approves it and then

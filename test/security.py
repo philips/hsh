@@ -151,7 +151,7 @@ os.write(fd, b"q")
 type_line(fd, "echo after-attack-$((6*7))", "after-attack-42")
 print("PASS: the real Ctrl+Space still opens the review and the session survives the attack")
 
-os.write(fd, b"\x1d")
+out(hsh, "detach", session[len("hsh-"):])
 reap(pid)
 out(hsh, "rm", "-f", session)
 print("PASS: agent-to-monitor isolation holds end to end")

@@ -37,7 +37,6 @@ type inlineMonitor struct {
 	dbPath     string
 	configPath string
 	monitor    config.Monitor
-	detachKeys string
 }
 
 func newInlineMonitor(cfg *config.Config, session, dbPath, configPath string, interactive bool) (*inlineMonitor, string) {
@@ -52,7 +51,7 @@ func newInlineMonitor(cfg *config.Config, session, dbPath, configPath string, in
 	if _, err := relay.ParseKey(cfg.Monitor.Key); err != nil {
 		return nil, "hsh: " + err.Error() + "; the inline proxy review is disabled"
 	}
-	return &inlineMonitor{session: session, dbPath: dbPath, configPath: configPath, monitor: cfg.Monitor, detachKeys: cfg.DetachKeys}, ""
+	return &inlineMonitor{session: session, dbPath: dbPath, configPath: configPath, monitor: cfg.Monitor}, ""
 }
 
 type sessionDenials struct {
@@ -161,7 +160,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	defer master.Close()
 	r, err := relay.New(relay.Config{
 		In: os.Stdin, Out: os.Stdout, Pty: master, Cols: cols, Rows: rows,
-		StatusLine: im.monitor.StatusLine, Key: key, DetachKeys: im.detachKeys,
+		StatusLine: im.monitor.StatusLine, Key: key,
 		Count: source.Count, Overlay: source.Overlay, Name: im.session,
 	})
 	if err != nil {

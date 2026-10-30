@@ -131,8 +131,10 @@ func (r *Relay) reviewInputLocked(p []byte) []byte {
 			rest = nil
 			break
 		}
+		sent := append([]byte(nil), rest[idx:idx+width]...)
 		rest = rest[idx+width:]
 		r.closeReviewLocked()
+		_, _ = r.cfg.Pty.Write(sent)
 	}
 	r.paintLocked()
 	if r.review.open {

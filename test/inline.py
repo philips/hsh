@@ -147,7 +147,7 @@ expect(fd, "nothing to review", 10, since=mark)
 print("PASS: selecting with space and approving with enter adds the host to the session config, as in hsh monitor; closing with q delivers the held output and the line goes quiet")
 
 type_line(fd, "echo after-dialog-$((6*7))", "after-dialog-42")
-os.write(fd, b"\x1d")
+out(hsh, "detach", sid)
 reap(pid)
 out(hsh, "rm", "-f", session)
 print("PASS: the session stays usable and detaches normally after the dialog")
@@ -163,7 +163,7 @@ if plain_image:
     type_line(fd, "echo still-plain-$((6*7))", "still-plain-42")
     if "nothing to review" in transcript[plain_mark:] or "Proxy requests awaiting review" in transcript[plain_mark:]:
         fail("monitor.enabled=false still drew the status line or dialog")
-    os.write(fd, b"\x1d")
+    out(hsh, "detach", plain_session[len("hsh-"):])
     reap(pid)
     out(hsh, "rm", "-f", plain_session)
     print("PASS: monitor.enabled=false attaches directly with no status line and no Ctrl+Space dialog")

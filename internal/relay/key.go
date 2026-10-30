@@ -11,7 +11,7 @@ type Key struct {
 	Code rune
 }
 
-const keyHelp = "want ctrl-space, ctrl-a..ctrl-z, ctrl-\\, ctrl-], ctrl-^ or ctrl-_"
+const keyHelp = "want ctrl-space, ctrl-a..ctrl-z, ctrl-\\, ctrl-^ or ctrl-_"
 
 func ParseKey(name string) (Key, error) {
 	n := strings.ToLower(strings.TrimSpace(name))
@@ -41,28 +41,12 @@ func ctrlKey(rest string) (Key, bool) {
 		return Key{Byte: rest[0] - 'a' + 1, Code: rune(rest[0])}, true
 	case rest == "\\":
 		return Key{Byte: 0x1c, Code: '\\'}, true
-	case rest == "]":
-		return Key{Byte: 0x1d, Code: ']'}, true
 	case rest == "^":
 		return Key{Byte: 0x1e, Code: '^'}, true
 	case rest == "_":
 		return Key{Byte: 0x1f, Code: '_'}, true
 	}
 	return Key{}, false
-}
-
-func ParseDetachKeys(spec string) []Key {
-	var keys []Key
-	for _, tok := range strings.Split(spec, ",") {
-		rest, ok := strings.CutPrefix(strings.ToLower(strings.TrimSpace(tok)), "ctrl-")
-		if !ok {
-			continue
-		}
-		if k, ok := ctrlKey(rest); ok {
-			keys = append(keys, k)
-		}
-	}
-	return keys
 }
 
 type ctrlEvent struct {
@@ -122,36 +106,4 @@ func (k Key) find(p []byte) (idx, width int) {
 		}
 	}
 	return -1, 0
-}
-
-func translateKeys(p []byte, keys []Key) []byte {
-	if len(keys) == 0 {
-		return p
-	}
-	var out []byte
-	for i := 0; i < len(p); {
-		if p[i] == 0x1b {
-			if ev, ok := decodeCtrl(p[i:]); ok {
-				if k, found := matchCode(keys, ev.code); found {
-					if !ev.release {
-						out = append(out, k.Byte)
-					}
-					i += ev.width
-					continue
-				}
-			}
-		}
-		out = append(out, p[i])
-		i++
-	}
-	return out
-}
-
-func matchCode(keys []Key, code rune) (Key, bool) {
-	for _, k := range keys {
-		if k.Code == code {
-			return k, true
-		}
-	}
-	return Key{}, false
 }

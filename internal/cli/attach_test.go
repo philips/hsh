@@ -13,17 +13,14 @@ func TestAttachFlags(t *testing.T) {
 		name        string
 		interactive bool
 		detachable  bool
-		keys        string
 		want        []string
 	}{
-		{"piped", false, false, "ctrl-]", nil},
-		{"detachable", true, true, "ctrl-]", []string{"--sig-proxy=false", "--detach-keys=ctrl-]"}},
-		{"custom keys", true, true, "ctrl-a,d", []string{"--sig-proxy=false", "--detach-keys=ctrl-a,d"}},
-		{"detach disabled by config", true, true, "", []string{"--sig-proxy=false", "--detach-keys="}},
-		{"interactive but not detachable", true, false, "ctrl-]", []string{"--detach-keys="}},
+		{"piped", false, false, nil},
+		{"detachable", true, true, []string{"--sig-proxy=false", "--detach-keys="}},
+		{"interactive but not detachable", true, false, []string{"--detach-keys="}},
 	}
 	for _, c := range cases {
-		if got := attachFlags(c.interactive, c.detachable, c.keys); !reflect.DeepEqual(got, c.want) {
+		if got := attachFlags(c.interactive, c.detachable); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}

@@ -13,7 +13,7 @@ func validKeys() []Key {
 	for c := 'a'; c <= 'z'; c++ {
 		names = append(names, "ctrl-"+string(c))
 	}
-	names = append(names, `ctrl-\`, "ctrl-]", "ctrl-^", "ctrl-_")
+	names = append(names, `ctrl-\`, "ctrl-^", "ctrl-_")
 	var keys []Key
 	for _, n := range names {
 		k, err := ParseKey(n)

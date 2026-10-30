@@ -77,7 +77,7 @@ bump.
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
-| `detach_keys` | `ctrl-]` | podman key sequence that detaches an interactive session (`ctrl-a,d` style); empty disables detaching |
+| `detach_keys` | none | ignored; accepted so existing configs keep loading (no key detaches a session; use `hsh detach`) |
 | `monitor` | `{"enabled": true, "status_line": true, "key": "ctrl-space"}` | inline proxy review in interactive sessions ([below](#inline-proxy-review)); `enabled: false` attaches the container directly |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session; in both, `{network_policy}` is replaced with the [network notice](#network-notice) path; `agent.context_files`: instruction files that get the notice as a managed block |
 
@@ -341,9 +341,8 @@ workspace     file with the absolute path of the workspace
   proxy included) and the resolved `secrets.json` is scrubbed, so an idle
   session holds no key material; re-entry re-resolves secrets from the
   session config
-- the detach key (`detach_keys`, default Ctrl-], see below) leaves an
-  interactive session running in the background; closing the terminal does
-  the same.
+- `hsh detach` leaves an interactive session running in the background;
+  closing the terminal does the same.
   `hsh run --resume` re-attaches to the same shell, and `hsh ls` shows
   `Attached`, `Detached`, or `Shell exited`. A small `hsh-reaper` process
   scrubs secrets and stops the pod if the shell exits while detached.
@@ -363,24 +362,6 @@ workspace     file with the absolute path of the workspace
   every sandbox; `hsh rm --exited` removes exited sandboxes; `hsh rm
   --garbage` collects session state whose pod is gone
 
-### Detach key
-
-`detach_keys` takes podman's syntax: comma-separated keys, each `ctrl-` plus
-a letter or one of `@ \ ] ^ _` (for example `ctrl-a,d` is Ctrl-A then d), and an
-empty string disables detaching. Set it in the seed config (`config.hsh`), in
-an image's `org.ifup.hsh` label, or, for a session that already exists, in
-`$XDG_STATE_HOME/hsh/sessions/<id>/config.json` before `hsh run --resume <id>`
-(a session keeps its own copy of the config).
-
-If the key seems to do nothing, check what your terminal sends: run `cat -v`
-in the session and press it. `^]` is the plain control byte. Something like
-`^[[93;5u` or `^[[27;5;93~` means a program in the session switched the
-terminal to an enhanced keyboard protocol (kitty or xterm modifyOtherKeys),
-and podman does not understand those encodings. The inline review relay
-(below) translates such encodings back for the configured detach key; without
-it (a build without `GOEXPERIMENT=simd`, or `monitor.enabled: false`) pick a
-key that your programs do not remap, or avoid the protocol.
-
 ## Inline proxy review
 
 Interactive `hsh run` sessions (not `--rm`, `--tasks`, or piped runs) pass the
@@ -393,13 +374,18 @@ agent cannot trigger or forge any of it itself
   review` (plus `(M held)` when requests are waiting on you) as the proxy
   records denials for the session, and red while the review screen is open
   (`"status_line": false` removes the reserved row)
-- `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`, `ctrl-]`,
+- `monitor.key` (default Ctrl+Space; `ctrl-a`..`ctrl-z`, `ctrl-\`,
   `ctrl-^`, `ctrl-_`) turns the line red and takes over the whole screen with
   the same view and keys as `hsh monitor`, scoped to this session: up/down
   select, space selects, enter approves the selected hosts (adding them to
   the session config's `network.allow`), `i` ignores, `a`/`n` select all or
   none, `t` toggles ignored hosts, `/` filters, `r` refreshes, `q` or Esc
   closes (as does the review key again)
+- pressing the review key twice in a row sends the key itself to the
+  program in the session, as tmux does with its prefix: the first press
+  opens the review screen, the second closes it and forwards the key
+  (in the encoding the terminal sent it). Choose another `monitor.key` if a
+  program you use needs that key often
 - while the review screen is up `hsh run` stops reading the session's output,
   so the container blocks in `write()` instead of printing; closing repaints
   the session screen from the emulator and delivers the held output with

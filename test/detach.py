@@ -130,7 +130,7 @@ if "detached from session" in transcript:
     fail("podman's Ctrl-P Ctrl-Q still detaches")
 print("PASS: podman's default Ctrl-P Ctrl-Q no longer detaches or ends the session")
 
-os.write(fd, b"\x1d")
+out(hsh, "detach", sid)
 code = reap(pid)
 pump(fd, 0.5)
 if code != 0:
@@ -147,7 +147,7 @@ if "Detached" not in hsh_ls():
     fail("hsh ls does not show Detached: " + hsh_ls())
 if not reaper_alive(session):
     fail("no reaper is watching the detached session")
-print("PASS: Ctrl-] detaches: the shell keeps running, secrets stay, hsh ls shows Detached, a reaper watches it")
+print("PASS: hsh detach detaches: the shell keeps running, secrets stay, hsh ls shows Detached, a reaper watches it")
 
 pid, fd = spawn("run", "--resume", sid)
 transcript_mark = len(transcript)
@@ -208,7 +208,7 @@ if reap(pid_a) != 0:
     fail("--take-over did not detach the first client cleanly")
 settle(fd_c, 3)
 type_line(fd_c, "echo took-over-$((6*7))", "took-over-42")
-os.write(fd_c, b"\x1d")
+out(hsh, "detach", sid)
 reap(pid_c)
 if not running(ws):
     fail("--take-over ended the session")
@@ -230,11 +230,11 @@ session2 = new_pod(before)
 sid2 = session2[len("hsh-"):]
 ws2 = session2 + "-ws"
 secrets2 = os.path.join(state, "sessions", sid2, "secrets.json")
-os.write(fd, b"\x1b[93;5u")
+out(hsh, "detach", sid2)
 reap(pid)
 if not running(ws2):
-    fail("the kitty-encoded detach key ended the session instead of detaching")
-print("PASS: Ctrl+] sent in the kitty keyboard encoding still detaches (the relay translates it)")
+    fail("detaching ended the session")
+print("PASS: a second session detaches and keeps running")
 subprocess.run(["pkill", "-f", "hsh-reaper --pod " + session2], capture_output=True)
 time.sleep(0.5)
 if reaper_alive(session2):
@@ -255,10 +255,8 @@ pid, fd = spawn("run", "--rm", "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; echo temp-$((6*7))", "temp-42")
 temp = new_pod(before)
-os.write(fd, b"\x1d")
-time.sleep(1)
 type_line(fd, "echo temp-alive-$((6*7))", "temp-alive-42")
 os.write(fd, b"\x15exit\r")
 reap(pid)
 wait_for(lambda: temp not in pods(), "the --rm session to be removed")
-print("PASS: --rm sessions cannot detach and are removed when the shell exits")
+print("PASS: --rm sessions are removed when the shell exits")

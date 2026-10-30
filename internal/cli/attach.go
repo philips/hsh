@@ -13,12 +13,12 @@ import (
 	"hsh/internal/relay"
 )
 
-func attachFlags(interactive, detachable bool, detachKeys string) []string {
+func attachFlags(interactive, detachable bool) []string {
 	switch {
 	case !interactive:
 		return nil
 	case detachable:
-		return []string{"--sig-proxy=false", "--detach-keys=" + detachKeys}
+		return []string{"--sig-proxy=false", "--detach-keys="}
 	default:
 		return []string{"--detach-keys="}
 	}
