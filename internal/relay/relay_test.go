@@ -152,6 +152,12 @@ func newHarness(t *testing.T, status bool, pollEvery time.Duration) *harness {
 
 func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, detachKeys string) *harness {
 	t.Helper()
+	key, _ := ParseKey("ctrl-space")
+	return newHarnessKey(t, status, pollEvery, script, detachKeys, key)
+}
+
+func newHarnessKey(t *testing.T, status bool, pollEvery time.Duration, script, detachKeys string, key Key) *harness {
+	t.Helper()
 	if !vt.Available() {
 		t.Skip("built without GOEXPERIMENT=simd")
 	}
@@ -170,7 +176,6 @@ func newHarnessWith(t *testing.T, status bool, pollEvery time.Duration, script, 
 	}
 	user := &userTerminal{term: ut}
 	pr, pw := io.Pipe()
-	key, _ := ParseKey("ctrl-space")
 	h := &harness{t: t, master: master, user: user, keys: pw, done: make(chan struct{})}
 	r, err := New(Config{In: pr, Out: user, Pty: master, Cols: userCols, Rows: userRows,
 		StatusLine: status, Key: key, DetachKeys: detachKeys, Name: "unit", PollEvery: pollEvery,

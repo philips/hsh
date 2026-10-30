@@ -883,6 +883,8 @@ EOF
 	podman build -q -t localhost/hsh-nomonitor-test:latest -f "$TMP/nomonitor.Containerfile" "$TMP" >/dev/null || fail "could not build the no-monitor test image"
 	python3 "$REPO/test/inline.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" localhost/hsh-nomonitor-test:latest || fail "the inline review driver failed"
 	pass "the status line, Ctrl+Space dialog, pause, and approval work through the relay"
+	python3 "$REPO/test/security.py" "$HSH" "$TMP/detachws" localhost/hsh-detach-test:latest "$XDG_STATE_HOME/hsh" || fail "the agent isolation driver failed"
+	pass "the agent cannot open the monitor or forge the status line: queries, replies, and split escape sequences are inert"
 else
 	echo "SKIP: inline review checks (no python3 for the pty driver)"
 fi

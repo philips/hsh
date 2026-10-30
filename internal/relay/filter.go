@@ -49,7 +49,6 @@ func (f *hintFilter) feed(in []byte) (clean []byte, hints int) {
 		}
 		if end < 0 {
 			if len(body) > 512 {
-				clean = append(clean, data[0])
 				data = data[1:]
 				continue
 			}
@@ -96,12 +95,15 @@ func (f *regionFilter) feed(in []byte, rows int) []byte {
 		}
 		if j == len(data) {
 			if j-2 > 16 {
-				out = append(out, data[0])
 				data = data[1:]
 				continue
 			}
 			f.held = append([]byte(nil), data...)
 			return out
+		}
+		if data[j] == 0x1b {
+			data = data[j:]
+			continue
 		}
 		if data[j] == 'r' {
 			out = append(out, rewriteRegion(string(data[2:j]), rows)...)

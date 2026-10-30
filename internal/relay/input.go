@@ -42,6 +42,9 @@ func (ip *inputParser) feed(p []byte) []tea.KeyMsg {
 		j := bytes.Index(data, pasteStart)
 		if j < 0 {
 			keep := partialSuffix(data, pasteStart)
+			if n := partialRune(data[:len(data)-keep]); n > keep {
+				keep = n
+			}
 			out = append(out, parseInput(data[:len(data)-keep])...)
 			ip.held = append([]byte(nil), data[len(data)-keep:]...)
 			return out
@@ -51,6 +54,22 @@ func (ip *inputParser) feed(p []byte) []tea.KeyMsg {
 		data = data[j+len(pasteStart):]
 	}
 	return out
+}
+
+func partialRune(data []byte) int {
+	for n := 1; n <= 3 && n <= len(data); n++ {
+		b := data[len(data)-n]
+		if b < 0x80 {
+			return 0
+		}
+		if b >= 0xC0 {
+			if !utf8.FullRune(data[len(data)-n:]) {
+				return n
+			}
+			return 0
+		}
+	}
+	return 0
 }
 
 func partialSuffix(data, marker []byte) int {
