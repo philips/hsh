@@ -127,6 +127,21 @@ proxy, the monitor database, and the example image:
   resize; `internal/cli` checks that the overlay is the real monitor model
   scoped to the session and that approving reaches the session config; they
   skip without `GOEXPERIMENT=simd`
+- **agent-to-monitor isolation** (`test/security.py` plus
+  `internal/relay/security_test.go` and the fuzz targets in
+  `internal/relay/fuzz_test.go` and `internal/vt`): terminal replies to
+  agent-provoked queries (DSR, DA, DECRPM, kitty flags, mouse, focus,
+  paste markers, key-release events) never match the monitor key for any
+  valid `monitor.key`, the agent's output can never open, close, or feed
+  the review screen, forged `OSC 7777` hints are inert (they poll the real
+  database and carry no text), scroll-region writes can never address the
+  status row — including a split-write smuggle that once reassembled a
+  live DECSTBM past the overlong-param give-up (fixed by dropping the
+  introducer byte instead of emitting it) and a region reset smuggled
+  behind an aborted CSI (`ESC[ESC[r`, fixed by aborting and re-parsing
+  at the embedded escape) — and the same properties are
+  fuzz-enforced on arbitrary split byte streams (`Key.find` only accepts
+  the genuine encodings, the input parser and both filters are reassembly-safe and bounded)
 
 Run it with:
 

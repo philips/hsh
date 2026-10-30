@@ -746,7 +746,9 @@ sessions per workspace.
   the same code as `hsh monitor`. An in-band OSC (`ESC ] 7777 ; ... BEL`) from the
   session is stripped and only triggers an immediate poll of that queue.
   On `--resume` the relay briefly changes the pty width by one column and
-  back so the shell repaints. See [config.md](config.md#inline-proxy-review).
+  back so the shell repaints. See [config.md](config.md#inline-proxy-review)
+  and [agent-terminal-isolation.md](agent-terminal-isolation.md) for why
+  the agent cannot open the review screen or forge the status line.
 - **One client at a time.** `hsh run --resume` refuses a session whose
   `client.pid` names a live `hsh run`. `hsh detach` and
   `hsh run --resume --take-over` send that process SIGUSR1; it terminates

@@ -89,6 +89,21 @@ Mark each pass, fail, or n/a, and describe any failure.
     color scheme, including a light scheme.
 19. The review screen's selection highlight and borders render correctly.
 
+### Agent isolation
+
+20. From inside the session, spray the queries an agent can use to make
+    your terminal reply on the input path:
+    `printf '\033[6n\033[c\033[?u\033[=1;1u\033[>1u\033[<u\033[?1000h\033[?1006h\033]11;?\a'`.
+    The screen may flicker but the review screen never opens and the status
+    line keeps its count.
+21. The split escape-sequence smuggle aimed at the status row:
+    `printf '\033[1;1;1;1;1;1;1;1;1'` and then `printf '1;40r'`, followed by
+    `seq 1 200`. Some literal `[1;1;…` junk may appear in the output, but the
+    status row is never scrolled away or overwritten and the review screen
+    never opens.
+22. After all of the above, the genuine Ctrl+Space still opens the review
+    screen and `q` closes it.
+
 ## Recording results
 
 | Terminal (version) | direct / tmux / ssh | Failed checks | Notes |

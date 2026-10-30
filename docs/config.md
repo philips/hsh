@@ -382,7 +382,9 @@ key that your programs do not remap, or avoid the protocol.
 ## Inline proxy review
 
 Interactive `hsh run` sessions (not `--rm`, `--tasks`, or piped runs) pass the
-session through a relay in the `hsh run` process, outside the sandbox:
+session through a relay in the `hsh run` process, outside the sandbox — the
+agent cannot trigger or forge any of it itself
+([agent-terminal-isolation.md](agent-terminal-isolation.md)):
 
 - the bottom terminal row is a status line: green with `proxy: nothing to
   review`, **blue** with `* N proxy requests need review | Ctrl+Space to
