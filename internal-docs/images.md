@@ -27,6 +27,13 @@ Published to ghcr.io by two workflows:
 | `ghcr.io/<owner>/hsh-codex` | OpenAI Codex | `https://chatgpt.com/codex/install.sh` |
 | `ghcr.io/<owner>/hsh-muse-code` | Meta Muse Code | `https://dev.meta.ai/install.sh` |
 
+The claude-code image ships `/home/hsh/.claude/settings.json` with
+`{"tui":"fullscreen"}`. Claude Code picks its renderer once at startup, and
+without the setting a fresh home (every new session) starts with the classic
+main-screen renderer, which has no in-app scrollback; only later launches,
+after remote flags are cached in `~/.claude.json`, would get the fullscreen
+renderer. Users can switch with `/tui`.
+
 Build one locally with the helper, which reads `hsh.json`, compacts it
 with `jq`, and passes it as the `HSH_LABEL` build arg:
 
