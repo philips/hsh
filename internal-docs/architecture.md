@@ -478,11 +478,10 @@ hand-editing configs or exporting keys into their shell environment:
 - `secret add NAME` prompts with echo disabled (or `--value-stdin` for
   scripting); there is deliberately no `--value` flag, since values on
   the command line leak into shell history and the process list
-- `secret add --host/--header/--prefix` also writes the
-  `secrets.<NAME>` config entry with `from: "hsh://NAME"`
-  (RawMessage-preserving rewrite, like `hsh proxy allow`)
-- `secret rm` warns when the config still references the entry but never
-  edits the config; `secret ls` prints names and timestamps, never values
+- the value is referenced from a config's `secrets.<NAME>` entry with
+  `from: "hsh://NAME"`
+- `secret rm` deletes the entry; it never edits the config; `secret ls`
+  prints names and timestamps, never values
 - only the host-side `hsh run` process and the `secret` subcommands touch
   the store; the store lives on the host and is never mounted into the
   sandbox. A missing entry behaves exactly like an unset environment

@@ -708,14 +708,13 @@ grep -Eq '^code=200$' "$TMP/store-run.out" || fail "the sandbox could not reach 
 grep -q 'Authorization: Bearer other' "$TMP/requests.log" || fail "the stored secret was not injected (after --force overwrite)"
 pass "hsh:// secrets resolve through the store and are injected"
 
-if "$HSH" secret rm --db "$TMP/secretstore/secrets.db" --config "$TMP/store-config.hsh" fn-store-key >"$TMP/secret-rm.out" 2>&1; then
+if "$HSH" secret rm --db "$TMP/secretstore/secrets.db" fn-store-key >"$TMP/secret-rm.out" 2>&1; then
 	pass "secret rm deletes the entry"
 else
 	fail "secret rm failed: $(cat "$TMP/secret-rm.out")"
 fi
-grep -q "still references hsh://fn-store-key" "$TMP/secret-rm.out" || fail "secret rm did not warn about the dangling config reference"
 grep -q 'hsh://fn-store-key' "$TMP/store-config.hsh" || fail "secret rm must not edit the config"
-pass "secret rm warns about dangling config references without editing them"
+pass "secret rm deletes the entry without editing the config"
 
 "$HSH" run --runtime "$RUNTIME" --config "$TMP/store-config.hsh" --monitor-db "$DB" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-missing.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' http://host.containers.internal:8899/v1/models

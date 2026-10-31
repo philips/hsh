@@ -66,8 +66,8 @@ proxy, the monitor database, and the example image:
   ls` shows names but never values, an `hsh://` config reference resolves
   through the store and is injected (observed in the dummy endpoint's
   request log), and after `secret rm` the entry goes missing: a warning,
-  no injection, the request still forwarded, and a dangling-reference
-  warning without editing the config
+  no injection, the request still forwarded, and the config left
+  unedited
 - **step 17** (`test/detach.py`, a pty driver): `hsh detach` detaches and
   leaves the shell, secrets, and a reaper running; podman's Ctrl-P Ctrl-Q does
   nothing; `hsh resume` re-enters the same shell; closing the
@@ -174,7 +174,7 @@ version, and concurrent first opens; `internal/dbschema` covers the
 store CRUD, overwrite semantics, file/directory permissions, and adopting an
 unversioned store with its secrets; `internal/config` covers secret reference
 parsing (`env://`, `hsh://`, bare, unknown schemes), resolution through
-a fake store, the config rewrite for `secret add`, the version rules (missing,
+a fake store, the version rules (missing,
 newer, older, unknown fields, editors refusing unreadable versions), and a
 schema test (`testdata/schema-v<N>.txt`) that fails when the config fields
 change without a `Version` bump (update it with `go test ./internal/config

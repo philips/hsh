@@ -50,7 +50,7 @@ else with a message that says what to do:
 After the version check the config is decoded strictly: a field hsh does not
 know is an error that names it (a typo such as `"approval_wiat"` never silently
 changes the policy). The commands that edit a session's config
-(`hsh proxy allow`, `hsh proxy hold`, `hsh secret add --config`, and the
+(`hsh proxy allow`, `hsh proxy hold`, and the
 monitor) apply the same version check first and leave a file they cannot read
 untouched.
 
@@ -136,21 +136,18 @@ Instead of exporting keys into your shell environment, store them once
 in hsh's own secret store and reference them by name:
 
 ```
-hsh secret add mistral-api-key --host api.mistral.ai \
-  --header Authorization --prefix "Bearer "
+hsh secret add mistral-api-key
 ```
 
 `secret add` prompts for the value with echo disabled (never on the
 command line, where it would leak into shell history); `--value-stdin`
-reads it from stdin for scripting. With `--host`/`--header`/`--prefix`
-it also writes the `secrets.<NAME>` entry into the config file
-(default `config.hsh`, override with `--config PATH`), using
-`from: "hsh://NAME"`. Without those flags it only stores the value.
+reads it from stdin for scripting. It stores the value under `NAME`;
+reference it from a config's `secrets.<NAME>` entry with
+`from: "hsh://NAME"`.
 
 ```
 hsh secret add NAME [--db PATH] [--force] [--value-stdin]
-                     [--config PATH] [--host HOST]... [--header HEADER] [--prefix PREFIX]
-hsh secret rm NAME [--db PATH] [--config PATH]
+hsh secret rm NAME [--db PATH]
 hsh secret ls [--db PATH]
 ```
 
@@ -161,8 +158,7 @@ hsh secret ls [--db PATH]
   stored **unencrypted**, readable only by your user - the same trust
   level as `~/.netrc` or `~/.aws/credentials` (a first-use note says so)
 - `secret ls` prints names and timestamps, never values
-- `secret rm` deletes the entry and warns if the config still references
-  `hsh://NAME`; it never edits the config
+- `secret rm` deletes the entry; it never edits the config
 - adding an existing name fails without `--force`
 
 A config entry referencing the store:
