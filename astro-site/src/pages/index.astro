@@ -23,16 +23,9 @@ const { explainer, overview, install } = readmeSections();
 
       <h2 class="mt-5">Newsletter</h2>
       <p>Signup for news and release information. No spam.</p>
-      <iframe name="signup-frame" style="display:none" title="signup result"></iframe>
-      <form
-        action="https://infinitelogic.app/o/hsh-home/hooks/newsletter_signup"
-        method="post"
-        target="signup-frame"
-        onsubmit="this.reset(); document.getElementById('signup-result').textContent='Thanks — you are on the list!';">
-        <input type="email" name="email" placeholder="you@example.org" required />
-        <button type="submit">Sign up</button>
-      </form>
-      <div id="signup-result"></div>
+      <iframe src="https://hsh-home.infinitelogic.page/newsletter"
+              title="Newsletter sign-up"
+              style="width:100%;max-width:480px;height:320px;border:0"></iframe>
 
       <p class="mt-4"><a href="https://github.com/philips/hsh/blob/main/README.md">README</a> | <a href="https://github.com/philips/hsh">GitHub</a></p>
     </div>
