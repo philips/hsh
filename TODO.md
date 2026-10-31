@@ -1,3 +1,7 @@
+## claude-code disconnect issue
+
+I had a claud-code session in hsh. Then I detached and resumed and the scrollback window in claude-code no longer worked.
+
 ## hsh bug subcommand
 
 Implement a subcommand that can gather up info and send it to IL automatically via the webhook
