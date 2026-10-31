@@ -1,3 +1,37 @@
+## hsh bug subcommand
+
+Implement a subcommand that can gather up info and send it to IL automatically via the webhook
+
+POST https://infinitelogic.app/o/hsh-home/hooks/bug_report
+Content-Type: application/json
+
+{
+  "version": "v0.0.9",              // required
+  "uname": "Linux box 6.8.0 ...",   // required
+  "os_release": "Ubuntu 24.04.1",   // required
+  "description": "crash on startup", // optional
+  "logs": "traceback...",             // optional
+  "email": "user@example.org"         // optional
+}
+
+
+
+
+Notes:
+The bug_report object mirrors the metrics one: append-only-friendly storage with automatic created_at timestamps, browsable in the org's generated UI. I made version, uname, and os_release required (a report without them isn't actionable) — easy to change if you'd rather have them optional.
+Returns {"ok": true, "id": "bug_01..."} so your CLI can print a reference id for the user.
+Same caveats as the metrics hook: unsigned and publicly postable, so spam is possible; and reports appear in the org UI immediately.
+Field naming: os-release became os_release (Infinite Logic requires snake_case field names).
+CLI-side sketch:
+sh
+Copy
+
+curl -X POST https://infinitelogic.app/o/hsh-home/hooks/bug_report \
+  -H "Content-Type: application/json" \
+  -d "{\"version\":\"$VERSION\",\"uname\":\"$(uname -a)\",\"os_release\":\"$(. /etc/os-release && echo \"$PRETTY_NAME\")\",\"description\":\"$1\"}"
+
+
+
 ## Migrate forwarding to `hsh-sshd` and drop the relay
 
 Serve `hsh forward`, `--forward`, `ssh hsh-<id>`, and `hsh oauth callback` from `/hsh-sshd` in both runtimes. In the default runtime it enters the shell's network namespace by setns plus re-exec. Remove the in-sandbox relay (`10.77.0.2:7788`) and `/hsh-workspace-inner --ssh-stdio`/`--ssh-session`/`--callback-relay`/`--oauth-deliver`. Sessions created before the change get a recreate message. See plans/0034-sshd-everywhere.md.
@@ -97,3 +131,4 @@ There is a fork of gVisor that support macOS:
 
 - https://github.com/maci0/gvisor/blob/master/README-MACOS.md
 - https://github.com/google/gvisor/issues/1270#issuecomment-4369433538
+
