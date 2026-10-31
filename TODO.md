@@ -32,7 +32,9 @@ hsh resume .
 
 rename https mode to tls_passthrough
 
-we need a separate mode to 
+we need a separate mode to record headers, bodies, etc too for auditing in the case of hacks.
+
+https://github.com/agent-substrate/substrate/blob/75a061c290952b432de1131397bdb9a222a33e3e/docs/guides/egress-trust-bundle.md?plain=1#L22
 
 ## create policy config files
 
@@ -83,3 +85,8 @@ the status bar flickers with dns install and other commands with a spinner. anno
 
 - do the full emulator with libghostty (gah!)
 - only pop-up the status bar when there is an approval needed
+
+## add external proxy helper
+
+would be cool to have a way to let people pass certain domains off to policy
+proxies like https://docs.socket.dev/docs/socket-firewall-overview
