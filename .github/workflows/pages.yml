@@ -3,6 +3,9 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: ["main"]
+    paths:
+      - 'README.md'
+      - 'astro-site/**'
   workflow_dispatch:
 
 permissions:
