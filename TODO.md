@@ -90,3 +90,10 @@ the status bar flickers with dns install and other commands with a spinner. anno
 
 would be cool to have a way to let people pass certain domains off to policy
 proxies like https://docs.socket.dev/docs/socket-firewall-overview
+
+## macOS Support
+
+There is a fork of gVisor that support macOS:
+
+- https://github.com/maci0/gvisor/blob/master/README-MACOS.md
+- https://github.com/google/gvisor/issues/1270#issuecomment-4369433538
