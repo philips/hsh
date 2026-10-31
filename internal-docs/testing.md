@@ -6,7 +6,8 @@
 proxy, the monitor database, and the example image:
 
 - runs the whole script once per runtime, `container` then `gvisor`
-  (`HSH_TEST_RUNTIME=container|gvisor` runs just one). The gvisor leg
+  (`HSH_TEST_RUNTIME=container|gvisor` runs just one; CI runs them as the
+  separate jobs `functional-container` and `functional-gvisor`). The gvisor leg
   builds with `-tags gvisor_embed` when `internal/gvisor/payload.tar.gz`
   exists and is skipped when there is no runsc. Steps that differ by
   runtime branch on `only_runtime container`: the container runtime

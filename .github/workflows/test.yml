@@ -54,13 +54,41 @@ jobs:
       - name: vet with embedded gVisor
         run: go vet -tags gvisor_embed ./...
 
-  # The functional test runs real sandboxes with rootless podman and
-  # exercises the fixture image (built from test/fixtures/) plus live
-  # api.mistral.ai egress, so it needs internet and a few minutes.
-  functional:
-    name: functional (podman sandbox, both runtimes)
+  # The functional tests run real sandboxes with rootless podman and
+  # exercise the fixture image (built from test/fixtures/) plus live
+  # api.mistral.ai egress, so they need internet and a few minutes. One job
+  # per runtime (HSH_TEST_RUNTIME).
+  functional-container:
+    name: functional containers (podman sandbox)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: install rootless podman networking
+        run: sudo apt-get update && sudo apt-get install -y passt uidmap
+
+      - name: ensure subuid/subgid entries for the runner user
+        run: |
+          if ! grep -q "^${USER}:" /etc/subuid; then
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subuid
+            echo "${USER}:100000:65536" | sudo tee -a /etc/subgid
+          fi
+
+      - name: verify rootless podman
+        run: podman info --format 'podman {{.Version.Version}} on {{.Host.Arch}}'
+
+      - name: functional test (container runtime)
+        run: HSH_TEST_RUNTIME=container ./test/functional.sh
+
+  functional-gvisor:
+    name: functional gvisor (podman + runsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -95,8 +123,8 @@ jobs:
       - name: gVisor payload
         run: bash internal/gvisor/payload.sh
 
-      - name: functional test (container and gvisor runtimes)
-        run: ./test/functional.sh
+      - name: functional test (gvisor runtime)
+        run: HSH_TEST_RUNTIME=gvisor ./test/functional.sh
 
   gvisor:
     name: gvisor (podman + runsc)
