@@ -1,6 +1,10 @@
 ## claude-code disconnect issue
 
-I had a claud-code session in hsh. Then I detached and resumed and the scrollback window in claude-code no longer worked.
+I had a claud-code session in hsh. The native scroll back in the claude-code app doesn't seem to work when first launched in `hsh run claude-code .`. BUT! If I run /exit and the claude --resume <sessionid> it all works fine.
+
+I tested detatch/resume and the scrollback window in claude-code worked fine too.
+
+So, it seems like a first launch issue.
 
 ## hsh bug subcommand
 
