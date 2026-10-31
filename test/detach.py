@@ -108,7 +108,7 @@ def hsh_ls():
 
 
 before = pods()
-pid, fd = spawn("run", "--pull=never", image)
+pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; X=kept-var; echo started-$((6*7))", "started-42")
 pump(fd, 0.5)
@@ -223,7 +223,7 @@ print("PASS: when the shell exits while detached the reaper scrubs secrets and s
 out(hsh, "rm", "-f", session)
 
 before = pods()
-pid, fd = spawn("run", "--pull=never", image)
+pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; echo second-$((6*7))", "second-42")
 session2 = new_pod(before)
@@ -251,7 +251,7 @@ if os.path.exists(secrets2):
 print("PASS: with no reaper, hsh ls shows Shell exited and hsh rm --exited removes the pod and its secrets")
 
 before = pods()
-pid, fd = spawn("run", "--rm", "--pull=never", image)
+pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--rm", "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; echo temp-$((6*7))", "temp-42")
 temp = new_pod(before)

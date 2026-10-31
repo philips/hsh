@@ -100,7 +100,7 @@ def type_line(fd, line, marker):
 
 
 before = pods()
-pid, fd = spawn("run", "--pull=never", image)
+pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; echo started-$((6*7))", "started-42")
 session = new_pod(before)

@@ -184,8 +184,8 @@ Reading notes:
 
 ## Network isolation
 
-This section describes the default runtime. With `hsh run --runtime
-gvisor` the workspace runs under gVisor and its packets go straight to
+This section describes the `container` runtime (`hsh run --runtime
+container`). With the default `gvisor` runtime the workspace runs under gVisor and its packets go straight to
 the proxy over a Unix socket instead; see [gVisor runtime](gvisor.md).
 
 The workspace container starts in the pod's network namespace with
@@ -537,7 +537,7 @@ config instead. See [config versions](config.md#config-versions).
 
 ## Reaching servers inside the session
 
-This section describes the default runtime. gVisor sessions serve the
+This section describes the `container` runtime. gVisor sessions serve the
 same commands from `/hsh-sshd` inside the sandbox; see
 [gVisor runtime](gvisor.md#reaching-servers-inside-the-session).
 

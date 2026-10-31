@@ -1,13 +1,16 @@
 # gVisor runtime (prototype)
 
-`hsh run --runtime gvisor` runs the workspace container under gVisor
-(`runsc`) instead of the default container runtime. The workspace's
+`gvisor` is the default runtime of `hsh run`. It runs the workspace
+container under gVisor (`runsc`) instead of the plain `container` runtime
+(`hsh run --runtime container`). The workspace's
 syscalls are served by gVisor's userspace kernel, and its network is
 handed, as raw IP packets, to the egress proxy, which stays in its own
 ordinary container. The runtime is recorded in the session
 (`$XDG_STATE_HOME/hsh/sessions/<id>/runtime`) and `hsh resume` keeps it.
+`--runtime` applies to new sessions only. A session without a `runtime`
+file uses the `container` runtime.
 
-Status: prototype. It is opt-in and the default runtime is unchanged.
+Status: prototype.
 
 ## Requirements
 
@@ -45,7 +48,7 @@ This adds about 30 MB to the binary (amd64: 21 MB → 53 MB; arm64: 47 MB).
 Upgrading gVisor means changing the version and hashes in `payload.sh`,
 which ships in the next hsh release through the normal `hsh update`.
 
-On first use (`hsh run --runtime gvisor`),
+On first use (the first `hsh run` with the gvisor runtime),
 `internal/gvisor` installs the payload under
 `$XDG_STATE_HOME/hsh/gvisor/<first 16 hex of the payload SHA-256>/`:
 
@@ -80,7 +83,7 @@ flowchart LR
             shell["shell / agent"]
             sentry["gVisor sentry + netstack"]
         end
-        subgraph PX["proxy container (default runtime)"]
+        subgraph PX["proxy container (default container runtime)"]
             proxy["/hsh-proxy --netstack-socket<br/>userspace TCP/IP stack,<br/>policy, MITM, secrets, DNS"]
         end
     end
@@ -114,7 +117,7 @@ flowchart LR
   --netstack` skips the veth, the inner network namespace, and the proxy
   environment variables. It points `/etc/resolv.conf` at `10.77.0.1`
   (any address works, since every packet goes to the proxy), installs
-  the session CA, and drops capabilities as in the default runtime.
+  the session CA, and drops capabilities as in the container runtime.
 - `--overlay2=none` makes the container's root filesystem changes land in
   podman's container layer, so they survive stop and `hsh resume`. Without
   it runsc keeps them in a sandbox-private overlay that is discarded.
@@ -155,7 +158,7 @@ logged.
 ## Reaching servers inside the session
 
 `hsh forward`, `hsh run --forward`, `hsh ssh`, and `hsh oauth callback`
-work as in the default runtime, served by a separate role, `/hsh-sshd`.
+work as in the container runtime, served by a separate role, `/hsh-sshd`.
 `hsh run` bind-mounts the hsh binary read-only at `/hsh-sshd` in the
 workspace container, and the host commands run `podman exec -i
 <pod>-ws /hsh-sshd` instead of `/hsh-workspace-inner --ssh-stdio` when
@@ -174,7 +177,7 @@ hsh forward / ssh hsh-<id> / hsh oauth callback      (host)
   `127.0.0.1` and `::1`. Any other address would leave the sandbox through
   the netstack and reach the proxy, so it is never tried. The SSH server
   (`internal/sshd`) refuses non-loopback `direct-tcpip` destinations as
-  in the default runtime.
+  in the container runtime.
 - It holds no secrets and has no route to them: the CA key, the
   resolved secrets, and the monitor database are only mounted in the
   proxy container. On start it drops every capability except
@@ -196,7 +199,7 @@ hsh forward / ssh hsh-<id> / hsh oauth callback      (host)
   implement writing a nested user namespace's `uid_map`, so the nested
   podman fails at its re-exec regardless of the session's capabilities
   (`unshare -U` succeeds, `unshare -Ur` fails on the map write). Nesting
-  tests therefore use the default runtime only (see the nesting section in
+  tests therefore use the container runtime only (see the nesting section in
   docs/testing.md).
 
 ## Tests

@@ -5,6 +5,16 @@
 `test/functional.sh` runs an end-to-end test of the sandbox, the egress
 proxy, the monitor database, and the example image:
 
+- runs the whole script once per runtime, `container` then `gvisor`
+  (`HSH_TEST_RUNTIME=container|gvisor` runs just one). The gvisor leg
+  builds with `-tags gvisor_embed` when `internal/gvisor/payload.tar.gz`
+  exists and is skipped when there is no runsc. Steps that differ by
+  runtime branch on `only_runtime container`: the container runtime
+  refuses names it will not resolve and blocks direct connections at the
+  TCP layer, has the inner network namespace and `http_proxy`; the gvisor
+  runtime resolves denied names to a placeholder, answers denied TLS with a
+  403 page (`DENIED_TLS_CODE`), and has no veth or proxy variables. Every
+  session is started with `--runtime "$RUNTIME"`
 - builds `hsh` and the dummy OpenAI-compatible endpoint
   (`test/dummyopenai`)
 - ensures the fixture image exists (builds it with
@@ -273,6 +283,6 @@ HSH_NESTING=1 hsh run localhost/nest-podman .
 
 Prefer testing nesting with a pre-pulled image (`hsh run --pull never`)
 to keep the inner environment off the network. Nesting is only supported
-on the default runtime and a real kernel; inside a gVisor sandbox the
+on the `container` runtime and a real kernel; inside a gVisor sandbox the
 nested `uid_map` write is refused by the sentry regardless of capabilities
 (see docs/gvisor.md).

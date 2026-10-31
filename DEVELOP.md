@@ -10,13 +10,13 @@ cd hsh
 
 `./build.sh` builds `./hsh` the way the release workflow does: it sets
 `GOEXPERIMENT=simd` (the terminal emulator needs it), `CGO_ENABLED=0`, and
-`GOOS=linux`, and embeds gVisor's runsc for `hsh run --runtime gvisor`. On
+`GOOS=linux`, and embeds gVisor's runsc for the default `gvisor` runtime. On
 first use it downloads the pinned gVisor release for `GOARCH`, verifies it,
 and keeps the trimmed payload in `internal/gvisor/.cache/<GOARCH>/` (git
 ignored), so later builds and architecture switches are offline.
 
 - `./build.sh --no-gvisor` skips gVisor (about 30 MB smaller, no download);
-  `--runtime gvisor` then uses `runsc` from `HSH_RUNSC` or `PATH`.
+  the gvisor runtime then uses `runsc` from `HSH_RUNSC` or `PATH`.
 - `-o PATH` sets the output; other flags go to `go build`
   (`./build.sh -trimpath -ldflags="-s -w"`).
 - `GOARCH=arm64 ./build.sh -o hsh-arm64` cross-compiles.

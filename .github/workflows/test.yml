@@ -3,7 +3,15 @@ name: test
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'Documentation/**'
+      - 'internal-docs/**'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'Documentation/**'
+      - 'internal-docs/**'
   workflow_dispatch:
 
 env:
@@ -50,9 +58,9 @@ jobs:
   # exercises the fixture image (built from test/fixtures/) plus live
   # api.mistral.ai egress, so it needs internet and a few minutes.
   functional:
-    name: functional (podman sandbox)
+    name: functional (podman sandbox, both runtimes)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -70,10 +78,24 @@ jobs:
             echo "${USER}:100000:65536" | sudo tee -a /etc/subgid
           fi
 
+      - name: allow unprivileged user namespaces for runsc
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
       - name: verify rootless podman
         run: podman info --format 'podman {{.Version.Version}} on {{.Host.Arch}}'
 
-      - name: functional test
+      - uses: actions/cache@v4
+        with:
+          path: internal/gvisor/.cache
+          key: gvisor-payload-${{ hashFiles('internal/gvisor/payload.sh') }}
+
+      - name: gVisor payload
+        run: bash internal/gvisor/payload.sh
+
+      - name: functional test (container and gvisor runtimes)
         run: ./test/functional.sh
 
   gvisor:

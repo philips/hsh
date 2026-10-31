@@ -64,7 +64,7 @@ func runCommand() *ff.Command {
 	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
-	fs.StringVar(&ro.runtime, 0, "runtime", "", "sandbox runtime for a new session: gvisor (needs runsc), or omit for the default container runtime")
+	fs.StringVar(&ro.runtime, 0, "runtime", "", "sandbox runtime for a new session: gvisor (default), or container (the plain podman container runtime)")
 	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
 		Name:      "run",
@@ -189,7 +189,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return err
 		}
 		workspaceSource = readWorkspaceFile(sessionDir)
-		if ro.runtime == runtimeDefault {
+		if ro.runtime == runtimeUnset {
 			ro.runtime = readSessionRuntime(sessionDir)
 		}
 	}
@@ -274,6 +274,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		if err := notice.Write(notice.SessionDir(sessionDir), notice.Enabled(cfg.Network.NoticeEnabled(), mode)); err != nil {
 			return fmt.Errorf("write the network notice: %w", err)
+		}
+		if ro.runtime == runtimeUnset {
+			ro.runtime = runtimeDefault
 		}
 		if err := writeSessionRuntime(sessionDir, ro.runtime); err != nil {
 			return err

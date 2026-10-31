@@ -13,8 +13,10 @@ import (
 )
 
 const (
-	runtimeDefault = ""
-	runtimeGVisor  = "gvisor"
+	runtimeUnset     = ""
+	runtimeContainer = "container"
+	runtimeGVisor    = "gvisor"
+	runtimeDefault   = runtimeGVisor
 	netstackTarget = "/hsh-netstack"
 )
 
@@ -26,24 +28,24 @@ type gvisorSession struct {
 
 func validRuntime(name string) error {
 	switch name {
-	case runtimeDefault, runtimeGVisor:
+	case runtimeUnset, runtimeContainer, runtimeGVisor:
 		return nil
 	}
-	return fmt.Errorf("invalid --runtime value %q (want gvisor, or omit it for the default container runtime)", name)
+	return fmt.Errorf("invalid --runtime value %q (want gvisor or container)", name)
 }
 
 func readSessionRuntime(sessionDir string) string {
 	data, err := os.ReadFile(filepath.Join(sessionDir, "runtime"))
 	if err != nil {
-		return runtimeDefault
+		return runtimeContainer
 	}
-	return strings.TrimSpace(string(data))
+	if name := strings.TrimSpace(string(data)); name != "" {
+		return name
+	}
+	return runtimeContainer
 }
 
 func writeSessionRuntime(sessionDir, name string) error {
-	if name == runtimeDefault {
-		return nil
-	}
 	return os.WriteFile(filepath.Join(sessionDir, "runtime"), []byte(name+"\n"), 0o644)
 }
 

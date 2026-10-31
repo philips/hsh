@@ -117,7 +117,7 @@ def read_session_config(sid):
 
 
 before = pods()
-pid, fd = spawn("run", "--pull=never", image)
+pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", image)
 expect(fd, "# ", 60)
 type_line(fd, "PS1='READY> '; echo started-$((6*7))", "started-42")
 session = new_pod(before)
@@ -215,7 +215,7 @@ print("PASS: Session: exit session asks first, then stops the session and scrubs
 if plain_image:
     before = pods()
     plain_mark = len(transcript)
-    pid, fd = spawn("run", "--pull=never", plain_image)
+    pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", plain_image)
     expect(fd, "# ", 60)
     type_line(fd, "PS1='READY> '; echo plain-$((6*7))", "plain-42")
     plain_session = new_pod(before)
