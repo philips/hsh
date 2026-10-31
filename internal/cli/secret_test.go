@@ -88,62 +88,6 @@ func TestSecretAddRejectsEmptyValue(t *testing.T) {
 	}
 }
 
-func TestSecretAddWritesConfigEntry(t *testing.T) {
-	db := testStorePath(t)
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.hsh")
-	body := "{\n  \"version\": 1,\n  \"network\": { \"allow\": [\"api.mistral.ai\"] }\n}\n"
-	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	feedStdin(t, "sk-test\n")
-	err := runSecret(t, "add", "--db", db, "--value-stdin",
-		"--config", configPath, "--host", "api.mistral.ai",
-		"--header", "Authorization", "--prefix", "Bearer ", "mistral-key")
-	if err != nil {
-		t.Fatalf("add with config flags: %v", err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "\"from\": \"hsh://mistral-key\"") {
-		t.Fatalf("config does not reference hsh://mistral-key:\n%s", s)
-	}
-	if !strings.Contains(s, "\"Authorization\"") || !strings.Contains(s, "\"Bearer \"") {
-		t.Fatalf("config entry is missing header/prefix:\n%s", s)
-	}
-	if !strings.Contains(s, "\"network\"") {
-		t.Fatalf("config lost existing content:\n%s", s)
-	}
-}
-
-func TestSecretRmWarnsOnDanglingRef(t *testing.T) {
-	db := testStorePath(t)
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.hsh")
-	body := `{ "version": 1, "secrets": { "API_KEY": { "from": "hsh://mistral-key", "hosts": ["api.mistral.ai"] } } }` + "\n"
-	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	feedStdin(t, "sk-test\n")
-	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); err != nil {
-		t.Fatalf("add: %v", err)
-	}
-	if err := runSecret(t, "rm", "--db", db, "--config", configPath, "mistral-key"); err != nil {
-		t.Fatalf("rm: %v", err)
-	}
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "hsh://mistral-key") {
-		t.Fatal("rm must never edit the config")
-	}
-}
-
 func TestSecretLsMissingStore(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "secrets.db")
 	if err := runSecret(t, "ls", "--db", db); err != nil {

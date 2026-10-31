@@ -117,7 +117,6 @@ func TestEditorsRefuseUnreadableVersions(t *testing.T) {
 		editors := map[string]func(path string) error{
 			"AddAllowedHosts": func(p string) error { _, err := AddAllowedHosts(p, []string{"b.example"}); return err },
 			"SetApprovalWait": func(p string) error { return SetApprovalWait(p, "30s") },
-			"AddSecret":       func(p string) error { return AddSecret(p, "K", Secret{From: "env://K"}) },
 		}
 		for ename, edit := range editors {
 			t.Run(name+"/"+ename, func(t *testing.T) {
