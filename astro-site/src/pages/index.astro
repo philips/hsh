@@ -6,7 +6,7 @@ const { explainer, overview, install } = readmeSections();
 ---
 
 <Layout title="hsh - Developer Focused Linux Container Sandbox">
-  <div class="container mt-5">
+  <div class="container mt-5 mb-5">
     <div class="col-12 text-center mb-4">
       <img src="/hsh-logo.jpg" alt="hsh logo - whisper face emoji in watercolor and ink" class="rounded-lg" style="max-width: 300px; width: 100%;">
       <h1 class="mt-3">hsh</h1>
@@ -20,6 +20,19 @@ const { explainer, overview, install } = readmeSections();
 
       <h2 class="mt-5">Overview</h2>
       <div set:html={overview} />
+
+      <h2 class="mt-5">Newsletter</h2>
+      <p>Signup for news and release information. No spam.</p>
+      <iframe name="signup-frame" style="display:none" title="signup result"></iframe>
+      <form
+        action="https://infinitelogic.app/o/hsh-home/hooks/newsletter_signup"
+        method="post"
+        target="signup-frame"
+        onsubmit="this.reset(); document.getElementById('signup-result').textContent='Thanks — you are on the list!';">
+        <input type="email" name="email" placeholder="you@example.org" required />
+        <button type="submit">Sign up</button>
+      </form>
+      <div id="signup-result"></div>
 
       <p class="mt-4"><a href="https://github.com/philips/hsh/blob/main/README.md">README</a> | <a href="https://github.com/philips/hsh">GitHub</a></p>
     </div>
