@@ -38,34 +38,10 @@
     "mode": "allowlist"
   },
   "oauth": {
-    "openai": {
-      "token_endpoint": {
-        "host": "auth.openai.com",
-        "path": "/api/accounts/oauth/token"
-      },
-      "request_nonce_fields": [
-        "refresh_token"
-      ],
-      "api_hosts": [
-        "api.openai.com"
-      ]
-    },
-    "openai-codex": {
-      "token_endpoint": {
-        "host": "auth.openai.com",
-        "path": "/oauth/token"
-      },
-      "response_fields": [
-        "refresh_token"
-      ],
-      "request_nonce_fields": [
-        "refresh_token"
-      ],
-      "api_hosts": [
-        "ab.chatgpt.com",
-        "chatgpt.com"
-      ]
-    }
+    "providers": [
+      "openai",
+      "openai-codex"
+    ]
   },
   "agent": {
     "command": [

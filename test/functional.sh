@@ -547,24 +547,52 @@ echo "== step 9: sandboxed OAuth logins (phantom tokens via the proxy)"
 (cd "$REPO" && go build -o "$TMP/oauthsrv" ./test/oauthsrv)
 "$TMP/oauthsrv" -addr 0.0.0.0:8897 -log "$TMP/oauth.log" &
 OAUTH_PID=$!
-cat >"$TMP/oauth-config.hsh" <<EOF
+OAUTH_XDG_CONFIG="$TMP/xdgconfig"
+mkdir -p "$OAUTH_XDG_CONFIG/hsh/oauth-providers"
+cat >"$OAUTH_XDG_CONFIG/hsh/oauth-providers/testprov.json" <<'JSON'
+{
+  "version": 1,
+  "token_endpoint": { "host": "host.containers.internal", "path": "/token" },
+  "response_fields": ["access_token", "refresh_token"],
+  "request_nonce_fields": ["refresh_token"],
+  "api": { "hosts": ["host.containers.internal"] }
+}
+JSON
+cat >"$OAUTH_XDG_CONFIG/hsh/oauth-providers/testant.json" <<'JSON'
+{
+  "version": 1,
+  "token_endpoint": { "host": "host.containers.internal", "path": "/token-json" },
+  "response_fields": [
+    { "path": "access_token", "format": "sk-ant-oat01-{phantom}" },
+    { "path": "refresh_token", "format": "sk-ant-ort01-{phantom}" }
+  ],
+  "request_nonce_fields": ["refresh_token"],
+  "api": { "hosts": ["host.containers.internal"] }
+}
+JSON
+cat >"$OAUTH_XDG_CONFIG/hsh/oauth-providers/testjwt.json" <<'JSON'
+{
+  "version": 1,
+  "token_endpoint": { "host": "host.containers.internal", "path": "/token-jwt" },
+  "response_fields": [
+    { "path": "access_token", "kind": "jwt" },
+    { "path": "id_token", "kind": "jwt" },
+    "refresh_token"
+  ],
+  "api": { "hosts": ["host.containers.internal"] }
+}
+JSON
+cat >"$TMP/oauth-config.hsh" <<'JSON'
 {
   "version": 1,
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "network": { "mode": "allowlist", "allow": ["host.containers.internal"] },
-  "oauth": {
-    "testprov": {
-      "token_endpoint": { "host": "host.containers.internal", "path": "/token" },
-      "response_fields": ["access_token", "refresh_token"],
-      "request_nonce_fields": ["refresh_token"],
-      "api_hosts": ["host.containers.internal"]
-    }
-  }
+  "oauth": { "providers": ["testprov", "testant", "testjwt"] }
 }
-EOF
+JSON
 oauth_flow() {
-	"$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config.hsh" --monitor-db "$DB" "$@" >"$TMP/oauth.out" 2>&1 <<'CMDS' || true
+	XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config.hsh" --monitor-db "$DB" "$@" >"$TMP/oauth.out" 2>&1 <<'CMDS' || true
 RESP="$(curl -sS -X POST -d 'grant_type=password&username=u&password=p' http://host.containers.internal:8897/token)"
 echo "login=$RESP"
 ACCESS="$(echo "$RESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
@@ -574,12 +602,25 @@ RESP2="$(curl -sS -X POST -d "grant_type=refresh_token&refresh_token=$REFRESH" h
 echo "refresh=$RESP2"
 ACCESS2="$(echo "$RESP2" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
 curl -sS -o /dev/null -w "api2=%{http_code}\n" -H "Authorization: Bearer $ACCESS2" http://host.containers.internal:8897/api
+ARESP="$(curl -sS -X POST -H 'Content-Type: application/json' -d '{"grant_type":"authorization_code","code":"c"}' http://host.containers.internal:8897/token-json)"
+echo "antlogin=$ARESP"
+AACCESS="$(echo "$ARESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "antapi=%{http_code}\n" -H "Authorization: Bearer $AACCESS" http://host.containers.internal:8897/api
+AREFRESH="$(echo "$ARESP" | grep -o '"refresh_token":"[^"]*"' | cut -d'"' -f4)"
+ARESP2="$(curl -sS -X POST -H 'Content-Type: application/json' -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$AREFRESH\"}" http://host.containers.internal:8897/token-json)"
+echo "antrefresh=$ARESP2"
+AACCESS2="$(echo "$ARESP2" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "antapi2=%{http_code}\n" -H "Authorization: Bearer $AACCESS2" http://host.containers.internal:8897/api
+JRESP="$(curl -sS -X POST -d 'grant_type=authorization_code&code=c' http://host.containers.internal:8897/token-jwt)"
+echo "jwtlogin=$JRESP"
+JACCESS="$(echo "$JRESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "jwtapi=%{http_code}\n" -H "Authorization: Bearer $JACCESS" http://host.containers.internal:8897/api
 CMDS
 }
 oauth_flow
 grep -q '"access_token":"hsh_' "$TMP/oauth.out" || fail "the sandbox did not receive phantom tokens: $(cat "$TMP/oauth.out")"
-if grep -q 'real-access\|real-refresh' "$TMP/oauth.out"; then
-	fail "real OAuth tokens leaked into the sandbox"
+if grep -q 'real-access\|real-refresh\|oat01-real\|ort01-real\|real-jwt' "$TMP/oauth.out"; then
+	fail "real OAuth tokens leaked into the sandbox: $(cat "$TMP/oauth.out")"
 fi
 grep -Eq '^api=200$' "$TMP/oauth.out" || fail "api call with a phantom token failed: $(cat "$TMP/oauth.out")"
 grep -Eq '^api2=200$' "$TMP/oauth.out" || fail "api call after refresh failed: $(cat "$TMP/oauth.out")"
@@ -588,8 +629,33 @@ grep -q "auth=Bearer real-access-1" "$TMP/oauth.log" || fail "the upstream did n
 if ! curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(grep -o '"access_token":"hsh_[0-9a-f]*"' "$TMP/oauth.out" | head -1 | cut -d'"' -f4)" http://127.0.0.1:8897/api | grep -q 401; then
 	fail "a phantom token redeemed directly against the provider (bypassing the proxy)"
 fi
-grep -q "real-access-1" "$TMP/oauth-tokens.json" || fail "the host-side oauth token store does not hold the real tokens"
-pass "oauth login inside the sandbox yields phantoms; real tokens stay on the host"
+OAUTH_STORE="$(grep -l "real-access-1" "$XDG_STATE_HOME"/hsh/sessions/*/proxy/oauth-tokens.json 2>/dev/null | head -1 || true)"
+[ -n "$OAUTH_STORE" ] || fail "the session's oauth token store (sessions/<id>/proxy/oauth-tokens.json) does not hold the real tokens"
+[ ! -e "$XDG_STATE_HOME/hsh/oauth-tokens.json" ] || fail "the proxy wrote a shared oauth-tokens.json outside its session directory"
+pass "oauth login inside the sandbox yields phantoms; real tokens stay in the session's proxy directory"
+
+grep -Eq '"access_token":"sk-ant-oat01-hsh_[0-9a-f]{64}"' "$TMP/oauth.out" || fail "the formatted access phantom is missing: $(grep antlogin "$TMP/oauth.out")"
+grep -Eq '"refresh_token":"sk-ant-ort01-hsh_[0-9a-f]{64}"' "$TMP/oauth.out" || fail "the formatted refresh phantom is missing: $(grep antlogin "$TMP/oauth.out")"
+grep -Eq '^antapi=200$' "$TMP/oauth.out" || fail "api call with a formatted phantom failed: $(cat "$TMP/oauth.out")"
+grep -q "token-json grant=refresh_token refresh=sk-ant-ort01-real-1" "$TMP/oauth.log" || fail "a JSON refresh did not reach the upstream with the real refresh token: $(grep token-json "$TMP/oauth.log")"
+grep -Eq '^antapi2=200$' "$TMP/oauth.out" || fail "api call after a JSON refresh failed: $(cat "$TMP/oauth.out")"
+pass "formatted phantoms (sk-ant-oat01-hsh_...) and JSON refresh bodies work through the proxy"
+
+JWT_CLAIMS="$(grep -o 'token-jwt claims=.*' "$TMP/oauth.log" | head -1 | cut -d= -f2-)"
+[ -n "$JWT_CLAIMS" ] || fail "the fake provider never issued a JWT"
+grep -Eq "\"access_token\":\"[^\".]+\\.${JWT_CLAIMS}\\.hsh_[0-9a-f]{64}\"" "$TMP/oauth.out" || fail "the JWT phantom does not keep the real claims: $(grep jwtlogin "$TMP/oauth.out")"
+grep -Eq '^jwtapi=200$' "$TMP/oauth.out" || fail "api call with a JWT phantom failed: $(cat "$TMP/oauth.out")"
+pass "JWT phantoms keep the real header and claims and redeem through the proxy"
+
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" oauth status >"$TMP/oauth-status.out" 2>&1 || fail "hsh oauth status failed: $(cat "$TMP/oauth-status.out")"
+grep -q "testant:" "$TMP/oauth-status.out" || fail "hsh oauth status does not list the session's captures: $(cat "$TMP/oauth-status.out")"
+if grep -q 'real-' "$TMP/oauth-status.out"; then
+	fail "hsh oauth status printed token material"
+fi
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" oauth provider ls >"$TMP/oauth-provider-ls.out" 2>&1 || fail "hsh oauth provider ls failed"
+grep -q "^testjwt .*user" "$TMP/oauth-provider-ls.out" || fail "hsh oauth provider ls does not show user providers: $(cat "$TMP/oauth-provider-ls.out")"
+grep -q "^anthropic .*shipped" "$TMP/oauth-provider-ls.out" || fail "hsh oauth provider ls does not show shipped providers: $(cat "$TMP/oauth-provider-ls.out")"
+pass "hsh oauth status and hsh oauth provider ls report sessions and providers"
 
 echo "== step 10: the oauth flow inside the hsh-vibe image"
 if podman image exists localhost/hsh-vibe:latest; then

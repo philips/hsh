@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,32 +19,32 @@ import (
 	"sync"
 	"time"
 
-	"hsh/internal/config"
+	"hsh/internal/oauthprov"
 )
 
 type oauthProvider struct {
 	name        string
 	tokenHost   string
 	tokenPath   string
-	fields      []string
+	fields      []oauthprov.Field
 	nonceFields []string
 	apiHosts    []string
+	header      string
+	prefix      string
 }
 
-func oauthProviders(cfg map[string]config.OAuthProvider) []oauthProvider {
+func oauthProviders(resolved []oauthprov.Resolved) []oauthProvider {
 	var out []oauthProvider
-	for name, p := range cfg {
-		fields := p.ResponseFields
-		if len(fields) == 0 {
-			fields = []string{"access_token", "refresh_token"}
-		}
+	for _, r := range resolved {
 		out = append(out, oauthProvider{
-			name:        name,
-			tokenHost:   p.TokenEndpoint.Host,
-			tokenPath:   p.TokenEndpoint.Path,
-			fields:      fields,
-			nonceFields: p.RequestNonceFields,
-			apiHosts:    p.APIHosts,
+			name:        r.Name,
+			tokenHost:   r.TokenEndpoint.Host,
+			tokenPath:   r.TokenEndpoint.Path,
+			fields:      r.ResponseFields,
+			nonceFields: r.RequestNonceFields,
+			apiHosts:    r.APIHosts,
+			header:      r.Header,
+			prefix:      r.Prefix,
 		})
 	}
 	return out
@@ -54,6 +56,14 @@ func (p *oauthProvider) matchesTokenEndpoint(host, path string) bool {
 
 func (p *oauthProvider) matchesAPIHost(host string) bool {
 	return len(p.apiHosts) > 0 && HostMatches(p.apiHosts, host)
+}
+
+func (p *oauthProvider) fieldNames() []string {
+	out := make([]string, 0, len(p.fields))
+	for _, f := range p.fields {
+		out = append(out, f.Path)
+	}
+	return out
 }
 
 type storedToken struct {
@@ -122,6 +132,39 @@ func newPhantom() (string, error) {
 	return "hsh_" + hex.EncodeToString(b), nil
 }
 
+func jwtPhantom(real, marker string) (string, bool) {
+	parts := strings.Split(real, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return "", false
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", false
+	}
+	return parts[0] + "." + parts[1] + "." + marker, true
+}
+
+func presentedPhantom(f oauthprov.Field, real string) (string, error) {
+	marker, err := newPhantom()
+	if err != nil {
+		return "", err
+	}
+	if f.Kind == "jwt" {
+		if ph, ok := jwtPhantom(real, marker); ok {
+			return ph, nil
+		}
+		log.Printf("oauth: %s is declared as a JWT but the value is not one; the sandbox gets an opaque phantom", f.Path)
+	}
+	if f.Format != "" {
+		return strings.Replace(f.Format, oauthprov.PhantomPlaceholder, marker, 1), nil
+	}
+	return marker, nil
+}
+
 func (p *Proxy) oauthTokenEndpoint(host, path string) *oauthProvider {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -131,17 +174,6 @@ func (p *Proxy) oauthTokenEndpoint(host, path string) *oauthProvider {
 		}
 	}
 	return nil
-}
-
-func (p *Proxy) oauthAPIHost(host string) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	for i := range p.st.oauth {
-		if p.st.oauth[i].matchesAPIHost(host) {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *Proxy) oauthInvolved(host string) bool {
@@ -156,23 +188,41 @@ func (p *Proxy) oauthInvolved(host string) bool {
 	return false
 }
 
+func (p *Proxy) oauthAPIProviders(host string) []oauthProvider {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	var out []oauthProvider
+	for i := range p.st.oauth {
+		if p.st.oauth[i].matchesAPIHost(host) {
+			out = append(out, p.st.oauth[i])
+		}
+	}
+	return out
+}
+
 func (p *Proxy) redeemBearerHeader(h http.Header, host string) bool {
-	if !p.oauthAPIHost(host) {
-		return false
+	for _, prov := range p.oauthAPIProviders(host) {
+		value := h.Get(prov.header)
+		if !strings.HasPrefix(value, prov.prefix) {
+			continue
+		}
+		candidate := strings.TrimPrefix(value, prov.prefix)
+		if !strings.Contains(candidate, "hsh_") {
+			continue
+		}
+		t, ok := p.store.lookup(candidate)
+		if !ok {
+			log.Printf("oauth: unknown phantom presented for %s; passing it through unresolved (is the oauth store missing the mapping?)", host)
+			continue
+		}
+		if t.Provider != prov.name {
+			continue
+		}
+		h.Set(prov.header, prov.prefix+t.Value)
+		log.Printf("oauth: redeemed %s %s token for %s", t.Provider, t.Field, host)
+		return true
 	}
-	auth := h.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer hsh_") {
-		return false
-	}
-	phantom := strings.TrimPrefix(auth, "Bearer ")
-	t, ok := p.store.lookup(phantom)
-	if !ok {
-		log.Printf("oauth: unknown phantom presented for %s; passing it through unresolved (is the oauth store missing the mapping?)", host)
-		return false
-	}
-	h.Set("Authorization", "Bearer "+t.Value)
-	log.Printf("oauth: redeemed %s %s token for %s", t.Provider, t.Field, host)
-	return true
+	return false
 }
 
 const oauthBodyLimit = 1 << 20
@@ -182,26 +232,59 @@ func oauthFingerprint(s string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-func logExchangeRequest(prov *oauthProvider, body []byte) {
+func requestFields(body []byte, contentType string) (map[string]string, bool) {
+	if isJSONBody(body, contentType) {
+		var doc map[string]any
+		if err := json.Unmarshal(body, &doc); err != nil {
+			return nil, false
+		}
+		out := map[string]string{}
+		for k, v := range doc {
+			if s, ok := v.(string); ok {
+				out[k] = s
+			}
+		}
+		return out, true
+	}
 	vals, err := url.ParseQuery(string(body))
 	if err != nil {
-		log.Printf("oauth: %s exchange request is not form-encoded; request fields not logged", prov.name)
+		return nil, false
+	}
+	out := map[string]string{}
+	for k := range vals {
+		out[k] = vals.Get(k)
+	}
+	return out, true
+}
+
+func isJSONBody(body []byte, contentType string) bool {
+	if mt, _, err := mime.ParseMediaType(contentType); err == nil && (mt == "application/json" || strings.HasSuffix(mt, "+json")) {
+		return true
+	}
+	trimmed := bytes.TrimSpace(body)
+	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+func logExchangeRequest(prov *oauthProvider, body []byte, contentType string) {
+	vals, ok := requestFields(body, contentType)
+	if !ok {
+		log.Printf("oauth: %s exchange request is neither form- nor JSON-encoded; request fields not logged", prov.name)
 		return
 	}
-	parts := []string{"grant_type=" + vals.Get("grant_type")}
-	if c := vals.Get("code"); c != "" {
+	parts := []string{"grant_type=" + vals["grant_type"]}
+	if c := vals["code"]; c != "" {
 		parts = append(parts, fmt.Sprintf("code=%s(len %d)", oauthFingerprint(c), len(c)))
 	}
-	if v := vals.Get("code_verifier"); v != "" {
+	if v := vals["code_verifier"]; v != "" {
 		parts = append(parts, fmt.Sprintf("code_verifier(len %d)", len(v)))
 	}
-	if r := vals.Get("redirect_uri"); r != "" {
+	if r := vals["redirect_uri"]; r != "" {
 		parts = append(parts, "redirect_uri="+r)
 	}
-	if id := vals.Get("client_id"); id != "" {
+	if id := vals["client_id"]; id != "" {
 		parts = append(parts, "client_id="+id)
 	}
-	if rt := vals.Get("refresh_token"); rt != "" {
+	if rt := vals["refresh_token"]; rt != "" {
 		parts = append(parts, fmt.Sprintf("refresh_token=%s(len %d)", oauthFingerprint(rt), len(rt)))
 	}
 	log.Printf("oauth: %s exchange request: %s", prov.name, strings.Join(parts, " "))
@@ -215,23 +298,35 @@ func readLimited(r io.Reader, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func (p *Proxy) redeemRequestBody(body []byte, prov *oauthProvider) []byte {
+func (p *Proxy) redeemNonce(v string, prov *oauthProvider) (string, bool) {
+	if !strings.Contains(v, "hsh_") {
+		return v, false
+	}
+	t, found := p.store.lookup(v)
+	if !found || t.Provider != prov.name {
+		return v, false
+	}
+	log.Printf("oauth: redeemed %s %s nonce for token exchange", t.Provider, t.Field)
+	return t.Value, true
+}
+
+func (p *Proxy) redeemRequestBody(body []byte, contentType string, prov *oauthProvider) []byte {
 	if len(prov.nonceFields) == 0 || len(body) == 0 {
 		return body
 	}
-	ct := http.DetectContentType(body)
-	if strings.Contains(ct, "json") {
+	if isJSONBody(body, contentType) {
 		var doc map[string]any
-		if err := json.Unmarshal(body, &doc); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(body))
+		dec.UseNumber()
+		if err := dec.Decode(&doc); err != nil {
 			return body
 		}
 		changed := false
 		for _, f := range prov.nonceFields {
 			if v, ok := doc[f].(string); ok {
-				if t, found := p.store.lookup(v); found {
-					doc[f] = t.Value
+				if real, ok := p.redeemNonce(v, prov); ok {
+					doc[f] = real
 					changed = true
-					log.Printf("oauth: redeemed %s %s nonce for token exchange", t.Provider, t.Field)
 				}
 			}
 		}
@@ -251,10 +346,9 @@ func (p *Proxy) redeemRequestBody(body []byte, prov *oauthProvider) []byte {
 	changed := false
 	for _, f := range prov.nonceFields {
 		for i, v := range vals[f] {
-			if t, found := p.store.lookup(v); found {
-				vals[f][i] = t.Value
+			if real, ok := p.redeemNonce(v, prov); ok {
+				vals[f][i] = real
 				changed = true
-				log.Printf("oauth: redeemed %s %s nonce for token exchange", t.Provider, t.Field)
 			}
 		}
 	}
@@ -266,30 +360,32 @@ func (p *Proxy) redeemRequestBody(body []byte, prov *oauthProvider) []byte {
 
 func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 	var doc map[string]any
-	if err := json.Unmarshal(body, &doc); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
 		log.Printf("oauth: %s token response is not JSON; passing it through unchanged (check token_endpoint path and content type)", prov.name)
 		return body
 	}
 	changed := false
 	for _, f := range prov.fields {
-		real, ok := doc[f].(string)
+		real, ok := doc[f.Path].(string)
 		if !ok || real == "" {
 			continue
 		}
-		if strings.HasPrefix(real, "hsh_") {
+		if _, known := p.store.lookup(real); known {
 			continue
 		}
-		phantom, err := newPhantom()
+		phantom, err := presentedPhantom(f, real)
 		if err != nil {
 			continue
 		}
-		p.store.put(phantom, storedToken{Provider: prov.name, Field: f, Value: real})
-		doc[f] = phantom
+		p.store.put(phantom, storedToken{Provider: prov.name, Field: f.Path, Value: real})
+		doc[f.Path] = phantom
 		changed = true
-		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f)
+		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f.Path)
 	}
 	if !changed {
-		log.Printf("oauth: %s token response contained none of the declared fields %v; passing it through unchanged", prov.name, prov.fields)
+		log.Printf("oauth: %s token response contained none of the declared fields %v; passing it through unchanged", prov.name, prov.fieldNames())
 		return body
 	}
 	out, err := json.Marshal(doc)
@@ -331,8 +427,9 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 		}
 		req.Body.Close()
 	}
-	logExchangeRequest(prov, body)
-	body = p.redeemRequestBody(body, prov)
+	ct := req.Header.Get("Content-Type")
+	logExchangeRequest(prov, body, ct)
+	body = p.redeemRequestBody(body, ct, prov)
 	if len(body) > 0 {
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.ContentLength = int64(len(body))

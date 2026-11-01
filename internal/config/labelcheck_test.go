@@ -62,6 +62,17 @@ func TestHarnessImageLabels(t *testing.T) {
 				t.Errorf("%s: context file %q must be absolute or start with ~/", cf, f)
 			}
 		}
+		providers, _, err := ResolveOAuth(cfg, t.TempDir())
+		if err != nil {
+			t.Errorf("%s: %v", cf, err)
+		}
+		for _, p := range providers {
+			for _, h := range append([]string{p.TokenEndpoint.Host}, p.APIHosts...) {
+				if !HostMatches(cfg.Network.Allow, h) {
+					t.Errorf("%s: oauth provider %s uses %s, which is not in network.allow", cf, p.Name, h)
+				}
+			}
+		}
 		for name, secret := range cfg.Secrets {
 			scheme, _, err := ParseSecretRef(secret.From)
 			if err != nil {

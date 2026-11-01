@@ -17,6 +17,8 @@ import (
 	"testing"
 
 	"hsh/internal/certs"
+	"hsh/internal/config"
+	"hsh/internal/oauthprov"
 )
 
 type oauthUpstream struct {
@@ -77,19 +79,37 @@ func writeConfig(t *testing.T, dir string, upstreamURL string) (configPath strin
 	host := upstreamHost(upstreamURL)
 	cfg := fmt.Sprintf(`{
   "version": 1,
-  "network": {"mode": "allowlist", "allow": [%q]},
-  "oauth": {"testprov": {
-    "token_endpoint": {"host": %q, "path": "/token"},
-    "response_fields": ["access_token", "refresh_token"],
-    "request_nonce_fields": ["refresh_token"],
-    "api_hosts": [%q]
-  }}
-}`, host, host, host)
+  "network": {"mode": "allowlist", "allow": [%q]}
+}`, host)
 	configPath = filepath.Join(dir, "config.hsh")
 	if err := os.WriteFile(configPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return configPath
+}
+
+func testProvider(host string) oauthprov.Resolved {
+	return oauthprov.Resolved{
+		Name:               "testprov",
+		TokenEndpoint:      oauthprov.Endpoint{Host: host, Path: "/token"},
+		ResponseFields:     []oauthprov.Field{{Path: "access_token"}, {Path: "refresh_token"}},
+		RequestNonceFields: []string{"refresh_token"},
+		APIHosts:           []string{host},
+		Header:             "Authorization",
+		Prefix:             "Bearer ",
+	}
+}
+
+func resolvedJSON(t *testing.T, secrets []config.ResolvedSecret, providers ...oauthprov.Resolved) string {
+	t.Helper()
+	if secrets == nil {
+		secrets = []config.ResolvedSecret{}
+	}
+	data, err := json.Marshal(config.ResolvedSecrets{Secrets: secrets, OAuth: providers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func upstreamHost(raw string) string {
@@ -100,8 +120,8 @@ func upstreamHost(raw string) string {
 	return u.Hostname()
 }
 
-func startTestProxy(t *testing.T, dir, configPath string, rootsPEM []byte) (addr string, caPool *x509.CertPool) {
-	return startTestProxyMode(t, dir, configPath, rootsPEM, "", `{"secrets":[]}`)
+func startTestProxy(t *testing.T, dir, configPath string, rootsPEM []byte, providers ...oauthprov.Resolved) (addr string, caPool *x509.CertPool) {
+	return startTestProxyMode(t, dir, configPath, rootsPEM, "", resolvedJSON(t, nil, providers...))
 }
 
 func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, networkMode, secretsJSON string) (addr string, caPool *x509.CertPool) {
@@ -256,7 +276,7 @@ func TestOAuthCapturePlainHTTP(t *testing.T) {
 	dir := t.TempDir()
 	up := newOAuthUpstream(t, false)
 	configPath := writeConfig(t, dir, up.srv.URL)
-	addr, _ := startTestProxy(t, dir, configPath, nil)
+	addr, _ := startTestProxy(t, dir, configPath, nil, testProvider(upstreamHost(up.srv.URL)))
 	client := &http.Client{Transport: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
 		return url.Parse("http://" + addr)
 	}}}
@@ -274,7 +294,7 @@ func TestOAuthPhantomWinsOverStaticSecret(t *testing.T) {
 	up := newOAuthUpstream(t, false)
 	configPath := writeConfig(t, dir, up.srv.URL)
 	host := upstreamHost(up.srv.URL)
-	secrets := fmt.Sprintf(`{"secrets":[{"name":"APIKEY","value":"static-key","header":"Authorization","prefix":"Bearer ","hosts":[%q]}]}`, host)
+	secrets := resolvedJSON(t, []config.ResolvedSecret{{Name: "APIKEY", Value: "static-key", Header: "Authorization", Prefix: "Bearer ", Hosts: []string{host}}}, testProvider(host))
 	addr, _ := startTestProxyMode(t, dir, configPath, nil, "", secrets)
 	client := &http.Client{Transport: &http.Transport{Proxy: func(*http.Request) (*url.URL, error) {
 		return url.Parse("http://" + addr)
@@ -303,7 +323,7 @@ func TestOAuthCaptureTLS(t *testing.T) {
 		t.Fatal("no upstream certificate")
 	}
 	rootsPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	addr, caPool := startTestProxy(t, dir, configPath, rootsPEM)
+	addr, caPool := startTestProxy(t, dir, configPath, rootsPEM, testProvider(upstreamHost(up.srv.URL)))
 	client := &http.Client{Transport: &http.Transport{
 		Proxy: func(*http.Request) (*url.URL, error) {
 			return url.Parse("http://" + addr)

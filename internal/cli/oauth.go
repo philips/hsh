@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/peterbourgon/ff/v4"
@@ -21,11 +22,12 @@ func oauthCommand() *ff.Command {
 	cmd = &ff.Command{
 		Name:      "oauth",
 		Usage:     "hsh oauth SUBCOMMAND",
-		ShortHelp: "help browser-redirect OAuth logins reach the sandbox",
+		ShortHelp: "OAuth logins in the sandbox: callback delivery, captured tokens, provider descriptors",
 		Flags:     ff.NewFlagSet("oauth"),
 		Subcommands: []*ff.Command{
 			oauthCallbackCommand(),
 			oauthStatusCommand(),
+			oauthProviderCommand(),
 		},
 	}
 	cmd.Exec = groupExec(&cmd)
@@ -82,67 +84,99 @@ func oauthCallbackCommand() *ff.Command {
 }
 
 func oauthStatusCommand() *ff.Command {
-	var store string
+	var store, session string
 	return newCommand("status", "hsh oauth status [FLAGS]",
-		"show captured OAuth providers and phantom counts (never token values)", func(fs *ff.FlagSet) {
-			fs.StringVar(&store, 0, "store", "", "oauth token store path (default: "+OAuthStoreDefaultPath()+")")
+		"show captured OAuth providers and phantom counts per session (never token values)", func(fs *ff.FlagSet) {
+			fs.StringVar(&session, 0, "session", "", "only this session (default: every session with captures)")
+			fs.StringVar(&store, 0, "store", "", "read this oauth token store file instead")
 		}, func(ctx context.Context, args []string) error {
-			path := store
-			if path == "" {
-				path = OAuthStoreDefaultPath()
+			if store != "" {
+				return printOAuthStore(store)
 			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				if os.IsNotExist(err) {
-					fmt.Printf("%s: no captured tokens (no login has completed yet)\n", path)
-					return nil
-				}
+			if session != "" {
+				id := strings.TrimPrefix(session, "hsh-")
+				return printOAuthStore(sessionOAuthStore(id))
+			}
+			entries, err := os.ReadDir(state.SessionsDir())
+			if err != nil && !os.IsNotExist(err) {
 				return err
 			}
-			var m map[string]storedPhantom
-			if err := json.Unmarshal(data, &m); err != nil {
-				return fmt.Errorf("parse %s: %w", path, err)
-			}
-			type key struct{ provider, field string }
-			counts := map[key]int{}
-			newest := map[key]string{}
-			for _, t := range m {
-				k := key{t.Provider, t.Field}
-				counts[k]++
-				if t.Created > newest[k] {
-					newest[k] = t.Created
+			found := 0
+			for _, e := range entries {
+				path := sessionOAuthStore(e.Name())
+				if !e.IsDir() || !fileExists(path) {
+					continue
+				}
+				found++
+				fmt.Printf("session %s\n", e.Name())
+				if err := printOAuthStore(path); err != nil {
+					return err
 				}
 			}
-			if len(counts) == 0 {
-				fmt.Printf("%s: no captured tokens\n", path)
-				return nil
-			}
-			fmt.Printf("%s: %d phantom(s)\n", path, len(m))
-			providers := map[string]bool{}
-			for k := range counts {
-				providers[k.provider] = true
-			}
-			for prov := range providers {
-				fmt.Printf("  %s:\n", prov)
-				for k, n := range counts {
-					if k.provider != prov {
-						continue
-					}
-					fmt.Printf("    %-14s %d  newest captured %s\n", k.field, n, newest[k])
-				}
+			if found == 0 {
+				fmt.Println("no session has captured tokens (no login has completed yet)")
 			}
 			return nil
 		})
+}
+
+func sessionOAuthStore(sessionID string) string {
+	return filepath.Join(state.SessionDir(sessionID), "proxy", "oauth-tokens.json")
+}
+
+func printOAuthStore(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("%s: no captured tokens (no login has completed yet)\n", path)
+			return nil
+		}
+		return err
+	}
+	var m map[string]storedPhantom
+	if err := json.Unmarshal(data, &m); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	type key struct{ provider, field string }
+	counts := map[key]int{}
+	newest := map[key]string{}
+	for _, t := range m {
+		k := key{t.Provider, t.Field}
+		counts[k]++
+		if t.Created > newest[k] {
+			newest[k] = t.Created
+		}
+	}
+	if len(counts) == 0 {
+		fmt.Printf("%s: no captured tokens\n", path)
+		return nil
+	}
+	fmt.Printf("%s: %d phantom(s)\n", path, len(m))
+	keys := make([]key, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].provider != keys[j].provider {
+			return keys[i].provider < keys[j].provider
+		}
+		return keys[i].field < keys[j].field
+	})
+	last := ""
+	for _, k := range keys {
+		if k.provider != last {
+			fmt.Printf("  %s:\n", k.provider)
+			last = k.provider
+		}
+		fmt.Printf("    %-14s %d  newest captured %s\n", k.field, counts[k], newest[k])
+	}
+	return nil
 }
 
 type storedPhantom struct {
 	Provider string `json:"provider"`
 	Field    string `json:"field"`
 	Created  string `json:"created"`
-}
-
-func OAuthStoreDefaultPath() string {
-	return filepath.Join(state.Dir(), "oauth-tokens.json")
 }
 
 func oauthFingerprint(s string) string {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"flag"
-	"path/filepath"
 
 	"hsh/internal/netsetup"
 	"hsh/internal/proxy"
@@ -17,7 +16,7 @@ func Proxy(args []string) error {
 	caKey := fs.String("ca-key", "/hsh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
 	monitorDB := fs.String("monitor-db", "", "monitor database path (empty disables recording)")
-	oauthStore := fs.String("oauth-store", "", "oauth token capture store path (default: next to the monitor database)")
+	oauthStore := fs.String("oauth-store", "", "oauth token capture store path, in the session's own writable directory (empty keeps captures in memory)")
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	session := fs.String("session", "", "session id recorded with each denial")
 	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
@@ -25,10 +24,6 @@ func Proxy(args []string) error {
 	netstack := fs.String("netstack-socket", "", "serve a gVisor sandbox's network over this SOCK_SEQPACKET socket (runsc --network-proxy-path) instead of listening for proxy clients")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	storePath := *oauthStore
-	if storePath == "" && *monitorDB != "" {
-		storePath = filepath.Join(filepath.Dir(*monitorDB), "oauth-tokens.json")
 	}
 	p, err := proxy.New(proxy.Options{
 		ListenAddr:   *listen,
@@ -38,7 +33,7 @@ func Proxy(args []string) error {
 		CAKeyPath:    *caKey,
 		RootsPath:    *roots,
 		MonitorDB:    *monitorDB,
-		OAuthStore:   storePath,
+		OAuthStore:   *oauthStore,
 		NetworkMode:  *networkMode,
 		Session:      *session,
 		Workspace:    *workspace,

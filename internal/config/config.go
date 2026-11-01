@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"hsh/internal/oauthprov"
 )
 
 type Secret struct {
@@ -93,16 +95,54 @@ func (n Network) ValidateMode() error {
 	}
 }
 
-type OAuthTokenEndpoint struct {
-	Host string `json:"host"`
-	Path string `json:"path"`
+type OAuth struct {
+	Providers []string            `json:"providers,omitempty"`
+	APIHosts  map[string][]string `json:"api_hosts,omitempty"`
 }
 
-type OAuthProvider struct {
-	TokenEndpoint      OAuthTokenEndpoint `json:"token_endpoint"`
-	ResponseFields     []string           `json:"response_fields"`
-	RequestNonceFields []string           `json:"request_nonce_fields"`
-	APIHosts           []string           `json:"api_hosts"`
+func (o *OAuth) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("oauth: %w", err)
+	}
+	var inline []string
+	for k := range raw {
+		if k != "providers" && k != "api_hosts" {
+			inline = append(inline, k)
+		}
+	}
+	if len(inline) > 0 {
+		sort.Strings(inline)
+		return fmt.Errorf("oauth: unknown field(s) %s; a config names OAuth providers instead of defining them: \"oauth\": {\"providers\": [%q]} (see hsh oauth provider ls; define your own with hsh oauth provider edit NAME --full)", strings.Join(inline, ", "), inline[0])
+	}
+	type plain OAuth
+	var p plain
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&p); err != nil {
+		return fmt.Errorf("oauth: %w", err)
+	}
+	*o = OAuth(p)
+	return nil
+}
+
+func (o OAuth) validate() error {
+	seen := map[string]bool{}
+	for _, name := range o.Providers {
+		if err := oauthprov.ValidName(name); err != nil {
+			return fmt.Errorf("oauth.providers: %w", err)
+		}
+		if seen[name] {
+			return fmt.Errorf("oauth.providers: %q is listed twice", name)
+		}
+		seen[name] = true
+	}
+	for name := range o.APIHosts {
+		if !seen[name] {
+			return fmt.Errorf("oauth.api_hosts: %q is not in oauth.providers", name)
+		}
+	}
+	return nil
 }
 
 const (
@@ -138,14 +178,14 @@ func (e *VersionError) Error() string {
 func (e *VersionError) Stale() bool { return e.Kind != VersionNewer }
 
 type Config struct {
-	Version int                      `json:"version"`
-	Image   string                   `json:"image"`
-	Shell   string                   `json:"shell"`
-	Mounts  []string                 `json:"mounts"`
-	Secrets map[string]Secret        `json:"secrets"`
-	Network Network                  `json:"network"`
-	OAuth   map[string]OAuthProvider `json:"oauth"`
-	Agent   Agent                    `json:"agent"`
+	Version int               `json:"version"`
+	Image   string            `json:"image"`
+	Shell   string            `json:"shell"`
+	Mounts  []string          `json:"mounts"`
+	Secrets map[string]Secret `json:"secrets"`
+	Network Network           `json:"network"`
+	OAuth   OAuth             `json:"oauth"`
+	Agent   Agent             `json:"agent"`
 
 	DetachKeys string  `json:"detach_keys,omitempty"`
 	Monitor    Monitor `json:"monitor"`
@@ -313,6 +353,9 @@ func decode(data []byte, source string) (*Config, error) {
 	if err := cfg.validateSecretRefs(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
+	if err := cfg.OAuth.validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
+	}
 	return cfg, nil
 }
 
@@ -337,7 +380,30 @@ type ResolvedSecret struct {
 }
 
 type ResolvedSecrets struct {
-	Secrets []ResolvedSecret `json:"secrets"`
+	Secrets []ResolvedSecret     `json:"secrets"`
+	OAuth   []oauthprov.Resolved `json:"oauth,omitempty"`
+}
+
+func ResolveOAuth(cfg *Config, dir string) ([]oauthprov.Resolved, []string, error) {
+	var out []oauthprov.Resolved
+	var warnings []string
+	for _, name := range cfg.OAuth.Providers {
+		l, err := oauthprov.Load(dir, name)
+		if err != nil {
+			return nil, nil, err
+		}
+		warnings = append(warnings, l.Warnings...)
+		var narrow []string
+		if hosts, ok := cfg.OAuth.APIHosts[name]; ok {
+			narrow = append([]string{}, hosts...)
+		}
+		r, err := l.Descriptor.Resolve(name, narrow)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, r)
+	}
+	return out, warnings, nil
 }
 
 var ErrSecretNotFound = errors.New("secret not found in the store")

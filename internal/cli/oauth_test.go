@@ -64,3 +64,35 @@ func TestStripControl(t *testing.T) {
 		t.Fatalf("stripControl = %q", got)
 	}
 }
+
+func TestOAuthStatusAllSessions(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	store := sessionOAuthStore("abc123")
+	if err := os.MkdirAll(filepath.Dir(store), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	doc := `{"hsh_aa": {"provider": "anthropic", "field": "access_token", "value": "real-secret", "created": "2025-06-11T18:02:14Z"}}`
+	if err := os.WriteFile(store, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(filepath.Dir(filepath.Dir(store)), "..", "nocaptures"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	got := runOAuthStatus(t)
+	if !strings.Contains(got, "session abc123") || !strings.Contains(got, "anthropic:") || strings.Contains(got, "nocaptures") {
+		t.Fatalf("oauth status across sessions:\n%s", got)
+	}
+	if strings.Contains(got, "real-secret") {
+		t.Fatalf("oauth status printed token material:\n%s", got)
+	}
+	if got := runOAuthStatus(t, "--session", "hsh-abc123"); !strings.Contains(got, "1 phantom(s)") {
+		t.Fatalf("oauth status --session:\n%s", got)
+	}
+}
+
+func TestOAuthStatusNoSessions(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if got := runOAuthStatus(t); !strings.Contains(got, "no session has captured tokens") {
+		t.Fatalf("oauth status without sessions:\n%s", got)
+	}
+}

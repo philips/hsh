@@ -24,6 +24,11 @@
     ],
     "mode": "allowlist"
   },
+  "oauth": {
+    "providers": [
+      "anthropic"
+    ]
+  },
   "agent": {
     "command": [
       "claude",

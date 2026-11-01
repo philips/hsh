@@ -364,10 +364,22 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		return out
 	}
+	warnedOAuth := map[string]bool{}
 	resolve := func(c *config.Config) error {
 		rs, missing, err := config.ResolveSecrets(c, storeFor(c))
 		if err != nil {
 			return err
+		}
+		providers, oauthWarnings, err := config.ResolveOAuth(c, oauthProvidersDir())
+		if err != nil {
+			return err
+		}
+		rs.OAuth = providers
+		for _, w := range oauthWarnings {
+			if !warnedOAuth[w] {
+				warnedOAuth[w] = true
+				fmt.Fprintf(os.Stderr, "hsh: warning: %s\n", w)
+			}
 		}
 		current := missingSet(missing)
 		for _, m := range missing {
@@ -411,6 +423,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
+	proxyStateDir := filepath.Join(sessionDir, "proxy")
+	if err := os.MkdirAll(proxyStateDir, 0o700); err != nil {
+		return err
+	}
 	proxyArgs := []string{
 		"create", "--pod", podName, "--name", proxyName,
 		"--security-opt", "label=disable",
@@ -418,6 +434,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"-v", exe + ":/hsh-proxy:ro",
 		"-v", sessionDir + ":/hsh-session:ro",
 		"-v", stateDir + ":/hsh-state",
+		"-v", proxyStateDir + ":/hsh-proxy-state",
 	}
 	roots := findRootBundle()
 	if roots != "" {
@@ -436,6 +453,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--ca-cert", "/hsh-session/ca.crt",
 		"--ca-key", "/hsh-session/ca.key",
 		"--monitor-db", "/hsh-state/"+filepath.Base(ro.monitorDB),
+		"--oauth-store", "/hsh-proxy-state/oauth-tokens.json",
 		"--session", sessionID,
 		"--workspace", workspaceSource,
 		"--attended", "/hsh-session/attended",

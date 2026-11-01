@@ -168,7 +168,7 @@ func (p *Proxy) reload() error {
 		p.st.mode = cfg.Network.ModeOrDefault()
 	}
 	p.st.secrets = rs.Secrets
-	p.st.oauth = oauthProviders(cfg.OAuth)
+	p.st.oauth = oauthProviders(rs.OAuth)
 	p.mu.Unlock()
 	return nil
 }

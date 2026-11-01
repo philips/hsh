@@ -24,6 +24,11 @@
     ],
     "mode": "allowlist"
   },
+  "oauth": {
+    "providers": [
+      "openai-codex"
+    ]
+  },
   "agent": {
     "command": [
       "codex",
