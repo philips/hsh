@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "token_endpoint": {"host": "platform.claude.com", "path": "/v1/oauth/token"},
+  "response_fields": [
+    {"path": "access_token", "format": "sk-ant-oat01-{phantom}"},
+    {"path": "refresh_token", "format": "sk-ant-ort01-{phantom}"}
+  ],
+  "request_nonce_fields": ["refresh_token"],
+  "api": {"hosts": ["api.anthropic.com"]}
+}

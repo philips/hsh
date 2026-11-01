@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "token_endpoint": {"host": "auth.openai.com", "path": "/oauth/token"},
+  "response_fields": [
+    {"path": "access_token", "kind": "jwt"},
+    {"path": "id_token", "kind": "jwt"},
+    "refresh_token"
+  ],
+  "request_nonce_fields": ["refresh_token", "subject_token"],
+  "api": {"hosts": ["chatgpt.com", "ab.chatgpt.com", "api.openai.com"]}
+}

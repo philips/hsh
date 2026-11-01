@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "token_endpoint": {"host": "auth.openai.com", "path": "/api/accounts/oauth/token"},
+  "response_fields": ["access_token", "refresh_token"],
+  "request_nonce_fields": ["refresh_token"],
+  "api": {"hosts": ["api.openai.com"]}
+}
