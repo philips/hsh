@@ -51,9 +51,9 @@ func (ip *inputParser) feedTracked(p []byte) ([]tea.KeyMsg, []int) {
 			msgs = append(msgs, tea.KeyMsg{Type: tea.KeyRunes, Runes: ip.paste, Paste: true})
 			pos += j + len(pasteEnd)
 			ends = append(ends, off(pos))
-				ip.paste, ip.pasting = nil, false
-				continue
-			}
+			ip.paste, ip.pasting = nil, false
+			continue
+		}
 		j := bytes.Index(data[pos:], pasteStart)
 		if j < 0 {
 			keep := partialSuffix(data[pos:], pasteStart)
@@ -73,8 +73,8 @@ func (ip *inputParser) feedTracked(p []byte) ([]tea.KeyMsg, []int) {
 		for _, u := range parseUnits(data[pos : pos+j]) {
 			pos += u.width
 			if u.msg != nil {
-					msgs = append(msgs, *u.msg)
-					ends = append(ends, off(pos))
+				msgs = append(msgs, *u.msg)
+				ends = append(ends, off(pos))
 			}
 		}
 		pos += len(pasteStart)

@@ -32,14 +32,6 @@ curl -X POST https://infinitelogic.app/o/hsh-home/hooks/bug_report \
 
 
 
-## Fix functional step 17 (detach/attach) in the full suite
-
-`test/functional.sh` step 17 fails with `hsh run did not exit` in the container runtime (the gvisor run has not been checked). It happens after `hsh resume` reattaches and `test/detach.py` closes the terminal (`os.close(fd)`, then `reap(pid)` with a 15 s timeout). Unmodified HEAD (2bcecb6) fails the same way. `python3 test/detach.py` passes when run on its own against the same binary and image, so an earlier step in the suite leaves state behind that keeps `hsh resume` from noticing the closed terminal. Narrow it down by running the suite with steps removed, and check which processes still hold the pty.
-
-## gofmt check in GitHub Actions
-
-Add a step to `.github/workflows/test.yml` that fails when `gofmt -l $(git ls-files '*.go')` prints anything. `internal/relay/input.go` and `internal/relay/security_test.go` are currently unformatted, so format them in the same change.
-
 ## add monitor subcommand for starting/stopping forward
 
 ## add monitor subcommand for oauth callback

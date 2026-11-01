@@ -281,7 +281,7 @@ func TestRegionFilterRewritesResetsSmuggledBehindAnAbortedCSI(t *testing.T) {
 
 func TestRegionFilterNeverIncludesTheStatusRow(t *testing.T) {
 	cases := map[string]string{
-		"\x1b[1;50r":                  "\x1b[1;29r",
+		"\x1b[1;50r":                   "\x1b[1;29r",
 		"\x1b[r":                       "\x1b[1;29r",
 		"\x1b[5;0r":                    "\x1b[5;29r",
 		"\x1b[30;31r":                  "\x1b[1;29r",
