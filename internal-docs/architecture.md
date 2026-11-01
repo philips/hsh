@@ -8,7 +8,7 @@ controlled egress. It is a single static Go binary that plays three roles:
 | `hsh run` | on the host | loads config, creates the pod and containers, attaches to the workspace |
 | `/hsh-proxy` | proxy container, inside the pod | egress proxy: network policy (https/allowlist/none), TLS interception, secret injection |
 | `/hsh-workspace` / `/hsh-workspace-inner` | workspace container, inside the pod | network isolation setup, then the user's shell |
-| `/hsh-sshd` | workspace container, gVisor sessions only | SSH server for `hsh forward`, `hsh ssh`, and `hsh oauth callback` inside the sandbox; see [gVisor runtime](gvisor.md) |
+| `/hsh-sshd` | workspace container, both runtimes | SSH server for `hsh forward`, `hsh ssh`, and `hsh oauth callback` inside the sandbox; see [Reaching servers inside the session](#reaching-servers-inside-the-session) |
 
 Host-side subcommands manage state around the sandbox: `hsh secret`
 (the secret store below), `hsh proxy` (denial review) and `hsh monitor`
@@ -19,8 +19,8 @@ is stamped by the release workflow with
 report `dev` plus the VCS commit (`-dirty` with uncommitted changes).
 
 The same binary is bind-mounted read-only under role-named paths in the
-containers (`/hsh-proxy` in the proxy, `/hsh-workspace` and
-`/hsh-workspace-inner` in the workspace) and used as the container
+containers (`/hsh-proxy` in the proxy, `/hsh-workspace`,
+`/hsh-workspace-inner`, and `/hsh-sshd` in the workspace) and used as the container
 entrypoints; the role is dispatched on argv[0], so the container plumbing
 is not part of the user-facing command set. The `proxy`, `workspace`, and
 `workspace-inner` subcommand names remain as aliases (and keep
@@ -137,7 +137,7 @@ flowchart LR
     end
 
     hshbin -.->|"ro → /hsh-proxy"| PROXY
-    hshbin -.->|"ro → /hsh-workspace,<br/>/hsh-workspace-inner"| WSC
+    hshbin -.->|"ro → /hsh-workspace,<br/>/hsh-workspace-inner, /hsh-sshd"| WSC
     cfgcopy -.->|"ro → /hsh-session/config.json"| PROXY
     secretsjson -.->|"ro → /hsh-session/secrets.json"| PROXY
     cafiles -.->|"ro → /hsh-session/ca.crt + ca.key"| PROXY
@@ -198,8 +198,12 @@ The workspace container starts in the pod's network namespace with
    `unshare(CLONE_NEWNET)` to move into a fresh, empty network namespace
 3. moves `hsh1` into the child's namespace (via netlink, by a file
    descriptor for `/proc/<child>/ns/net`; gVisor rejects the by-PID form)
-4. drops all of its own capabilities
-5. signals the child, which configures `hsh1` with `10.77.0.2/24` and brings
+4. pins the session: mounts a tmpfs on `/run/hsh`, writes the child's PID to
+   `/run/hsh/shell.pid`, bind-mounts `/proc/<child>/ns/net` onto
+   `/run/hsh/netns`, and remounts `/run/hsh` read-only (see
+   [Reaching servers inside the session](#reaching-servers-inside-the-session))
+5. drops all of its own capabilities
+6. signals the child, which configures `hsh1` with `10.77.0.2/24` and brings
    up loopback
 
 The child namespace has exactly one route: `10.77.0.0/24 dev hsh1`. There is
@@ -536,63 +540,98 @@ config instead. See [config versions](config.md#config-versions).
 
 ## Reaching servers inside the session
 
-This section describes the `container` runtime. gVisor sessions serve the
-same commands from `/hsh-sshd` inside the sandbox; see
-[gVisor runtime](gvisor.md#reaching-servers-inside-the-session).
-
 A server the agent starts on its loopback (`localhost:8000`) lives in the
-inner network namespace, which nothing outside can reach directly. Inbound
-access goes through the session relay, and the user's own `ssh` client is the
-interface.
+session's network namespace, which nothing outside can reach directly.
+Inbound access goes through `/hsh-sshd`, an SSH server that `podman exec`
+starts inside the workspace container for each connection. The user's own
+`ssh` client, `hsh forward`, and `hsh oauth callback` all use it, in both
+runtimes.
 
 ```
 laptop ssh -L 8000:localhost:8000 hsh-<id>
   └─ ProxyCommand: [ssh server] hsh ssh proxy hsh-<id>
-       └─ podman exec -i <pod>-ws /hsh-workspace-inner --ssh-stdio
-            (pod netns; an SSH server on stdin/stdout)
-            └─ direct-tcpip "localhost:8000" → "DIAL 8000" over the veth
-                 └─ relay in the inner netns (10.77.0.2:7788) → 127.0.0.1:8000
+       └─ podman exec -i <pod>-ws /hsh-sshd
+            ├─ container runtime: verify the pin, setns into /run/hsh/netns
+            ├─ snapshot the session shell's environment and cwd (memfd)
+            ├─ restrict this thread, re-exec as /hsh-sshd --serve FD
+            └─ SSH on stdin/stdout, in the session's netns
+                 ├─ direct-tcpip localhost:8000 → 127.0.0.1, ::1, local addresses
+                 ├─ session → exec the session shell
+                 └─ hsh-list@ifup.org → /proc/net/tcp{,6}
+hsh oauth callback URL
+  └─ podman exec <pod>-ws /hsh-sshd --deliver PORT --request REQ
 ```
 
-- **The relay** (`internal/workspace/relay.go`) is started by the inner workspace process, in the inner netns,
-  just before it execs the shell, and listens on `10.77.0.2:7788`. It accepts connections only from
-  `10.77.0.1`, the pod side of the veth. `DIAL <port>` answers `OK` or `ERR
-  <reason>` and then splices raw bytes (with half-close in both directions),
-  `LIST` returns the inner netns's listening TCP ports (from
-  `/proc/net/tcp{,6}`), and `PORT <n>` is the older form `hsh oauth callback`
-  uses. A dial tries `127.0.0.1`, then `10.77.0.2`, then `::1`, so a server
-  bound to any of them is reachable.
-- **The SSH server** (`internal/sshd`) is started per connection by `podman
-  exec` and uses no authentication: the transport is the user's own login to
-  the machine that runs podman, and nothing listens on the host. The host key is
-  ephemeral, so `hsh ssh config` prints a stanza with host-key checking off.
+- **The pin.** `/hsh-sshd` never searches `/proc` for the session. In the
+  container runtime the workspace parent records it at setup, while it still
+  holds `CAP_SYS_ADMIN`: `/run/hsh/netns` is a bind mount of the inner
+  child's network namespace, `/run/hsh/shell.pid` is that child's PID (the
+  shell, which the inner process execs in place), and `/run/hsh` is a tmpfs
+  remounted read-only. The agent has no `CAP_SYS_ADMIN` in the container's
+  user namespace, so it cannot unmount, remount, or cover the pin, and the
+  read-only mount stops writes despite `CAP_DAC_OVERRIDE`. Each container
+  start pins again.
+- **Mode and checks.** `/hsh-sshd` is on the pod side when its network
+  namespace has `hsh0`, which the agent can neither create nor remove there.
+  Then it waits up to 10 s for `/run/hsh` to be a read-only tmpfs (for
+  `hsh run --forward`, which connects as soon as the container runs) and
+  aborts unless `/run/hsh/netns` is a network namespace on nsfs, differs from
+  its own, and equals `/proc/<shell.pid>/ns/net`. There is no fallback to the
+  pod namespace, whose local addresses include the proxy's `10.77.0.1`.
+  Without `hsh0` it is under gVisor, where the shell is PID 1 and there is no
+  second namespace (see [gVisor runtime](gvisor.md#reaching-servers-inside-the-session)).
+- **Restrict, then serve.** `setns`, `capset`, and `PR_SET_NO_NEW_PRIVS`
+  act on one thread, and a Go server dials and forks from any thread. So
+  `/hsh-sshd` does all three on a locked thread and execs itself from that
+  thread as `/hsh-sshd --serve FD`; the new image starts in the session's
+  network namespace with only `CAP_DAC_OVERRIDE` and `NO_NEW_PRIVS` on every
+  thread. Before restricting, it copies the environment (`HSH_SHELL`, proxy
+  variables, CA bundle, home) and working directory of the session shell into
+  a sealed memfd passed as `FD`; it reads them while privileged because a
+  nesting session's shell keeps capabilities that a restricted process may
+  not inspect. `--serve` refuses to run unless the process is restricted,
+  then sets `PR_SET_DUMPABLE=0` so the agent (also uid 0 with
+  `CAP_DAC_OVERRIDE`) cannot ptrace it or read its `/proc` entries. No SSH
+  bytes are read before that.
+- **The SSH server** (`internal/sshd`) uses no authentication: the transport
+  is the user's own login to the machine that runs podman, and nothing
+  listens on the host. The host key is ephemeral, so `hsh ssh config` prints
+  a stanza with host-key checking, agent forwarding, and X11 forwarding off.
 - **What it accepts**: `direct-tcpip` channels whose destination is
   `localhost`, `127.0.0.1`, or `::1` (the destination host is a name for the
   sandbox's loopback, not an address to dial), and `session` channels: `ssh
   hsh-<id>` opens a shell inside the session, `ssh hsh-<id> CMD` runs a
   command, `ssh -tt` gives it a pty, and `scp` works through exec requests.
-  Everything else is refused without a dial: other destinations (so the relay
-  is never an egress path around the proxy), `tcpip-forward` (`ssh -R`),
-  streamlocal, agent, X11, `env` requests, and `subsystem` (no sftp server in
-  the image).
-- **The shell path**: for each session the server execs the mounted binary
-  once more (`/hsh-workspace-inner --ssh-session`); the helper finds the
-  inner netns by scanning `/proc/*/ns/net`, takes the shell, working
-  directory, and environment from the process that holds it, `setns`s into
-  the inner netns, drops all capabilities but CAP_DAC_OVERRIDE, sets
-  NO_NEW_PRIVS, makes fd 0 the controlling terminal for pty sessions, and
-  execs the shell. The result has the inner shell's isolation and
-  environment (proxy variables, CA bundle, home) without plumbing
-  configuration into the pod. A disconnected client does not kill the
-  shell; it is reaped when the session stops.
-- **`hsh ssh proxy`** resolves the session (the host name `hsh-<id>`, or
-  `--session`, or the workspace directory's only session), checks the
-  workspace container is running, and execs into it. It refuses to run with a
-  terminal on stdout and skips the auto-update hooks so stdout stays clean.
+  Everything else is refused without a dial: other destinations (so the
+  server is never an egress path around the proxy), `tcpip-forward` (`ssh
+  -R`), streamlocal, agent, X11, `env` requests, and `subsystem` (no sftp
+  server in the image).
+- **Dial order**: `127.0.0.1`, then `::1`, then every other non-link-local
+  address on an interface of the session's namespace (`10.77.0.2` in the
+  container runtime), so a server bound to any of them is reachable. These
+  are all local; nothing is dialed that would leave the namespace.
+- **Shells** are exec'd directly by the server with the snapshot's shell,
+  environment (`TERM` from the request), and working directory, in a new
+  session with fd 0 as the controlling terminal for pty sessions. They
+  inherit the restrictions. A disconnected client does not kill the shell;
+  it is reaped when the session stops.
+- **`hsh ssh proxy`**, **`hsh forward`**, and **`hsh oauth callback`**
+  resolve the session (the host name `hsh-<id>`, or `--session`, or the
+  workspace directory's only session) and check that the workspace container
+  mounts `/hsh-sshd`. A container-runtime session created before the mount
+  existed cannot gain it, so they fail with `session <id> was created by an
+  older hsh ...; remove it with: hsh rm <id>`. `hsh ssh proxy` refuses to run
+  with a terminal on stdout and skips the auto-update hooks so stdout stays
+  clean.
 - **Browser-redirect OAuth**: `ssh -N -L 1455:localhost:1455 hsh-<id>`
   delivers the browser's redirect into the waiting login; the token exchange
   still goes out through the proxy's capture. `hsh oauth callback` remains the
-  paste fallback.
+  paste fallback; it prints the first line of the response with control
+  characters removed, since a server in the sandbox wrote it.
+- **Version skew**: the bind mount is resolved when the container starts, so
+  `/hsh-sshd` is the binary from the session's last start. The host side
+  only relies on the stdio SSH server, the list request, and
+  `--deliver`/`--request`, which stay compatible.
 
 - **`hsh forward`** needs no ssh configuration: it is an SSH client
   (`internal/forward`) over the same stdio server, started with one `podman

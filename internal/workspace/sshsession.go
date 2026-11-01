@@ -1,104 +1,14 @@
 package workspace
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
-	"runtime"
-	"sort"
-	"strconv"
 	"strings"
-	"syscall"
 
 	"golang.org/x/sys/unix"
 )
-
-type SSHSessionOptions struct {
-	Pty     bool
-	Term    string
-	Command string
-}
-
-func RunSSHSession(opts SSHSessionOptions) error {
-	runtime.LockOSThread()
-	pid, err := innerNetnsPID()
-	if err != nil {
-		return err
-	}
-	return runSessionShell(pid, true, opts)
-}
-
-func RunDirectSSHSession(opts SSHSessionOptions) error {
-	return runSessionShell(1, false, opts)
-}
-
-func runSessionShell(pid int, enterNetns bool, opts SSHSessionOptions) error {
-	env, _ := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
-	envv := parseEnviron(env)
-	shell := envValue(envv, "HSH_SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	if opts.Term != "" {
-		envv = setEnv(envv, "TERM", opts.Term)
-	}
-	if enterNetns {
-		ns, err := os.Open(fmt.Sprintf("/proc/%d/ns/net", pid))
-		if err != nil {
-			return fmt.Errorf("open the session's network namespace: %w", err)
-		}
-		defer ns.Close()
-		if err := unix.Setns(int(ns.Fd()), unix.CLONE_NEWNET); err != nil {
-			return fmt.Errorf("enter the session's network namespace: %w (is the session's shell still running?)", err)
-		}
-	}
-	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
-		return err
-	}
-	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-		return err
-	}
-	if opts.Pty {
-		_ = unix.IoctlSetInt(0, unix.TIOCSCTTY, 0)
-	}
-	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
-		_ = os.Chdir(cwd)
-	}
-	if opts.Command != "" {
-		return syscall.Exec(shell, []string{shell, "-c", opts.Command}, envv)
-	}
-	return syscall.Exec(shell, []string{shell}, envv)
-}
-
-func innerNetnsPID() (int, error) {
-	self, err := os.Stat("/proc/self/ns/net")
-	if err != nil {
-		return 0, err
-	}
-	selfIno := self.Sys().(*syscall.Stat_t).Ino
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return 0, err
-	}
-	pids := make([]int, 0, len(entries))
-	for _, e := range entries {
-		pid, err := strconv.Atoi(e.Name())
-		if err != nil {
-			continue
-		}
-		fi, err := os.Stat("/proc/" + e.Name() + "/ns/net")
-		if err != nil {
-			continue
-		}
-		if fi.Sys().(*syscall.Stat_t).Ino != selfIno {
-			pids = append(pids, pid)
-		}
-	}
-	if len(pids) == 0 {
-		return 0, fmt.Errorf("no process of this session holds the inner network namespace (is the session's shell still running?)")
-	}
-	sort.Ints(pids)
-	return pids[0], nil
-}
 
 func parseEnviron(data []byte) []string {
 	var env []string
@@ -120,9 +30,92 @@ func envValue(env []string, key string) string {
 	return ""
 }
 
-func RestrictPrivileges() error {
+func RestrictThread() error {
 	if err := dropCapsKeep(unix.CAP_DAC_OVERRIDE); err != nil {
 		return err
 	}
 	return unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)
+}
+
+func CheckRestricted() error {
+	nnp, err := unix.PrctlRetInt(unix.PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0)
+	if err != nil {
+		return err
+	}
+	hdr := &unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+	data := make([]unix.CapUserData, 2)
+	if err := unix.Capget(hdr, &data[0]); err != nil {
+		return err
+	}
+	keep := uint32(1) << unix.CAP_DAC_OVERRIDE
+	if nnp != 1 || data[0].Permitted&^keep != 0 || data[1].Permitted != 0 || data[0].Inheritable|data[1].Inheritable != 0 {
+		return fmt.Errorf("not restricted (no_new_privs=%d, permitted=%08x%08x)", nnp, data[1].Permitted, data[0].Permitted)
+	}
+	return nil
+}
+
+type ShellSnapshot struct {
+	Shell string   `json:"shell"`
+	Env   []string `json:"env"`
+	Dir   string   `json:"dir"`
+}
+
+func (s ShellSnapshot) WriteMemfd() (*os.File, error) {
+	data, err := json.Marshal(s)
+	if err != nil {
+		return nil, err
+	}
+	fd, err := unix.MemfdCreate("hsh-sshd-snapshot", unix.MFD_ALLOW_SEALING)
+	if err != nil {
+		return nil, fmt.Errorf("create the snapshot memfd: %w", err)
+	}
+	f := os.NewFile(uintptr(fd), "hsh-sshd-snapshot")
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return nil, err
+	}
+	if _, err := unix.FcntlInt(uintptr(fd), unix.F_ADD_SEALS, unix.F_SEAL_SEAL|unix.F_SEAL_SHRINK|unix.F_SEAL_GROW|unix.F_SEAL_WRITE); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("seal the snapshot memfd: %w", err)
+	}
+	return f, nil
+}
+
+func ReadSnapshot(fd int) (ShellSnapshot, error) {
+	f := os.NewFile(uintptr(fd), "hsh-sshd-snapshot")
+	if f == nil {
+		return ShellSnapshot{}, fmt.Errorf("no snapshot on fd %d", fd)
+	}
+	defer f.Close()
+	var snap ShellSnapshot
+	if err := json.NewDecoder(io.NewSectionReader(f, 0, 1<<24)).Decode(&snap); err != nil {
+		return ShellSnapshot{}, fmt.Errorf("read the session shell snapshot: %w", err)
+	}
+	if snap.Shell == "" || snap.Dir == "" {
+		return ShellSnapshot{}, fmt.Errorf("incomplete session shell snapshot")
+	}
+	return snap, nil
+}
+
+func SnapshotShell(pid int) ShellSnapshot {
+	env, _ := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	snap := ShellSnapshot{Env: parseEnviron(env), Dir: "/"}
+	snap.Shell = envValue(snap.Env, "HSH_SHELL")
+	if snap.Shell == "" {
+		snap.Shell = "/bin/sh"
+	}
+	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil {
+		if fi, err := os.Stat(cwd); err == nil && fi.IsDir() {
+			snap.Dir = cwd
+		}
+	}
+	return snap
+}
+
+func (s ShellSnapshot) EnvWithTerm(term string) []string {
+	env := append([]string(nil), s.Env...)
+	if term != "" {
+		env = setEnv(env, "TERM", term)
+	}
+	return env
 }

@@ -158,38 +158,13 @@ logged.
 ## Reaching servers inside the session
 
 `hsh forward`, `hsh run --forward`, `hsh ssh`, and `hsh oauth callback`
-work as in the container runtime, served by a separate role, `/hsh-sshd`.
-`hsh run` bind-mounts the hsh binary read-only at `/hsh-sshd` in the
-workspace container, and the host commands run `podman exec -i
-<pod>-ws /hsh-sshd` instead of `/hsh-workspace-inner --ssh-stdio` when
-the session's runtime is gvisor.
-
-```
-hsh forward / ssh hsh-<id> / hsh oauth callback      (host)
-  └─ podman exec -i <pod>-ws /hsh-sshd               (inside the gVisor sandbox)
-       ├─ direct-tcpip localhost:PORT → dial 127.0.0.1 / ::1 in the sandbox
-       ├─ session → /hsh-sshd --session-shell (env and cwd of PID 1)
-       └─ --deliver PORT --request REQ → 127.0.0.1:PORT
-```
-
-- `/hsh-sshd` runs inside the sandbox, in the same network namespace as
-  the shell, so it needs no relay, veth, or `setns`. It dials only
-  `127.0.0.1` and `::1`. Any other address would leave the sandbox through
-  the netstack and reach the proxy, so it is never tried. The SSH server
-  (`internal/sshd`) refuses non-loopback `direct-tcpip` destinations as
-  in the container runtime.
-- It holds no secrets and has no route to them: the CA key, the
-  resolved secrets, and the monitor database are only mounted in the
-  proxy container. On start it drops every capability except
-  `CAP_DAC_OVERRIDE` and sets `NO_NEW_PRIVS`, the same restrictions as
-  the session's shell, before serving.
-- Session shells (`ssh hsh-<id>`, `ssh hsh-<id> CMD`, `ssh -tt`) exec
-  `/hsh-sshd --session-shell`, which copies the environment, shell
-  (`HSH_SHELL`), and working directory of PID 1 (the session's shell or
-  agent, which `/hsh-workspace --netstack` execs in place), makes fd 0
-  the controlling terminal for pty sessions, and execs the shell.
-- Listeners for `hsh forward --list` and auto-forwarding come from the
-  sandbox's `/proc/net/tcp{,6}`.
+go through `/hsh-sshd` as in the container runtime; see
+[Reaching servers inside the session](architecture.md#reaching-servers-inside-the-session).
+The gVisor-specific part: the sandbox has one network namespace and no
+`hsh0`, so `/hsh-sshd` uses no pin and no `setns`. The session shell is
+PID 1, which `/hsh-workspace --netstack` execs in place, so its environment
+and working directory are the snapshot. Dialing stays on local addresses,
+so nothing goes out through the netstack to the proxy.
 
 ## Not supported yet
 

@@ -109,6 +109,9 @@ func RunParent(opts ParentOptions) error {
 	if err := netsetup.MoveInnerVethToPID(cmd.Process.Pid); err != nil {
 		return err
 	}
+	if err := netsetup.PinSession(cmd.Process.Pid); err != nil {
+		return err
+	}
 	if err := dropCaps(); err != nil {
 		return err
 	}
@@ -218,9 +221,6 @@ func enterSession(opts InnerOptions) error {
 	}
 	if err := os.Chdir(opts.Workspace); err != nil {
 		return err
-	}
-	if opts.ProxyAddr != "" {
-		startCallbackRelay()
 	}
 	if len(opts.Exec) > 0 {
 		argv := opts.Exec

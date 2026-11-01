@@ -94,15 +94,23 @@ proxy, the monitor database, and the example image:
   proxy; `ssh hsh-<id> CMD` runs commands in the session's shell environment
   (HOME, the egress proxy in the environment, `/proc/net/dev` showing the
   inner netns's `hsh1`, exit status propagation) and `ssh -tt` runs them on
-  a pty; no listeners outlive the ssh client. Skipped without an `ssh`
+  a pty; ssh shells have only `CAP_DAC_OVERRIDE` and `NoNewPrivs: 1`; the
+  session cannot read `/hsh-sshd`'s `/proc` entries. In the container
+  runtime: `/hsh-workspace-inner --ssh-stdio` is an unknown flag, nothing
+  listens on 7788, the session cannot unmount, remount, or write its pin
+  under `/run/hsh`, and `hsh forward` reaches a server bound only to
+  `10.77.0.2`. No listeners outlive the ssh client. Skipped without an `ssh`
   client. `internal/sshd` has Go tests (in-process client over loopback TCP)
   for the destination restriction, every rejected channel and request type,
   large transfers with half-close, concurrency, recovery after a failed
   dial, and session channels (exec output and exit status, stderr as
   extended data, pty winsize via `stty size`, signals, stdin EOF, rejection
-  without a spawn handler); `internal/workspace` tests the relay (`DIAL`,
-  `LIST`, `PORT`, source refusal, half-close) and the `/proc/net/tcp`
-  parser
+  without a spawn handler); `internal/workspace` tests `DialLocalPort`
+  (loopback, `::1`, interface addresses, closed ports), `DeliverLocal`, the
+  shell snapshot and its sealed memfd, `CheckRestricted`, and the
+  `/proc/net/tcp` parser; `internal/netsetup` tests the pin checks (not
+  ready, not nsfs, wrong namespace type, the pod's own namespace, and
+  missing, malformed, or mismatched `shell.pid`)
 - **step 24**: the network notice — a `--tasks` run whose agent command
   contains `{network_policy}` gets the read-only notice path; the managed block
   is created in a missing `~/` instruction file and, in a pre-existing file in
@@ -113,8 +121,7 @@ proxy, the monitor database, and the example image:
   the block upsert and removal
 - **step 25**: `hsh forward` and `hsh run --forward` — a busy `--forward` port
   fails before a session exists; `--forward 18100:18200` reaches a node server
-  in the sandbox; `hsh forward --list` shows the server and not the relay's
-  port; `hsh forward LOCAL:PORT` works on a running session; `hsh forward`
+  in the sandbox; `hsh forward --list` shows exactly the test's server; `hsh forward LOCAL:PORT` works on a running session; `hsh forward`
   with no ports forwards the running server and a second one started later;
   listeners go away with their process. `internal/forward` has Go tests for
   spec parsing, explicit and automatic forwarding (including release and
@@ -127,6 +134,10 @@ proxy, the monitor database, and the example image:
   refuses and leaves it unchanged, the running proxy keeps denying a host the
   new file would allow and logs the failed reload, `hsh resume` explains and
   names `hsh rm`, and `hsh rm` still removes the session
+- **step 27**: a pod whose workspace container has no `/hsh-sshd` mount (as
+  container-runtime sessions created before the mount existed) makes `hsh
+  forward`, `hsh ssh proxy`, and `hsh oauth callback` fail with the recreate
+  message naming `hsh rm`
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

@@ -523,7 +523,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		wsArgs = append(wsArgs, "-e", "HSH_NESTING=1")
 	}
 	if gv != nil {
-		wsArgs = append(wsArgs, "--runtime", gv.wrapper, "-v", exe+":"+sshdPath+":ro")
+		wsArgs = append(wsArgs, "--runtime", gv.wrapper)
 	} else {
 		wsArgs = append(wsArgs, "--cap-add", "NET_ADMIN", "--cap-add", "SYS_ADMIN")
 	}
@@ -531,6 +531,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--entrypoint", "/hsh-workspace",
 		"-v", exe+":/hsh-workspace:ro",
 		"-v", exe+":/hsh-workspace-inner:ro",
+		"-v", exe+":"+sshdPath+":ro",
 		"-v", caCertPath+":/hsh-run/ca.crt:ro",
 		"-v", notice.SessionDir(sessionDir)+":"+notice.Dir+":ro",
 	)

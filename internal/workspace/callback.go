@@ -6,50 +6,28 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
-	"syscall"
-	"time"
-
-	"hsh/internal/netsetup"
 )
 
-func CallbackRelay(addr string) error {
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("callback relay listen %s: %w", addr, err)
-	}
-	return ServeRelay(ln, allowPodSide)
-}
-
-func OAuthDeliver(relayAddr, port, request string) error {
-	conn, err := net.DialTimeout("tcp", relayAddr, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("connect to the session's callback relay %s: %w", relayAddr, err)
-	}
-	defer conn.Close()
-	if _, err := fmt.Fprintf(conn, "PORT %s\n%s", port, request); err != nil {
-		return err
-	}
-	_, _ = io.Copy(os.Stdout, conn)
-	return nil
-}
-
 func DeliverLocal(port, request string) error {
+	return deliverLocal(os.Stdout, port, request)
+}
+
+func deliverLocal(w io.Writer, port, request string) error {
 	n, ok := parsePort(port)
 	if !ok {
-		fmt.Println("ERR invalid port")
+		fmt.Fprintln(w, "ERR invalid port")
 		return nil
 	}
-	conn, err := DialLoopbackPort(n)
+	conn, err := DialLocalPort(n)
 	if err != nil {
-		fmt.Printf("ERR nothing is listening on port %d in this session\n", n)
+		fmt.Fprintf(w, "ERR nothing is listening on port %d in this session\n", n)
 		return nil
 	}
 	defer conn.Close()
 	if _, err := io.WriteString(conn, request); err != nil {
 		return err
 	}
-	_, _ = io.Copy(os.Stdout, conn)
+	_, _ = io.Copy(w, conn)
 	return nil
 }
 
@@ -73,14 +51,4 @@ func HTTPEcho(port string) error {
 	body := "ok"
 	fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
 	return nil
-}
-
-func startCallbackRelay() {
-	self, err := os.Executable()
-	if err != nil {
-		return
-	}
-	cmd := exec.Command(self, "--callback-relay", netsetup.CallbackRelayAddr())
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	_ = cmd.Start()
 }

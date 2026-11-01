@@ -17,7 +17,7 @@ const (
 	runtimeContainer = "container"
 	runtimeGVisor    = "gvisor"
 	runtimeDefault   = runtimeGVisor
-	netstackTarget = "/hsh-netstack"
+	netstackTarget   = "/hsh-netstack"
 )
 
 type gvisorSession struct {

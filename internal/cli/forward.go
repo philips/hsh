@@ -22,7 +22,11 @@ func connectSession(sessionID string) (*ssh.Client, error) {
 	if !containerRunning(wsName) {
 		return nil, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
 	}
-	cmd := exec.Command("podman", sessionSSHArgs(sessionID)...)
+	sshArgs, err := sessionSSHArgs(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command("podman", sshArgs...)
 	cmd.Stderr = os.Stderr
 	return forward.DialCommand(cmd)
 }

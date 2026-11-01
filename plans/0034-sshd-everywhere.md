@@ -1,6 +1,6 @@
 # 0034: `/hsh-sshd` for every session; drop the relay and `--ssh-stdio`
 
-> **Status: plan.** Depends on the `/hsh-sshd` role from 0033 (branch
+> **Status: superseded by plans/0042-sshd-everywhere.md.** Depends on the `/hsh-sshd` role from 0033 (branch
 > `gvisor-prototype`).
 
 ## Goal

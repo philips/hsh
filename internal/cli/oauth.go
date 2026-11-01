@@ -13,7 +13,6 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/netsetup"
 	"hsh/internal/state"
 )
 
@@ -62,18 +61,14 @@ func oauthCallbackCommand() *ff.Command {
 				return fmt.Errorf("session %s has no running workspace container", sessionID)
 			}
 			request := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", u.RequestURI(), u.Host)
-			deliverArgs := []string{"exec", wsName, "/hsh-workspace-inner",
-				"--oauth-deliver", netsetup.CallbackRelayAddr(),
-				"--oauth-deliver", port,
-				"--oauth-deliver", request}
-			if readSessionRuntime(state.SessionDir(sessionID)) == runtimeGVisor {
-				deliverArgs = []string{"exec", wsName, sshdPath, "--deliver", port, "--request", request}
+			if err := checkSSHDMount(sessionID); err != nil {
+				return err
 			}
-			out, err := podman(deliverArgs...)
+			out, err := podman("exec", wsName, sshdPath, "--deliver", port, "--request", request)
 			if err != nil {
 				return fmt.Errorf("delivering the callback to session %s: %w\n%s", sessionID, err, out)
 			}
-			status := strings.TrimSpace(strings.SplitN(strings.TrimSpace(out), "\n", 2)[0])
+			status := stripControl(strings.TrimSpace(strings.SplitN(strings.TrimSpace(out), "\n", 2)[0]))
 			if strings.HasPrefix(status, "ERR") {
 				return fmt.Errorf("session %s: %s (is the login still waiting on port %s?)", sessionID, status, port)
 			}
@@ -153,6 +148,15 @@ func OAuthStoreDefaultPath() string {
 func oauthFingerprint(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
+}
+
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func isLoopbackHost(host string) bool {

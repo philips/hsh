@@ -75,36 +75,9 @@ func WorkspaceInner(args []string) error {
 	home := fs.String("home", "/home/hsh", "home directory")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
 	contextJSON := fs.String("context-files-json", "", "JSON array of instruction files that get the network notice block")
-	callbackRelay := fs.String("callback-relay", "", "internal: run the OAuth callback relay on this address")
-	oauthDeliver := []string{}
-	fs.Func("oauth-deliver", "internal: relay ADDR, target PORT, and raw HTTP REQUEST", func(v string) error {
-		oauthDeliver = append(oauthDeliver, v)
-		return nil
-	})
-	sshStdio := fs.Bool("ssh-stdio", false, "internal: serve SSH port forwards into the session on stdin/stdout")
-	sshSession := fs.Bool("ssh-session", false, "internal: replace this process with a shell inside the session's network namespace")
-	sshPty := fs.Bool("pty", false, "internal: make fd 0 the controlling terminal of the shell")
-	sshTerm := fs.String("term", "", "internal: TERM for the shell")
-	sshCommand := fs.String("command", "", "internal: command to run with the session's shell instead of an interactive shell")
 	httpEcho := fs.String("http-echo", "", "internal: listen once on 127.0.0.1:PORT, print the request line, answer 200")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *callbackRelay != "" {
-		return workspace.CallbackRelay(*callbackRelay)
-	}
-	if len(oauthDeliver) == 3 {
-		return workspace.OAuthDeliver(oauthDeliver[0], oauthDeliver[1], oauthDeliver[2])
-	}
-	if *sshStdio {
-		return serveSSHStdio()
-	}
-	if *sshSession {
-		return workspace.RunSSHSession(workspace.SSHSessionOptions{
-			Pty:     *sshPty,
-			Term:    *sshTerm,
-			Command: *sshCommand,
-		})
 	}
 	if *httpEcho != "" {
 		return workspace.HTTPEcho(*httpEcho)

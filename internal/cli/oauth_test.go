@@ -57,3 +57,10 @@ func TestOAuthStatusMissingStore(t *testing.T) {
 		t.Fatalf("oauth status for a missing store:\n%s", got)
 	}
 }
+
+func TestStripControl(t *testing.T) {
+	got := stripControl("HTTP/1.1 200 OK\x1b]52;c;ZXZpbA==\x07\x1b[2J\r\u009b31m")
+	if got != "HTTP/1.1 200 OK]52;c;ZXZpbA==[2J31m" {
+		t.Fatalf("stripControl = %q", got)
+	}
+}

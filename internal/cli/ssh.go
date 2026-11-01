@@ -3,82 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	"github.com/peterbourgon/ff/v4"
-
-	"hsh/internal/netsetup"
-	"hsh/internal/sshd"
-	"hsh/internal/state"
-	"hsh/internal/workspace"
 )
-
-func serveSSHStdio() error {
-	relayAddr := netsetup.CallbackRelayAddr()
-	return sshd.Serve(sshd.Stdio(), sshd.Config{
-		Dial: func(port int) (net.Conn, error) {
-			return workspace.DialRelay(relayAddr, port)
-		},
-		List: func() ([]sshd.Listener, error) {
-			ls, err := workspace.ListRelay(relayAddr)
-			if err != nil {
-				return nil, err
-			}
-			out := make([]sshd.Listener, len(ls))
-			for i, l := range ls {
-				out[i] = sshd.Listener{Port: l.Port, Addr: l.Addr}
-			}
-			return out, nil
-		},
-		Spawn: spawnSSHSession,
-	})
-}
-
-func spawnSSHSession(r sshd.SpawnRequest) (sshd.SpawnResult, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return sshd.SpawnResult{}, err
-	}
-	return spawnSession(self, []string{"--ssh-session"}, r)
-}
-
-func spawnSession(self string, base []string, r sshd.SpawnRequest) (sshd.SpawnResult, error) {
-	args := append([]string(nil), base...)
-	if r.Pty {
-		args = append(args, "--pty")
-	}
-	if r.Term != "" {
-		args = append(args, "--term", r.Term)
-	}
-	if r.Command != "" {
-		args = append(args, "--command", r.Command)
-	}
-	cmd := exec.Command(self, args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if r.Pty {
-		cmd.Stdin = r.Slave
-		cmd.Stdout = r.Slave
-		cmd.Stderr = r.Slave
-	} else {
-		cmd.Stdin = r.Stdin
-		cmd.Stdout = r.Stdout
-		cmd.Stderr = r.Stderr
-	}
-	if err := cmd.Start(); err != nil {
-		return sshd.SpawnResult{}, err
-	}
-	pgid := cmd.Process.Pid
-	return sshd.SpawnResult{
-		Signal: func(sig syscall.Signal) error { return syscall.Kill(-pgid, sig) },
-		Wait: func() int {
-			return sshd.ExitCode(cmd.Wait())
-		},
-	}, nil
-}
 
 var sshProxyCmd *ff.Command
 
@@ -125,7 +55,11 @@ func sshProxyCommand() *ff.Command {
 			if !containerRunning(wsName) {
 				return fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
 			}
-			cmd := exec.CommandContext(ctx, "podman", sessionSSHArgs(sessionID)...)
+			sshArgs, err := sessionSSHArgs(sessionID)
+			if err != nil {
+				return err
+			}
+			cmd := exec.CommandContext(ctx, "podman", sshArgs...)
 			cmd.Stdin = os.Stdin
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -133,12 +67,36 @@ func sshProxyCommand() *ff.Command {
 		})
 }
 
-func sessionSSHArgs(sessionID string) []string {
+func sessionSSHArgs(sessionID string) ([]string, error) {
 	wsName := "hsh-" + sessionID + "-ws"
-	if readSessionRuntime(state.SessionDir(sessionID)) == runtimeGVisor {
-		return []string{"exec", "-i", wsName, sshdPath}
+	if err := checkSSHDMount(sessionID); err != nil {
+		return nil, err
 	}
-	return []string{"exec", "-i", wsName, "/hsh-workspace-inner", "--ssh-stdio"}
+	return []string{"exec", "-i", wsName, sshdPath}, nil
+}
+
+func checkSSHDMount(sessionID string) error {
+	out, err := podman("container", "inspect", "--format", `{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}`, "hsh-"+sessionID+"-ws")
+	if err != nil {
+		return fmt.Errorf("inspect session %s: %w\n%s", sessionID, err, out)
+	}
+	if !hasMount(out, sshdPath) {
+		return legacySessionError(sessionID)
+	}
+	return nil
+}
+
+func hasMount(inspect, dest string) bool {
+	for _, line := range strings.Split(inspect, "\n") {
+		if strings.TrimSpace(line) == dest {
+			return true
+		}
+	}
+	return false
+}
+
+func legacySessionError(sessionID string) error {
+	return fmt.Errorf("session %s was created by an older hsh and cannot serve hsh forward, ssh, or oauth callback;\nremove it with: hsh rm %s   then start a new one with: hsh run", sessionID, sessionID)
 }
 
 func sshConfigCommand() *ff.Command {
@@ -167,5 +125,7 @@ func sshConfigStanza(host, hshPath string) string {
 	b.WriteString("    StrictHostKeyChecking no\n")
 	b.WriteString("    UserKnownHostsFile /dev/null\n")
 	b.WriteString("    LogLevel ERROR\n")
+	b.WriteString("    ForwardAgent no\n")
+	b.WriteString("    ForwardX11 no\n")
 	return b.String()
 }

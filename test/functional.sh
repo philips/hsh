@@ -1249,6 +1249,7 @@ require("http").createServer((q, r) => {
 JS
 	(cd "$TMP/sshws" && "$HSH" run --runtime "$RUNTIME" localhost/hsh-example:latest) >"$TMP/ssh-run.out" 2>&1 <<'CMDS' &
 node /workspace/server.js &
+node -e 'require("http").createServer((q, r) => r.end("veth-only\n")).listen(8002, "10.77.0.2")' 2>/dev/null &
 while [ ! -f /workspace/done ]; do sleep 0.5; done
 exit
 CMDS
@@ -1337,6 +1338,42 @@ CMDS
 		grep -q "^0$" "$TMP/ssh-env.out" || fail "the ssh shell has proxy variables in the gvisor sandbox: $(cat "$TMP/ssh-env.out")"
 	fi
 	pass "ssh into the session runs commands in the sandbox's shell environment"
+
+	ssh -F "$TMP/ssh_config" "$SSH_POD" 'grep -E "^(NoNewPrivs|CapEff):" /proc/self/status' >"$TMP/ssh-caps.out" 2>&1 || true
+	grep -q "^NoNewPrivs:[[:space:]]*1$" "$TMP/ssh-caps.out" || fail "the ssh shell does not have no_new_privs: $(cat "$TMP/ssh-caps.out")"
+	grep -q "^CapEff:[[:space:]]*0000000000000002$" "$TMP/ssh-caps.out" || fail "the ssh shell has capabilities beyond CAP_DAC_OVERRIDE: $(cat "$TMP/ssh-caps.out")"
+	pass "ssh shells keep only CAP_DAC_OVERRIDE and have no_new_privs"
+
+	ssh -F "$TMP/ssh_config" "$SSH_POD" 'for p in /proc/[0-9]*; do case "$(tr "\0" " " <"$p/cmdline" 2>/dev/null)" in /hsh-sshd*) if cat "$p/environ" >/dev/null 2>&1; then echo readable; else echo denied; fi ;; esac; done' >"$TMP/ssh-dump.out" 2>&1 || true
+	grep -q "^denied$" "$TMP/ssh-dump.out" || fail "found no /hsh-sshd process to probe from the session: $(cat "$TMP/ssh-dump.out")"
+	grep -q "^readable$" "$TMP/ssh-dump.out" && fail "the session can read the memory of /hsh-sshd: $(cat "$TMP/ssh-dump.out")"
+	pass "the session cannot read or trace /hsh-sshd"
+
+	if only_runtime container; then
+		podman exec "$SSH_POD-ws" /hsh-workspace-inner --ssh-stdio </dev/null >"$TMP/ssh-stdio.out" 2>&1 && fail "/hsh-workspace-inner --ssh-stdio still runs"
+		grep -q "flag provided but not defined" "$TMP/ssh-stdio.out" || fail "/hsh-workspace-inner --ssh-stdio did not fail as an unknown flag: $(cat "$TMP/ssh-stdio.out")"
+		ssh -F "$TMP/ssh_config" "$SSH_POD" 'cat /proc/net/tcp /proc/net/tcp6' >"$TMP/ssh-tcp.out" 2>&1 || true
+		awk '$4 == "0A" { print $2 }' "$TMP/ssh-tcp.out" | grep -qi ':1E6C$' && fail "something listens on port 7788 in the session: $(cat "$TMP/ssh-tcp.out")"
+		pass "the session runs no relay"
+
+		ssh -F "$TMP/ssh_config" "$SSH_POD" 'umount /run/hsh/netns 2>/dev/null && echo umount-netns; umount -l /run/hsh 2>/dev/null && echo umount-dir; touch /run/hsh/x 2>/dev/null && echo touch; (echo 1 >/run/hsh/shell.pid) 2>/dev/null && echo write; true' >"$TMP/ssh-pin.out" 2>&1
+		[ -s "$TMP/ssh-pin.out" ] && fail "the session changed its pin: $(cat "$TMP/ssh-pin.out")"
+		GOT="$("$HSH" forward --session "${SSH_POD#hsh-}" --list 2>&1)"
+		echo "$GOT" | grep -q "^8000" || fail "forwarding stopped working after the session tried to change its pin: $GOT"
+		pass "the session cannot unmount, remount, or write its pin"
+
+		"$HSH" forward --session "${SSH_POD#hsh-}" 18003:8002 >"$TMP/fwd-veth.out" 2>&1 &
+		VETH_FWD_PID=$!
+		GOT=""
+		for _ in $(seq 1 20); do
+			GOT="$(curl -s --max-time 3 http://127.0.0.1:18003/ || true)"
+			[ -n "$GOT" ] && break
+			sleep 0.5
+		done
+		kill "$VETH_FWD_PID" 2>/dev/null || true
+		[ "$GOT" = "veth-only" ] || fail "hsh forward did not reach a server bound only to 10.77.0.2: '$GOT' $(cat "$TMP/fwd-veth.out")"
+		pass "hsh forward reaches a server bound only to the veth address"
+	fi
 
 	kill "$SSH_FWD_PID" 2>/dev/null || true
 	touch "$TMP/sshws/done"
@@ -1450,8 +1487,8 @@ for _ in $(seq 1 20); do
 	sleep 0.5
 done
 echo "$LISTED" | grep -q "^18200" || fail "hsh forward --list did not show the sandbox's listener: $LISTED"
-echo "$LISTED" | grep -q "^7788" && fail "hsh forward --list showed the relay's own port: $LISTED"
-pass "hsh forward --list shows the ports the sandbox listens on, not the relay's"
+[ "$(echo "$LISTED" | cut -f1 | tr '\n' ' ')" = "18200 " ] || fail "hsh forward --list showed ports the test did not open: $LISTED"
+pass "hsh forward --list shows exactly the ports the sandbox listens on"
 
 (cd "$TMP/fwdws" && exec "$HSH" forward 18300:18200) >"$TMP/fwd-explicit.out" 2>&1 &
 FWD_EXPLICIT_PID=$!
@@ -1597,6 +1634,21 @@ grep -q "remove the session with: hsh rm $VER_SESSION" "$TMP/ver.out" || fail "r
 "$HSH" rm "hsh-$VER_SESSION" >/dev/null 2>&1 || fail "hsh rm could not remove a session whose config is unreadable"
 [ ! -e "$XDG_STATE_HOME/hsh/sessions/$VER_SESSION" ] || fail "hsh rm left the session state"
 pass "resuming a session with an unreadable config says why and how to remove it, and hsh rm still removes it"
+
+echo "== step 27: sessions without /hsh-sshd get a recreate message"
+LEGACY="legacy$$"
+podman pod create --name "hsh-$LEGACY" --label "hsh.workspace=$TMP/legacyws" >/dev/null || fail "could not create the legacy pod"
+TEST_PODS="$TEST_PODS hsh-$LEGACY"
+podman run -d --pod "hsh-$LEGACY" --name "hsh-$LEGACY-ws" localhost/hsh-example:latest sleep 300 >/dev/null || fail "could not start the legacy workspace container"
+"$HSH" forward --session "$LEGACY" --list >"$TMP/legacy-fwd.out" 2>&1 && fail "hsh forward served a session without /hsh-sshd"
+"$HSH" ssh proxy "hsh-$LEGACY" </dev/null >"$TMP/legacy-ssh.out" 2>&1 && fail "hsh ssh proxy served a session without /hsh-sshd"
+"$HSH" oauth callback --session "$LEGACY" 'http://127.0.0.1:1455/cb?code=x' >"$TMP/legacy-oauth.out" 2>&1 && fail "hsh oauth callback served a session without /hsh-sshd"
+for out in legacy-fwd legacy-ssh legacy-oauth; do
+	grep -q "session $LEGACY was created by an older hsh" "$TMP/$out.out" || fail "$out did not explain the old session: $(cat "$TMP/$out.out")"
+	grep -q "hsh rm $LEGACY" "$TMP/$out.out" || fail "$out did not say how to remove the old session: $(cat "$TMP/$out.out")"
+done
+podman pod rm -f -t 0 "hsh-$LEGACY" >/dev/null 2>&1 || true
+pass "hsh forward, hsh ssh proxy, and hsh oauth callback tell the user to recreate an old session"
 
 echo "== final sweep: every session the test created is removable"
 rm_test_sessions

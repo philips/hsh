@@ -99,7 +99,7 @@ sequenceDiagram
     O-->>B: redirect to http://127.0.0.1:1455/auth/callback?code=...&state=...
     note over B: the redirect fails - the CLI's loopback is inside<br/>the sandbox's private netns, unreachable from the laptop
     B-->>H: user copies the failed callback URL and runs<br/>hsh oauth callback '<url>'
-    H->>A: podman exec -> callback relay (10.77.0.2:7788) -> 127.0.0.1:1455<br/>(the CLI's own state check validates the delivery)
+    H->>A: podman exec /hsh-sshd --deliver -> 127.0.0.1:1455<br/>(the CLI's own state check validates the delivery)
     A->>P: POST /oauth/token (code + PKCE verifier)
     note over P: TLS-intercepted at the configured token endpoint
     P->>O: exchange forwarded unchanged
@@ -283,10 +283,11 @@ CREATE TABLE IF NOT EXISTS oauth_phantoms (
   way `hsh resume` resolves it; `--session` picks explicitly) and
   promptly — authorization codes are short-lived. The pasted URL's
   `state` makes mis-delivery fail safe: a wrong session's CLI rejects
-  it. Non-loopback URLs are refused. The reverse path is a small
-  per-session callback relay on the workspace veth (`10.77.0.2:7788`)
-  that dials the session's loopback on demand; the workspace-inner
-  starts it automatically.
+  it. Non-loopback URLs are refused. The delivery runs `/hsh-sshd
+  --deliver PORT --request REQ` in the workspace container, which enters
+  the session's network namespace, sends the request to its loopback, and
+  prints the response (see
+  [Reaching servers inside the session](architecture.md#reaching-servers-inside-the-session)).
 - **Persistence**: with `hsh resume`, the workspace container keeps the
   client's stored phantoms across launches, and the host-side store keeps
   the phantom→real mapping — a logged-in session survives `hsh` restarts.
