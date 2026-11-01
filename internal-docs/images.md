@@ -151,23 +151,22 @@ sandbox. `--tasks -` reads the task list from stdin.
   `api.mistral.ai`, `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`, `hsh://openai-api-key` (Bearer) to
   `api.openai.com`; also allows `ab.chatgpt.com`, `auth.openai.com`,
-  and `chatgpt.com` and ships
-  [OAuth capture providers](oauth.md#configuration) for both OpenAI
-  subscription logins:
+  and `chatgpt.com` and names the shipped
+  [OAuth providers](oauth.md#provider-descriptors) for both OpenAI
+  subscription logins (`"oauth": {"providers": ["openai", "openai-codex"]}`):
   - `openai` (`Sign in with ChatGPT`, browser-redirect): token endpoint
     `auth.openai.com/api/accounts/oauth/token`, api host
     `api.openai.com`. Deliver the browser callback with
     [`hsh oauth callback`](oauth.md#browser-redirect-logins).
   - `openai-codex` (`ChatGPT Plus/Pro`): token endpoint
-    `auth.openai.com/oauth/token`, api hosts `chatgpt.com` and
-    `ab.chatgpt.com`. The image preinstalls the
+    `auth.openai.com/oauth/token`, api hosts `chatgpt.com`,
+    `ab.chatgpt.com` and `api.openai.com`. The image preinstalls the
     `pi-openai-codex-device-login` extension, so this login defaults to
     a **device-code flow** - no loopback callback at all: open
     `https://auth.openai.com/codex/device` in any browser and enter the
-    printed code. Only the `refresh_token` is captured (the client
-    parses and resends the access token as-is, so it cannot be
-    phantomized); the long-lived credential still never enters the
-    workspace.
+    printed code. The access and id tokens become claims-preserving JWT
+    phantoms (pi reads the account id from the claims), the refresh
+    token an opaque phantom.
 
   The image bakes `images/pi/auth.json` into
   `/home/hsh/.pi/agent/auth.json` with a placeholder Mistral key (the
@@ -179,11 +178,22 @@ sandbox. `--tasks -` reads the task list from stdin.
   `downloads.claude.ai`, `github.com`,
   `http-intake.logs.us5.datadoghq.com`, `mcp-proxy.anthropic.com`,
   `platform.claude.com`, `raw.githubusercontent.com`, and
-  `statsig.anthropic.com`.
+  `statsig.anthropic.com`. Names the shipped `anthropic` OAuth provider,
+  so a Claude Pro/Max login works over SSH: run `claude auth login`,
+  open the URL on any machine, and paste the `code#state` the copy-code
+  page shows. The sandbox stores `sk-ant-oat01-hsh_…` /
+  `sk-ant-ort01-hsh_…` phantoms; the real tokens stay in the session's
+  proxy directory.
 - **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
   allows `ab.chatgpt.com`, `api.github.com`, `auth.openai.com`,
   `chatgpt.com`, `files.openai.com`, `github.com`, and
-  `raw.githubusercontent.com` (account login and CLI flows).
+  `raw.githubusercontent.com` (account login and CLI flows). Names the
+  shipped `openai-codex` OAuth provider: `codex login --device-auth`
+  works over SSH (open `https://auth.openai.com/codex/device` anywhere
+  and enter the code), and `auth.json` holds only claims-preserving JWT
+  phantoms and an opaque refresh phantom. The browser login also works
+  with `ssh -L 1455:localhost:1455` plus `hsh run --forward 1455`, or
+  [`hsh oauth callback`](oauth.md#browser-redirect-logins).
 - **muse-code** — `hsh://meta-api-key` (Bearer) to `api.meta.ai`; also
   allows `auth.meta.com`, `accountscenter.meta.com`, and `dev.meta.ai`
   (device-flow login and the installer). Muse Code refuses to start without

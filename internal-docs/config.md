@@ -76,7 +76,7 @@ bump.
 | `network.approval_wait` | `off` | opt-in: how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)) |
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
-| `oauth` | `{}` | map of provider name -> OAuth capture definition ([sandboxed OAuth logins](oauth.md)) |
+| `oauth` | `{}` | `oauth.providers`: OAuth provider descriptors to load by name; `oauth.api_hosts`: optional per-provider subset of their API hosts ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | none | ignored; accepted so existing configs keep loading (no key detaches a session; use `hsh detach`) |
 | `monitor` | `{"enabled": true, "status_line": true, "key": "ctrl-space"}` | inline proxy review in interactive sessions ([below](#inline-proxy-review)); `enabled: false` attaches the container directly |
 | `agent` | `{}` | `agent.command`: argv template for headless runs; `{prompt}` is replaced with the task prompt ([headless task runs](images.md#headless-task-runs)); `agent.launch`: argv auto-launched from an interactive bash session; in both, `{network_policy}` is replaced with the [network notice](#network-notice) path; `agent.context_files`: instruction files that get the notice as a managed block |

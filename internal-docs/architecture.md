@@ -53,20 +53,23 @@ flowchart TB
                 cfgcopy[("config.json<br/>the only writable config")]
                 cafiles[("ca.crt / ca.key<br/>MITM CA (0600)")]
                 wsfile[("workspace<br/>absolute path")]
-                secretsjson[("secrets.json<br/>resolved keys, scrubbed when idle")]
+                secretsjson[("secrets.json<br/>resolved keys + OAuth providers,<br/>scrubbed when idle")]
+                proxydir[("proxy/oauth-tokens.json<br/>OAuth captures (0700/0600),<br/>written by this session's proxy")]
             end
         end
         secretstore[("secrets.db<br/>$XDG_CONFIG_HOME/hsh/")]
+        oauthprov[("oauth-providers/<br/>$XDG_CONFIG_HOME/hsh/")]
         caBundle["host CA bundle<br/>(/etc/ssl/certs/...)"]
         wsdir[("workspace directory<br/>git checkouts, shared via mount")]
     end
 
     hshrun -->|"starts one per pod"| pasta
     secretstore -.->|"read on the host only,<br/>never mounted anywhere"| hshrun
+    oauthprov -.->|"provider overrides, read on the host,<br/>resolved into secrets.json"| hshrun
     hshrun -->|"copies config, resolves secrets,<br/>writes session state"| SESDIR
 
     class hshrun,pasta proc
-    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,secretstore,wsdir file
+    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,proxydir,secretstore,oauthprov,wsdir file
 ```
 
 ### Pod side
@@ -125,6 +128,7 @@ flowchart LR
             cafiles[("ca.crt / ca.key")]
             secretsjson[("secrets.json")]
             noticedir[("notice/")]
+            proxydir[("proxy/")]
         end
         monitordb[("monitor.db")]
         caBundle["host CA bundle"]
@@ -143,6 +147,7 @@ flowchart LR
     cafiles -.->|"ro → /hsh-session/ca.crt + ca.key"| PROXY
     caBundle -.->|"ro → /hsh-roots.pem"| PROXY
     monitordb <-.->|"rw → /hsh-state/monitor.db"| PROXY
+    proxydir <-.->|"rw → /hsh-proxy-state<br/>(oauth-tokens.json)"| PROXY
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
     noticedir -.->|"ro → /hsh-run/notice"| WSC
     wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
@@ -151,7 +156,7 @@ flowchart LR
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
 
     class hshbin,pasta proc
-    class cfgcopy,cafiles,secretsjson,noticedir,monitordb,wsdir file
+    class cfgcopy,cafiles,secretsjson,noticedir,proxydir,monitordb,wsdir file
     class PROXY,WSC ctr
 ```
 
@@ -517,7 +522,7 @@ terminating TLS, and the secret must never enter the workspace. Hosts
 without secrets are tunneled end-to-end instead. The known costs are that
 the proxy can read and modify all traffic to intercepted hosts, non-HTTP
 protocols to those hosts break, and clients that use their own CA bundle
-need a per-client CA variable (see docs/sandboxed-oauth.md).
+need a per-client CA variable.
 
 ## Configuration hot reload
 
