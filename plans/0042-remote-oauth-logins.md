@@ -471,6 +471,16 @@ These stay useful for harnesses without a headless mode:
      response carried no `refresh_token`: Anthropic does not appear to
      rotate refresh tokens on refresh, so Claude keeps its original
      refresh phantom.
+   - Live Codex login (2026-11-02, real ChatGPT account over SSH, gVisor
+     runtime, locally built hsh-codex image): `codex login --device-auth`
+     polled `deviceauth/token` through the proxy (passed through: it
+     carries the authorization code, not tokens), then exchanged at
+     `/oauth/token` (form, `redirect_uri=…/deviceauth/callback`). The gzip
+     response was decoded and captured. `~/.codex/auth.json` holds
+     `id_token` and `access_token` as claims-preserving JWT phantoms
+     (real header and claims, `.hsh_<64 hex>` signature) and an opaque
+     `hsh_` refresh token, and Codex reads the account id and plan from
+     the claims.
    - That log showed a gap: the check for uncaptured token-like fields
      only ran when nothing was captured. It now runs on every 2xx token
      response, so a captured `access_token` next to an uncaptured
