@@ -394,18 +394,27 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider, status in
 		changed = true
 		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f.Path)
 	}
-	if !changed {
-		if successStatus(status) {
-			for _, k := range tokenLikeFields {
-				if v, ok := doc[k].(string); ok && v != "" {
-					if _, known := p.store.lookup(v); !known {
-						return nil, fmt.Errorf("%s token response carries %s, which the descriptor does not capture (declared: %v); refusing to pass it to the sandbox", prov.name, k, prov.fieldNames())
-					}
+	if successStatus(status) {
+		for _, k := range tokenLikeFields {
+			if v, ok := doc[k].(string); ok && v != "" {
+				if _, known := p.store.lookup(v); !known {
+					return nil, fmt.Errorf("%s token response carries %s, which the descriptor does not capture (declared: %v); refusing to pass it to the sandbox", prov.name, k, prov.fieldNames())
 				}
 			}
 		}
+	}
+	if !changed {
 		log.Printf("oauth: %s token response contained none of the declared fields %v; passing it through unchanged", prov.name, prov.fieldNames())
 		return body, nil
+	}
+	var missing []string
+	for _, f := range prov.fields {
+		if _, ok := doc[f.Path]; !ok {
+			missing = append(missing, f.Path)
+		}
+	}
+	if len(missing) > 0 {
+		log.Printf("oauth: %s token response had no %v (the client keeps its earlier phantoms for those)", prov.name, missing)
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {

@@ -243,7 +243,7 @@ func TestOAuthFormatPhantoms(t *testing.T) {
 	prov := oauthprov.Resolved{
 		Name:               "anthropiclike",
 		TokenEndpoint:      oauthprov.Endpoint{Host: host, Path: "/token"},
-		ResponseFields:     []oauthprov.Field{{Path: "access_token", Format: "sk-ant-oat01-{phantom}"}, {Path: "refresh_token", Format: "sk-ant-ort01-{phantom}"}},
+		ResponseFields:     []oauthprov.Field{{Path: "access_token", Format: "sk-ant-oat01-{phantom}"}, {Path: "refresh_token", Format: "sk-ant-ort01-{phantom}"}, {Path: "id_token", Kind: "jwt"}},
 		RequestNonceFields: []string{"refresh_token"},
 		APIHosts:           []string{host},
 		Header:             "Authorization",
@@ -281,7 +281,7 @@ func TestOAuthPhantomScopedToItsProvider(t *testing.T) {
 	capturer := oauthprov.Resolved{
 		Name:           "capturer",
 		TokenEndpoint:  oauthprov.Endpoint{Host: host, Path: "/token"},
-		ResponseFields: []oauthprov.Field{{Path: "access_token", Kind: "jwt"}},
+		ResponseFields: []oauthprov.Field{{Path: "access_token", Kind: "jwt"}, {Path: "id_token", Kind: "jwt"}, {Path: "refresh_token"}},
 		APIHosts:       []string{"elsewhere.example"},
 		Header:         "Authorization",
 		Prefix:         "Bearer ",

@@ -112,6 +112,8 @@ func TestOAuthFailsClosed(t *testing.T) {
 		{name: "unsupported encoding", encoding: "br", status: 200, wantStatus: 502},
 		{name: "not JSON", body: "access_token=real-secret", status: 200, wantStatus: 502},
 		{name: "undeclared token field", body: `{"accessToken":"real-secret"}`, status: 200, wantStatus: 502},
+		{name: "undeclared token field next to a captured one", body: `{"access_token":"sk-ant-oat01-real-1","id_token":"real-secret"}`, status: 200, wantStatus: 502},
+		{name: "refresh without a rotated refresh token", body: `{"access_token":"sk-ant-oat01-real-2","expires_in":3600}`, status: 200, wantStatus: 200},
 		{name: "error response passes", body: "invalid_grant: real-looking but not a token", status: 400, wantStatus: 400},
 		{name: "no tokens passes", body: `{"ok":true}`, status: 200, wantStatus: 200},
 	}

@@ -464,7 +464,18 @@ These stay useful for harnesses without a headless mode:
      and `subscriptionType: pro` (Claude fetches `/api/oauth/profile`
      through the proxy with the redeemed token and writes
      `oauthAccount` to `.claude.json`). After forcing `expiresAt` to 0,
-     the access token is a new `sk-ant-oat01-hsh_…` phantom.
+     Claude refreshed through the proxy: the request carried the
+     `sk-ant-ort01-hsh_…` phantom (len 81), the proxy redeemed it,
+     Anthropic answered 200 (gzip), and the new access token was
+     captured as a fresh `sk-ant-oat01-hsh_…` phantom. The refresh
+     response carried no `refresh_token`: Anthropic does not appear to
+     rotate refresh tokens on refresh, so Claude keeps its original
+     refresh phantom.
+   - That log showed a gap: the check for uncaptured token-like fields
+     only ran when nothing was captured. It now runs on every 2xx token
+     response, so a captured `access_token` next to an uncaptured
+     `id_token` is still blocked. Declared fields missing from a
+     response are logged (the client keeps its earlier phantoms).
    - internal-docs/sandboxed-oauth.md (the original, never-implemented
      design) was removed. internal-docs/oauth.md, config.md, images.md
      and architecture.md describe the current behavior.
