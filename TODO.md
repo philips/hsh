@@ -135,4 +135,9 @@ There is a fork of gVisor that support macOS:
 
 ## Clickable links from harnesses inside the sandbox
 
-Outside hsh, `claude auth login` prints a clickable login link; inside hsh it does not. The workspace only gets `TERM=xterm`, without `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM`, `VTE_VERSION`, or `WT_SESSION`, so terminal-capability detection (supports-hyperlinks style) decides the terminal cannot render OSC 8 hyperlinks and the harness prints a plain URL that its UI hard-wraps across lines, which the outer terminal cannot detect as one link. Forward the outer terminal's capability variables into the workspace (or set `FORCE_HYPERLINK=1` when the outer terminal supports OSC 8), and check that the relay and libghostty-vt pass OSC 8 sequences through unchanged, including across the status-line repaint.
+Outside hsh, `claude auth login` and `codex login` print a clickable login link; inside hsh they do not (seen with both Claude Code and Codex). Two likely causes, check both:
+
+- Capability detection: the workspace only gets `TERM=xterm`, without `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM`, `VTE_VERSION`, or `WT_SESSION`, so supports-hyperlinks style detection decides the terminal cannot render OSC 8 hyperlinks and the harness prints a plain URL that its UI hard-wraps across lines, which the outer terminal cannot detect as one link. Forward the outer terminal's capability variables into the workspace (or set `FORCE_HYPERLINK=1` when the outer terminal supports OSC 8).
+- The relay: check that `internal/relay` and libghostty-vt pass OSC 8 sequences through unchanged (including across the status-line repaint) and do not turn a soft-wrapped long URL into hard line breaks.
+
+Quick checks inside a session: `printf '\e]8;;https://example.com\e\\link\e]8;;\e\\\n'` (is `link` clickable?) and `printf 'https://example.com/%0200d\n' 0` (is the whole wrapped URL one link?). Compare with `hsh run` with `"monitor": {"enabled": false}`, which attaches the container without the relay.
