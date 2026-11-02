@@ -480,7 +480,13 @@ These stay useful for harnesses without a headless mode:
      `id_token` and `access_token` as claims-preserving JWT phantoms
      (real header and claims, `.hsh_<64 hex>` signature) and an opaque
      `hsh_` refresh token, and Codex reads the account id and plan from
-     the claims.
+     the claims. `codex exec "say hi"` on a free ChatGPT plan answered
+     through `chatgpt.com/backend-api/codex/responses`, so the redeemed
+     phantom works for inference (an unredeemed phantom would get a 401).
+     Codex first tried the Responses WebSocket and fell back to HTTPS
+     after five 405s: the intercept path strips `Connection`/`Upgrade` and
+     cannot relay a 101. This is a general proxy gap, not an OAuth one
+     (see TODO.md, "WebSockets through intercepted hosts").
    - That log showed a gap: the check for uncaptured token-like fields
      only ran when nothing was captured. It now runs on every 2xx token
      response, so a captured `access_token` next to an uncaptured
