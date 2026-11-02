@@ -457,6 +457,14 @@ These stay useful for harnesses without a headless mode:
      proxy. Added the fail-closed backstop: a 2xx token response that is
      not JSON, uses another encoding, or carries an uncaptured token-like
      field is answered with 502. Unit tests reproduce Claude's headers.
+   - Retest after the fix (2026-11-02, real Claude Pro account over SSH,
+     gVisor runtime): `claude auth login` with copy-code paste;
+     `~/.claude/.credentials.json` holds `sk-ant-oat01-hsh_…`, and
+     `claude auth status` reports logged in with the account's email, org
+     and `subscriptionType: pro` (Claude fetches `/api/oauth/profile`
+     through the proxy with the redeemed token and writes
+     `oauthAccount` to `.claude.json`). After forcing `expiresAt` to 0,
+     the access token is a new `sk-ant-oat01-hsh_…` phantom.
    - internal-docs/sandboxed-oauth.md (the original, never-implemented
      design) was removed. internal-docs/oauth.md, config.md, images.md
      and architecture.md describe the current behavior.
