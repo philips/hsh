@@ -448,6 +448,15 @@ These stay useful for harnesses without a headless mode:
      and JWT providers from user descriptors, the per-session store,
      `hsh oauth status` and `hsh oauth provider ls`. It passes in both
      the container and gVisor runtimes.
+   - First live Claude login (2026-11-02): the token response came back
+     gzip-compressed, because Claude sends `Accept-Encoding: gzip,
+     deflate, br`, the proxy forwarded it, and Go only decompresses
+     transparently when it set the header itself. The proxy logged "not
+     JSON" and passed the body through, so **real tokens reached that
+     sandbox**. Fixed: token exchanges ask for `gzip` and decode it in the
+     proxy. Added the fail-closed backstop: a 2xx token response that is
+     not JSON, uses another encoding, or carries an uncaptured token-like
+     field is answered with 502. Unit tests reproduce Claude's headers.
    - internal-docs/sandboxed-oauth.md (the original, never-implemented
      design) was removed. internal-docs/oauth.md, config.md, images.md
      and architecture.md describe the current behavior.

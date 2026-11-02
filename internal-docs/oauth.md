@@ -148,7 +148,18 @@ redemption is a plain lookup of whatever follows the configured prefix.
 - The proxy MITMs TLS for OAuth-involved hosts even when no static
   secret is configured for them.
 - **Capture**: a JSON response from a token endpoint is rewritten field
-  by field; each real value is stored under a fresh phantom.
+  by field; each real value is stored under a fresh phantom. The proxy
+  asks the token endpoint for `Accept-Encoding: gzip` (whatever the
+  client offered, e.g. Claude's `gzip, deflate, br`) and decodes gzip
+  itself, so a compressed response is still captured; the rewritten
+  body goes to the client uncompressed.
+- **Fail closed**: a successful (2xx) token response that cannot be
+  rewritten never reaches the sandbox. The client gets a 502 instead
+  when the body is not JSON, uses an encoding other than gzip, or
+  carries a token-like field (`access_token`, `refresh_token`,
+  `id_token`, `accessToken`, `refreshToken`, `idToken`) that the
+  descriptor does not capture. Error responses (4xx/5xx) pass through
+  so the client can show the provider's error.
 - **Redeem**: on a request to a provider's API host, a phantom in the
   configured header is replaced with the real token — only if the
   phantom was captured for **that** provider. A phantom presented to
@@ -245,10 +256,17 @@ Failure signatures:
   (an unfinished `pi` or Codex CLI login holding `127.0.0.1:1455`) and
   exchanged the single-use code first - kill it (`lsof -i :1455`) and
   start a fresh login.
-- `token response is not JSON` / `contained none of the declared fields` -
-  the descriptor's `token_endpoint` host+path does not match what the
-  client actually calls; check the path against the CONNECT/POST lines
-  above it, and fix it with a drop-in (`hsh oauth provider edit NAME`).
+- `oauth: token exchange failed: ... refusing to pass it to the sandbox` -
+  the fail-closed check blocked a successful token response (the login
+  fails with a 502 in the client; no token reached the sandbox). `is not
+  JSON` or `unsupported Content-Encoding` means the endpoint answered in
+  a shape the proxy cannot rewrite; `carries X, which the descriptor
+  does not capture` means the descriptor's `response_fields` miss a
+  field - add it with a drop-in (`hsh oauth provider edit NAME`).
+- `contained none of the declared fields` - the response had no tokens
+  at all; if a login still fails, the descriptor's `token_endpoint`
+  host+path probably does not match what the client actually calls;
+  check the path against the CONNECT/POST lines above it.
 - `declared as a JWT but the value is not one` - informational; the
   field got an opaque phantom.
 - `TLS handshake with client for auth.openai.com: ...` - the client does
@@ -305,6 +323,8 @@ are deleted with the session by `hsh rm`.
 3. **Only user-owned files decide where tokens go.** Images and
    workspace configs name providers; descriptors come from the hsh
    binary and `$XDG_CONFIG_HOME/hsh/oauth-providers/`.
+4. **Capture fails closed.** A successful token response the proxy
+   cannot rewrite is blocked (502), never streamed back.
 
 Not protected (same as the rest of hsh — use a VM for persistent
 attackers or hostile providers):
@@ -326,6 +346,7 @@ attackers or hostile providers):
   only JSON token responses are rewritten.
 - Redemption covers one header per provider (`api.header`/`api.prefix`).
   Tokens sent as query parameters or in other headers are not redeemed.
-- A token-bearing response the descriptor does not describe (a wrong
-  path, an unexpected field) passes through unchanged; there is no
-  fail-closed backstop yet.
+- The fail-closed check covers responses from a configured token
+  endpoint. A token-bearing response from a path no descriptor names
+  (the descriptor's `token_endpoint.path` is wrong) is not intercepted
+  as an exchange and passes through like any other request.

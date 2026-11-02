@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -358,13 +359,22 @@ func (p *Proxy) redeemRequestBody(body []byte, contentType string, prov *oauthPr
 	return []byte(vals.Encode())
 }
 
-func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
+var tokenLikeFields = []string{"access_token", "refresh_token", "id_token", "accessToken", "refreshToken", "idToken"}
+
+func successStatus(status int) bool {
+	return status >= 200 && status < 300
+}
+
+func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider, status int) ([]byte, error) {
 	var doc map[string]any
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	if err := dec.Decode(&doc); err != nil {
-		log.Printf("oauth: %s token response is not JSON; passing it through unchanged (check token_endpoint path and content type)", prov.name)
-		return body
+		if successStatus(status) {
+			return nil, fmt.Errorf("%s token response is not JSON; refusing to pass it to the sandbox (check token_endpoint path and content type)", prov.name)
+		}
+		log.Printf("oauth: %s token error response is not JSON; passing it through", prov.name)
+		return body, nil
 	}
 	changed := false
 	for _, f := range prov.fields {
@@ -377,7 +387,7 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 		}
 		phantom, err := presentedPhantom(f, real)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("generate a phantom for %s %s: %w", prov.name, f.Path, err)
 		}
 		p.store.put(phantom, storedToken{Provider: prov.name, Field: f.Path, Value: real})
 		doc[f.Path] = phantom
@@ -385,14 +395,52 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider) []byte {
 		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f.Path)
 	}
 	if !changed {
+		if successStatus(status) {
+			for _, k := range tokenLikeFields {
+				if v, ok := doc[k].(string); ok && v != "" {
+					if _, known := p.store.lookup(v); !known {
+						return nil, fmt.Errorf("%s token response carries %s, which the descriptor does not capture (declared: %v); refusing to pass it to the sandbox", prov.name, k, prov.fieldNames())
+					}
+				}
+			}
+		}
 		log.Printf("oauth: %s token response contained none of the declared fields %v; passing it through unchanged", prov.name, prov.fieldNames())
-		return body
+		return body, nil
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {
-		return body
+		return nil, err
 	}
-	return out
+	return out, nil
+}
+
+func encodingNote(ce string) string {
+	if ce == "" {
+		return ""
+	}
+	return ", decoded from " + ce
+}
+
+func decodeTokenResponse(resp *http.Response, body []byte) ([]byte, error) {
+	ce := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	switch ce {
+	case "", "identity":
+		return body, nil
+	case "gzip", "x-gzip":
+		zr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("token response: gzip: %w", err)
+		}
+		defer zr.Close()
+		out, err := readLimited(zr, oauthBodyLimit)
+		if err != nil {
+			return nil, fmt.Errorf("token response: gzip: %w", err)
+		}
+		resp.Header.Del("Content-Encoding")
+		return out, nil
+	default:
+		return nil, fmt.Errorf("token response uses unsupported Content-Encoding %q", ce)
+	}
 }
 
 func oauthErrorSummary(body []byte) string {
@@ -439,6 +487,7 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 		req.ContentLength = 0
 	}
 	removeHopHeaders(req.Header)
+	req.Header.Set("Accept-Encoding", "gzip")
 	req.RequestURI = ""
 	req.Close = false
 	resp, err := p.transport.RoundTrip(req)
@@ -450,11 +499,19 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 	if err != nil {
 		return nil, nil, err
 	}
-	log.Printf("oauth: %s token exchange: upstream %s (%s, %d bytes)", prov.name, resp.Status, resp.Header.Get("Content-Type"), len(respBody))
+	encoding := resp.Header.Get("Content-Encoding")
+	respBody, err = decodeTokenResponse(resp, respBody)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Printf("oauth: %s token exchange: upstream %s (%s, %d bytes%s)", prov.name, resp.Status, resp.Header.Get("Content-Type"), len(respBody), encodingNote(encoding))
 	if resp.StatusCode >= 400 {
 		log.Printf("oauth: token endpoint refused the exchange: %s", oauthErrorSummary(respBody))
 	}
-	respBody = p.captureTokenResponse(respBody, prov)
+	respBody, err = p.captureTokenResponse(respBody, prov, resp.StatusCode)
+	if err != nil {
+		return nil, nil, err
+	}
 	return resp, respBody, nil
 }
 
