@@ -183,7 +183,11 @@ sandbox. `--tasks -` reads the task list from stdin.
   open the URL on any machine, and paste the `code#state` the copy-code
   page shows. The sandbox stores `sk-ant-oat01-hsh_…` /
   `sk-ant-ort01-hsh_…` phantoms; the real tokens stay in the session's
-  proxy directory.
+  proxy directory. Promote that login once (`hsh oauth promote anthropic`) and later
+  sessions start logged in: the label's optional `CLAUDE_LOGIN` secret
+  (`hsh://anthropic-login`, seed `claude-code`) writes a phantom
+  `~/.claude/.credentials.json` and the host keeps the login refreshed
+  ([host-held logins](oauth.md#host-held-logins)).
 - **codex** — `hsh://openai-api-key` (Bearer) to `api.openai.com`; also
   allows `ab.chatgpt.com`, `api.github.com`, `auth.openai.com`,
   `chatgpt.com`, `files.openai.com`, `github.com`, and
@@ -193,7 +197,9 @@ sandbox. `--tasks -` reads the task list from stdin.
   and enter the code), and `auth.json` holds only claims-preserving JWT
   phantoms and an opaque refresh phantom. The browser login also works
   with `ssh -L 1455:localhost:1455` plus `hsh run --forward 1455`, or
-  [`hsh oauth callback`](oauth.md#browser-redirect-logins).
+  [`hsh oauth callback`](oauth.md#browser-redirect-logins). Promote the login (`hsh oauth promote openai-codex`) and later
+  sessions start logged in through the label's optional `CODEX_LOGIN`
+  secret (`hsh://openai-codex-login`, seed `codex`).
 - **muse-code** — `hsh://meta-api-key` (Bearer) to `api.meta.ai`; also
   allows `auth.meta.com`, `accountscenter.meta.com`, and `dev.meta.ai`
   (device-flow login and the installer). Muse Code refuses to start without

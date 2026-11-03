@@ -104,6 +104,17 @@ Pro/Max).
   `Authorization`) and `api.prefix` (default `Bearer ` for
   `Authorization`, empty otherwise) say where the token travels.
 - `base`: only in full overrides, written by `edit --full`.
+- `expires_in` (optional): the token-response field holding the
+  lifetime in seconds (default `expires_in`). Without it, a `jwt`
+  `access_token`'s `exp` claim is used.
+- `refresh` (optional; required for [host-held logins](#host-held-logins)):
+  how the host refreshes: `client_id`, `request_body` (`form` default,
+  or `json`), `extra` fields, and `url` (default
+  `https://<token_endpoint.host><token_endpoint.path>`). The request is
+  always `grant_type=refresh_token` with the stored refresh token.
+- `seeds` (optional): named credential-file templates written into new
+  sessions (`path`, `mode` default `0600`, `template`; see
+  [Seeds](#seeds)).
 
 ### Commands
 
@@ -296,6 +307,122 @@ file directly.
 Inside the sandbox, `curl -sS https://auth.openai.com/` checks the full
 path (DNS, proxy env, CA trust) independently of the client.
 
+## Host-held logins
+
+A capture belongs to one session. To log in once and use the login in
+every session, promote it into the secret store:
+
+```
+sandbox$ claude auth login                  # in any session, as above
+server$  hsh oauth promote anthropic        # stored as hsh://anthropic-login
+server$  hsh run ghcr.io/philips/hsh-claude-code   # a new session: already logged in
+```
+
+`hsh oauth promote [--session ID] [--force] [--secret-db PATH] PROVIDER [NAME]`
+(`NAME` defaults to `PROVIDER-login`):
+
+1. reads the newest captured access and refresh token (and id token,
+   expiry, and non-token response fields such as `scope`) for
+   `PROVIDER` from the session's `proxy/oauth-tokens.json`;
+2. stores them in `secrets.db` as an OAuth login (`hsh secret ls`
+   shows it as `oauth:PROVIDER` with its expiry; `hsh secret rm`
+   removes it);
+3. **binds** the session's captured phantoms to the login (written to
+   the host-owned `sessions/<id>/oauth-phantoms.json` and pushed into
+   the session's `secrets.json`): the proxy now redeems them from the
+   login, answers their refreshes locally, and drops its own copy of the
+   captured refresh token, so the refresh token has exactly one holder;
+4. verifies the login with an immediate host-side refresh. If that is
+   refused because the session's proxy rotated the token in the
+   meantime, it retries once with the newer capture.
+
+Promotion needs a `refresh` section in the provider descriptor (shipped
+for `anthropic` and `openai-codex`).
+
+### Using a login
+
+A config references a login like any store secret; `hosts`, `header`
+and `prefix` come from the provider, `hosts` may only be narrowed:
+
+```json
+"secrets": {
+  "CLAUDE_LOGIN": {"from": "hsh://anthropic-login", "seed": ["claude-code"], "optional": true}
+}
+```
+
+`optional: true` silences the missing-secret warning until a login is
+promoted. The claude-code and codex image labels carry exactly such
+entries for `hsh://anthropic-login` and `hsh://openai-codex-login`.
+
+What a session gets (`hsh run` resolves it into `secrets.json`):
+
+- the login's **access token** and expiry — never the refresh token,
+  which stays in `secrets.db` on the host;
+- **per-session phantoms**: one `hsh_<64 hex>` marker per response
+  field, generated at the session's first launch and kept in
+  `sessions/<id>/oauth-phantoms.json` (stable across `hsh resume` and
+  across refreshes). The proxy redeems by the marker inside the
+  presented value, so a JWT phantom can carry the current token's claims
+  while keeping its marker. A leaked phantom names the session it came
+  from;
+- the **presented** values (the phantoms in their sandbox shape) for
+  local refresh answers and seeds.
+
+### Refresh
+
+The host refreshes; proxies never do. A **companion** process — the
+session's `hsh-reaper` for interactive sessions (it also runs while
+detached), the `hsh run` process for non-interactive runs — checks
+every 20 seconds:
+
+- a login whose token expires within 15 minutes, or for which the
+  session's proxy left a `proxy/refresh-wanted/<name>` marker (at most
+  once per 2 minutes), is refreshed with the descriptor's `refresh`
+  section. Several sessions sharing a login coordinate through a SQLite
+  `BEGIN IMMEDIATE` transaction on the login's row: the first one
+  refreshes, the others see the new expiry and skip;
+- it then re-resolves its **own** session's `secrets.json` (written only
+  when the content changed); the proxy reloads it within a second.
+  Companions never write another session's directory.
+- `HSH_OAUTH_REFRESH_MARGIN` and `HSH_OAUTH_COMPANION_TICK` (Go
+  durations) override the margin and the interval.
+- The companion logs to `sessions/<id>/oauth-companion.log`.
+
+The proxy, for its part:
+
+- answers a client's own refresh (a request to the token endpoint
+  carrying one of the login's refresh-token markers) **locally**: the
+  presented values, the non-token fields (`scope`, …), and an
+  `expires_in` that mirrors the real remaining lifetime. Nothing goes
+  upstream;
+- never answers a local refresh with an OAuth error (Claude Code wipes
+  its credentials on `invalid_grant`). A second local refresh for the
+  same login within 30 seconds gets `503` with `Retry-After: 30`, which
+  breaks the refresh-on-401 loops both Codex and Claude Code run;
+- writes `refresh-wanted` when a local refresh happens within 15 minutes
+  of expiry, or when the upstream answers 401 to a request it redeemed.
+
+If the host refresh is refused (`invalid_grant`, revoked), the login is
+marked failed (`hsh secret ls` shows `FAILED: …`), the companion stops
+retrying it, and the proxy answers requests carrying its phantoms with a
+`401` whose message says to log in again and run
+`hsh oauth promote --force`.
+
+### Seeds
+
+A secrets entry's `seed` names templates from the provider descriptor.
+At launch `hsh run` renders them with the session's presented values
+into `sessions/<id>/seed/` (a manifest plus files), mounted read-only at
+`/hsh-run/seed`. The workspace entrypoint writes each file to its path
+**only if the file does not exist**, so the harness's own updates are
+never overwritten. Template data: one key per response field (the
+presented value), `expires_at` (RFC 3339), `expires_at_millis`, `now`,
+and `meta` (non-token response fields); functions `json` and `split`.
+
+Shipped seeds: `claude-code` (`~/.claude/.credentials.json` with the
+access and refresh phantoms, the real `expiresAt`, and the scopes) and
+`codex` (`~/.codex/auth.json` with JWT phantoms and `last_refresh`).
+
 ## Token store
 
 Captured tokens live in the session's own writable directory,
@@ -310,7 +437,11 @@ pulled out by a host-side process.
 
 Captures therefore belong to one session: they survive `hsh resume`
 (the harness keeps its phantoms in the same workspace container) and
-are deleted with the session by `hsh rm`.
+are deleted with the session by `hsh rm`. Promote a login to keep it.
+
+Promoted logins live in `secrets.db` (`$XDG_CONFIG_HOME/hsh/`, an
+`oauth_secrets` table next to the static secrets; 0600), which is never
+mounted into any container.
 
 ## Security model
 
@@ -325,18 +456,23 @@ are deleted with the session by `hsh rm`.
    binary and `$XDG_CONFIG_HOME/hsh/oauth-providers/`.
 4. **Capture fails closed.** A successful token response the proxy
    cannot rewrite is blocked (502), never streamed back.
+5. **Host-held refresh tokens never enter a container.** A promoted
+   login's refresh token is used only by the host-side companion; the
+   proxy receives the access token alone.
 
 Not protected (same as the rest of hsh — use a VM for persistent
 attackers or hostile providers):
 
-- the capture store at rest (plaintext, owner-only; same as `~/.netrc`),
+- the capture store and `secrets.db` at rest (plaintext, owner-only;
+  same as `~/.netrc`),
 - a compromised host or proxy process (memory/ptrace),
 - the agent *using* its login through the proxy (that is the point),
   including calling any of the provider's API hosts with it,
 - the authorization code (and, for device code, the PKCE verifier),
   which passes through the sandbox during an in-sandbox login: an agent
   that is already compromised at that moment could race the harness to
-  exchange it elsewhere,
+  exchange it elsewhere. Promoting the login once and seeding later
+  sessions keeps this to a single login,
 - phantoms leaked to third parties (useless there, but they do reveal
   that a login exists, and JWT phantoms reveal the token's claims).
 
@@ -346,6 +482,9 @@ attackers or hostile providers):
   only JSON token responses are rewritten.
 - Redemption covers one header per provider (`api.header`/`api.prefix`).
   Tokens sent as query parameters or in other headers are not redeemed.
+- Seeds cover Claude Code and Codex. pi keeps every provider in one
+  `~/.pi/agent/auth.json` that the image already ships, so a seed (which
+  never overwrites) cannot add a login to it.
 - The fail-closed check covers responses from a configured token
   endpoint. A token-bearing response from a path no descriptor names
   (the descriptor's `token_endpoint.path` is wrong) is not intercepted

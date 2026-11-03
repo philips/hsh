@@ -89,9 +89,11 @@ The workspace starts in the first mount's target directory
 | Field | Required | Description |
 |---|---|---|
 | `from` | yes | secret reference: `env://VAR`, `hsh://NAME`, or a bare `VAR` (treated as `env://VAR`) |
-| `hosts` | yes | hosts the secret is injected for (same matching as `network.allow`) |
+| `hosts` | yes (static secrets) | hosts the secret is injected for (same matching as `network.allow`); for an OAuth login it defaults to the provider's API hosts and may only narrow them |
 | `header` | no | header to set; defaults to the secret name with `_` -> `-` |
 | `prefix` | no | string prepended to the value, e.g. `"Bearer "` |
+| `seed` | no | for an OAuth login (`hsh://NAME` promoted with `hsh oauth promote`): seed templates from the provider descriptor to write into new sessions ([seeds](oauth.md#seeds)) |
+| `optional` | no | `true`: a missing value is skipped silently instead of warning (the image labels use it for logins that may not be promoted yet) |
 
 The scheme of `from` decides where the value comes from. The design
 follows nono.sh's credential injection - pluggable secret backends with

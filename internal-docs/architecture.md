@@ -55,9 +55,10 @@ flowchart TB
                 wsfile[("workspace<br/>absolute path")]
                 secretsjson[("secrets.json<br/>resolved keys + OAuth providers,<br/>scrubbed when idle")]
                 proxydir[("proxy/oauth-tokens.json<br/>OAuth captures (0700/0600),<br/>written by this session's proxy")]
+                oauthph[("oauth-phantoms.json + seed/<br/>per-session login phantoms,<br/>seeded credential files")]
             end
         end
-        secretstore[("secrets.db<br/>$XDG_CONFIG_HOME/hsh/")]
+        secretstore[("secrets.db<br/>static secrets + OAuth logins<br/>$XDG_CONFIG_HOME/hsh/")]
         oauthprov[("oauth-providers/<br/>$XDG_CONFIG_HOME/hsh/")]
         caBundle["host CA bundle<br/>(/etc/ssl/certs/...)"]
         wsdir[("workspace directory<br/>git checkouts, shared via mount")]
@@ -65,11 +66,14 @@ flowchart TB
 
     hshrun -->|"starts one per pod"| pasta
     secretstore -.->|"read on the host only,<br/>never mounted anywhere"| hshrun
+    reaper["hsh-reaper / hsh run<br/>OAuth companion: refreshes logins,<br/>rewrites this session's secrets.json"]
+    secretstore <-.->|"refresh under a row lock"| reaper
+    reaper -->|"secrets.json"| SESDIR
     oauthprov -.->|"provider overrides, read on the host,<br/>resolved into secrets.json"| hshrun
     hshrun -->|"copies config, resolves secrets,<br/>writes session state"| SESDIR
 
-    class hshrun,pasta proc
-    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,proxydir,secretstore,oauthprov,wsdir file
+    class hshrun,pasta,reaper proc
+    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,proxydir,oauthph,secretstore,oauthprov,wsdir file
 ```
 
 ### Pod side
@@ -129,6 +133,7 @@ flowchart LR
             secretsjson[("secrets.json")]
             noticedir[("notice/")]
             proxydir[("proxy/")]
+            seeddir[("seed/")]
         end
         monitordb[("monitor.db")]
         caBundle["host CA bundle"]
@@ -150,13 +155,14 @@ flowchart LR
     proxydir <-.->|"rw → /hsh-proxy-state<br/>(oauth-tokens.json)"| PROXY
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
     noticedir -.->|"ro → /hsh-run/notice"| WSC
+    seeddir -.->|"ro → /hsh-run/seed"| WSC
     wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
     pasta ===|"user-mode network uplink"| POD
 
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
 
     class hshbin,pasta proc
-    class cfgcopy,cafiles,secretsjson,noticedir,proxydir,monitordb,wsdir file
+    class cfgcopy,cafiles,secretsjson,noticedir,proxydir,seeddir,monitordb,wsdir file
     class PROXY,WSC ctr
 ```
 
