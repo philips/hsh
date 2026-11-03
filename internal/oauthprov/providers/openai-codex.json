@@ -7,5 +7,12 @@
     "refresh_token"
   ],
   "request_nonce_fields": ["refresh_token", "subject_token"],
-  "api": {"hosts": ["chatgpt.com", "ab.chatgpt.com", "api.openai.com"]}
+  "api": {"hosts": ["chatgpt.com", "ab.chatgpt.com", "api.openai.com"]},
+  "refresh": {"client_id": "app_EMoamEEZ73f0CkXaXp7hrann", "request_body": "json"},
+  "seeds": {
+    "codex": {
+      "path": "/home/hsh/.codex/auth.json",
+      "template": "{\"auth_mode\":\"chatgpt\",\"OPENAI_API_KEY\":null,\"tokens\":{\"id_token\":{{json .id_token}},\"access_token\":{{json .access_token}},\"refresh_token\":{{json .refresh_token}},\"account_id\":null},\"last_refresh\":{{json .now}}}\n"
+    }
+  }
 }

@@ -60,12 +60,15 @@ type API struct {
 }
 
 type Descriptor struct {
-	Version            int      `json:"version"`
-	Base               string   `json:"base,omitempty"`
-	TokenEndpoint      Endpoint `json:"token_endpoint"`
-	ResponseFields     []Field  `json:"response_fields"`
-	RequestNonceFields []string `json:"request_nonce_fields,omitempty"`
-	API                API      `json:"api"`
+	Version            int             `json:"version"`
+	Base               string          `json:"base,omitempty"`
+	TokenEndpoint      Endpoint        `json:"token_endpoint"`
+	ResponseFields     []Field         `json:"response_fields"`
+	RequestNonceFields []string        `json:"request_nonce_fields,omitempty"`
+	API                API             `json:"api"`
+	ExpiresIn          string          `json:"expires_in,omitempty"`
+	Refresh            *Refresh        `json:"refresh,omitempty"`
+	Seeds              map[string]Seed `json:"seeds,omitempty"`
 }
 
 type Resolved struct {
@@ -76,6 +79,7 @@ type Resolved struct {
 	APIHosts           []string `json:"api_hosts"`
 	Header             string   `json:"header"`
 	Prefix             string   `json:"prefix"`
+	ExpiresIn          string   `json:"expires_in,omitempty"`
 }
 
 type SourceKind string
@@ -299,6 +303,16 @@ func (d Descriptor) Validate() error {
 	if len(d.API.Hosts) == 0 {
 		return fmt.Errorf("api.hosts is empty")
 	}
+	if d.Refresh != nil {
+		if err := d.Refresh.validate(); err != nil {
+			return err
+		}
+	}
+	for name, seed := range d.Seeds {
+		if err := seed.validate(name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -334,6 +348,7 @@ func (d Descriptor) Resolve(name string, narrow []string) (Resolved, error) {
 		APIHosts:           append([]string(nil), hosts...),
 		Header:             header,
 		Prefix:             prefix,
+		ExpiresIn:          d.ExpiresIn,
 	}, nil
 }
 

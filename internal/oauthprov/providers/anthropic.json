@@ -6,5 +6,12 @@
     {"path": "refresh_token", "format": "sk-ant-ort01-{phantom}"}
   ],
   "request_nonce_fields": ["refresh_token"],
-  "api": {"hosts": ["api.anthropic.com"]}
+  "api": {"hosts": ["api.anthropic.com"]},
+  "refresh": {"client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e", "request_body": "json"},
+  "seeds": {
+    "claude-code": {
+      "path": "/home/hsh/.claude/.credentials.json",
+      "template": "{\"claudeAiOauth\":{\"accessToken\":{{json .access_token}},\"refreshToken\":{{json .refresh_token}},\"expiresAt\":{{.expires_at_millis}},\"scopes\":{{if .meta.scope}}{{json (split .meta.scope)}}{{else}}[\"user:inference\",\"user:profile\"]{{end}},\"subscriptionType\":null}}\n"
+    }
+  }
 }
