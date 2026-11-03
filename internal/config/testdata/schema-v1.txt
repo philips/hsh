@@ -31,6 +31,9 @@ secrets[*].from string
 secrets[*].header string
 secrets[*].hosts array
 secrets[*].hosts[] string
+secrets[*].optional bool
 secrets[*].prefix string
+secrets[*].seed array
+secrets[*].seed[] string
 shell string
 version int

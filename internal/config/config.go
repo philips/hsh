@@ -15,10 +15,12 @@ import (
 )
 
 type Secret struct {
-	From   string   `json:"from"`
-	Hosts  []string `json:"hosts"`
-	Header string   `json:"header"`
-	Prefix string   `json:"prefix"`
+	From     string   `json:"from"`
+	Hosts    []string `json:"hosts"`
+	Header   string   `json:"header"`
+	Prefix   string   `json:"prefix"`
+	Seed     []string `json:"seed,omitempty"`
+	Optional bool     `json:"optional,omitempty"`
 }
 
 type Network struct {
@@ -380,8 +382,69 @@ type ResolvedSecret struct {
 }
 
 type ResolvedSecrets struct {
-	Secrets []ResolvedSecret     `json:"secrets"`
-	OAuth   []oauthprov.Resolved `json:"oauth,omitempty"`
+	Secrets      []ResolvedSecret      `json:"secrets"`
+	OAuth        []oauthprov.Resolved  `json:"oauth,omitempty"`
+	OAuthSecrets []ResolvedOAuthSecret `json:"oauth_secrets,omitempty"`
+}
+
+type OAuthSecret struct {
+	Name        string
+	Provider    string
+	Tokens      map[string]string
+	Meta        map[string]string
+	ExpiresAt   time.Time
+	RefreshedAt time.Time
+	Failure     string
+	CreatedAt   time.Time
+}
+
+type OAuthSecretStore interface {
+	GetOAuth(name string) (OAuthSecret, error)
+}
+
+type ResolvedOAuthSecret struct {
+	Name        string            `json:"name"`
+	Provider    string            `json:"provider"`
+	AccessToken string            `json:"access_token,omitempty"`
+	ExpiresAt   string            `json:"expires_at"`
+	RefreshedAt string            `json:"refreshed_at"`
+	Failure     string            `json:"failure,omitempty"`
+	Markers     map[string]string `json:"markers"`
+	Presented   map[string]string `json:"presented"`
+	Meta        map[string]string `json:"meta,omitempty"`
+	Hosts       []string          `json:"hosts"`
+}
+
+type OAuthSecretRef struct {
+	ConfigName string
+	StoreName  string
+	Hosts      []string
+	Seed       []string
+}
+
+func OAuthSecretRefs(cfg *Config, store SecretStore) []OAuthSecretRef {
+	oauthStore, ok := store.(OAuthSecretStore)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(cfg.Secrets))
+	for name := range cfg.Secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []OAuthSecretRef
+	for _, name := range names {
+		s := cfg.Secrets[name]
+		scheme, ref, err := ParseSecretRef(s.From)
+		if err != nil || scheme != "hsh" {
+			continue
+		}
+		if _, err := oauthStore.GetOAuth(ref); err != nil {
+			continue
+		}
+		out = append(out, OAuthSecretRef{ConfigName: name, StoreName: ref, Hosts: s.Hosts, Seed: s.Seed})
+	}
+	return out
 }
 
 func ResolveOAuth(cfg *Config, dir string) ([]oauthprov.Resolved, []string, error) {
@@ -425,6 +488,11 @@ func ResolveSecrets(cfg *Config, store SecretStore) (ResolvedSecrets, []string, 
 		case "env":
 			v = os.Getenv(ref)
 		case "hsh":
+			if oauthStore, ok := store.(OAuthSecretStore); ok {
+				if _, err := oauthStore.GetOAuth(ref); err == nil {
+					continue
+				}
+			}
 			if store != nil {
 				got, err := store.Get(ref)
 				if err != nil {
@@ -438,7 +506,9 @@ func ResolveSecrets(cfg *Config, store SecretStore) (ResolvedSecrets, []string, 
 			}
 		}
 		if v == "" {
-			missing = append(missing, s.From)
+			if !s.Optional {
+				missing = append(missing, s.From)
+			}
 			continue
 		}
 		out.Secrets = append(out.Secrets, ResolvedSecret{
@@ -457,11 +527,25 @@ func WriteSecretsFile(path string, rs ResolvedSecrets) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), ".secrets-*.json")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	tmp := f.Name()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func AddAllowedHosts(path string, hosts []string) ([]string, error) {
