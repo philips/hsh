@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -45,9 +47,11 @@ func (p *Proxy) forwardUpgrade(w io.Writer, clientR io.Reader, req *http.Request
 		resp.Header.Set("Connection", "close")
 		resp.Proto, resp.ProtoMajor, resp.ProtoMinor = "HTTP/1.1", 1, 1
 		resp.Close = true
-		if err := resp.Write(w); err != nil {
+		bw := bufio.NewWriterSize(w, 4096)
+		if err := resp.Write(bw); err != nil {
 			log.Printf("write response for %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
 		}
+		_ = bw.Flush()
 		return
 	}
 	upstream, ok := resp.Body.(io.ReadWriteCloser)
@@ -58,12 +62,17 @@ func (p *Proxy) forwardUpgrade(w io.Writer, clientR io.Reader, req *http.Request
 		return
 	}
 	defer upstream.Close()
-	fmt.Fprintf(w, "HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
-	if err := resp.Header.Write(w); err != nil {
+	head := &bytes.Buffer{}
+	fmt.Fprintf(head, "HTTP/1.1 %d %s\r\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+	if err := resp.Header.Write(head); err != nil {
 		return
 	}
-	if _, err := io.WriteString(w, "\r\n"); err != nil {
+	head.WriteString("\r\n")
+	if _, err := w.Write(head.Bytes()); err != nil {
 		return
+	}
+	if rw, ok := w.(*bufio.ReadWriter); ok {
+		_ = rw.Writer.Flush()
 	}
 	log.Printf("%s%s: upgraded to %s; relaying", req.URL.Host, req.URL.RequestURI(), protocol)
 	done := make(chan struct{}, 2)

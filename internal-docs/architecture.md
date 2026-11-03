@@ -533,7 +533,11 @@ need a per-client CA variable. HTTP upgrades (WebSockets, such as Codex's
 the `Connection: upgrade` / `Upgrade` headers on the handshake, injects
 secrets or redeems phantoms on it like on any request, writes the
 upstream's `101 Switching Protocols` back, and then relays bytes in both
-directions without looking at the frames.
+directions without looking at the frames. The 101 (and any refused-upgrade
+response) is written to the client as a single buffered write: clients
+meter the handshake for denial-of-service (tungstenite, which Codex uses,
+aborts with `Attack attempt detected` after 64 small reads averaging
+under 128 bytes), and a header-at-a-time write pattern trips that check.
 
 ## Configuration hot reload
 
