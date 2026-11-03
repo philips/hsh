@@ -27,6 +27,7 @@ func oauthCommand() *ff.Command {
 		Subcommands: []*ff.Command{
 			oauthCallbackCommand(),
 			oauthStatusCommand(),
+			oauthPromoteCommand(),
 			oauthProviderCommand(),
 		},
 	}

@@ -9,6 +9,13 @@
       ],
       "header": "Authorization",
       "prefix": "Bearer "
+    },
+    "CODEX_LOGIN": {
+      "from": "hsh://openai-codex-login",
+      "seed": [
+        "codex"
+      ],
+      "optional": true
     }
   },
   "network": {

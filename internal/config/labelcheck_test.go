@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hsh/internal/oauthprov"
 )
 
 func hasNoticeFlag(argv []string) bool {
@@ -74,6 +76,11 @@ func TestHarnessImageLabels(t *testing.T) {
 			}
 		}
 		for name, secret := range cfg.Secrets {
+			for _, seed := range secret.Seed {
+				if !shippedSeed(t, seed) {
+					t.Errorf("%s: secret %s names seed %q, which no shipped OAuth provider defines", cf, name, seed)
+				}
+			}
 			scheme, _, err := ParseSecretRef(secret.From)
 			if err != nil {
 				t.Errorf("%s: secret %s: %v", cf, name, err)
@@ -83,4 +90,18 @@ func TestHarnessImageLabels(t *testing.T) {
 			}
 		}
 	}
+}
+
+func shippedSeed(t *testing.T, seed string) bool {
+	t.Helper()
+	for _, n := range oauthprov.ShippedNames() {
+		l, err := oauthprov.Load(t.TempDir(), n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := l.Descriptor.Seeds[seed]; ok {
+			return true
+		}
+	}
+	return false
 }

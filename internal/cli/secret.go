@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/peterbourgon/ff/v4"
 	"golang.org/x/term"
@@ -155,10 +156,26 @@ func secretLsCommand() *ff.Command {
 			fmt.Println("no secrets stored")
 			return nil
 		}
-		fmt.Printf("%-30s %-20s %-20s\n", "NAME", "CREATED", "UPDATED")
+		fmt.Printf("%-30s %-20s %-20s %-20s %s\n", "NAME", "KIND", "CREATED", "UPDATED", "LOGIN")
 		for _, e := range entries {
-			fmt.Printf("%-30s %-20s %-20s\n", e.Name, e.CreatedAt, e.UpdatedAt)
+			kind, login := "static", ""
+			if e.Kind == "oauth" {
+				kind = "oauth:" + e.Provider
+				login = "expires " + shortTime(e.ExpiresAt)
+				if e.Failure != "" {
+					login = "FAILED: " + e.Failure
+				}
+			}
+			fmt.Printf("%-30s %-20s %-20s %-20s %s\n", e.Name, kind, shortTime(e.CreatedAt), shortTime(e.UpdatedAt), login)
 		}
 		return nil
 	})
+}
+
+func shortTime(s string) string {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return s
+	}
+	return t.UTC().Format(time.RFC3339)
 }

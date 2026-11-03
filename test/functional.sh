@@ -567,7 +567,9 @@ cat >"$OAUTH_XDG_CONFIG/hsh/oauth-providers/testant.json" <<'JSON'
     { "path": "refresh_token", "format": "sk-ant-ort01-{phantom}" }
   ],
   "request_nonce_fields": ["refresh_token"],
-  "api": { "hosts": ["host.containers.internal"] }
+  "api": { "hosts": ["host.containers.internal"] },
+  "refresh": { "client_id": "test", "request_body": "json", "url": "http://127.0.0.1:8897/token-json" },
+  "seeds": { "test": { "path": "/home/hsh/.ant-creds.json", "template": "{\"access\":{{json .access_token}},\"refresh\":{{json .refresh_token}}}" } }
 }
 JSON
 cat >"$OAUTH_XDG_CONFIG/hsh/oauth-providers/testjwt.json" <<'JSON'
@@ -656,6 +658,55 @@ XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" oauth provider ls >"$TMP/oauth-provid
 grep -q "^testjwt .*user" "$TMP/oauth-provider-ls.out" || fail "hsh oauth provider ls does not show user providers: $(cat "$TMP/oauth-provider-ls.out")"
 grep -q "^anthropic .*shipped" "$TMP/oauth-provider-ls.out" || fail "hsh oauth provider ls does not show shipped providers: $(cat "$TMP/oauth-provider-ls.out")"
 pass "hsh oauth status and hsh oauth provider ls report sessions and providers"
+
+echo "== step 9b: promote a sandbox login to a host-refreshed secret; a new session uses it without logging in"
+OAUTH_SESSION_DIR="$(dirname "$(dirname "$OAUTH_STORE")")"
+OAUTH_SESSION="$(basename "$OAUTH_SESSION_DIR")"
+OAUTH_DB="$TMP/oauth-secrets.db"
+REFRESHES_BEFORE="$(grep -c 'token-json grant=refresh_token' "$TMP/oauth.log" || true)"
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" oauth promote --session "$OAUTH_SESSION" --secret-db "$OAUTH_DB" testant ant-login >"$TMP/oauth-promote.out" 2>&1 || fail "hsh oauth promote failed: $(cat "$TMP/oauth-promote.out")"
+grep -q "hsh://ant-login" "$TMP/oauth-promote.out" || fail "promote did not name the stored login: $(cat "$TMP/oauth-promote.out")"
+grep -q "token-json grant=refresh_token refresh=sk-ant-ort01-real-2" "$TMP/oauth.log" || fail "promote did not verify the login with a host-side refresh of the captured refresh token: $(grep token-json "$TMP/oauth.log")"
+grep -q '"bound"' "$OAUTH_SESSION_DIR/oauth-phantoms.json" || fail "promote did not bind the session's captured phantoms"
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" secret ls --db "$OAUTH_DB" >"$TMP/oauth-secret-ls.out" 2>&1 || fail "hsh secret ls failed"
+grep -q "ant-login .*oauth:testant" "$TMP/oauth-secret-ls.out" || fail "hsh secret ls does not show the login: $(cat "$TMP/oauth-secret-ls.out")"
+if grep -q 'real-' "$TMP/oauth-secret-ls.out" "$TMP/oauth-promote.out"; then
+	fail "promote or secret ls printed token material"
+fi
+pass "hsh oauth promote stores the login host-side, verifies it with a refresh, and binds the session"
+
+REFRESHES_AFTER_PROMOTE="$(grep -c 'token-json grant=refresh_token' "$TMP/oauth.log" || true)"
+cat >"$TMP/oauth-config-login.hsh" <<'JSON'
+{
+  "version": 1,
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] },
+  "secrets": { "ANT_LOGIN": { "from": "hsh://ant-login", "seed": ["test"] } }
+}
+JSON
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config-login.hsh" --secret-db "$OAUTH_DB" --monitor-db "$DB" >"$TMP/oauth-login.out" 2>&1 <<'CMDS' || true
+echo "seed=$(cat /home/hsh/.ant-creds.json)"
+SACCESS="$(grep -o '"access":"[^"]*"' /home/hsh/.ant-creds.json | cut -d'"' -f4)"
+SREFRESH="$(grep -o '"refresh":"[^"]*"' /home/hsh/.ant-creds.json | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "seedapi=%{http_code}\n" -H "Authorization: Bearer $SACCESS" http://host.containers.internal:8897/api
+LRESP="$(curl -sS -X POST -H 'Content-Type: application/json' -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"$SREFRESH\"}" http://host.containers.internal:8897/token-json)"
+echo "localrefresh=$LRESP"
+LACCESS="$(echo "$LRESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
+curl -sS -o /dev/null -w "seedapi2=%{http_code}\n" -H "Authorization: Bearer $LACCESS" http://host.containers.internal:8897/api
+CMDS
+grep -Eq '^seed=\{"access":"sk-ant-oat01-hsh_[0-9a-f]{64}","refresh":"sk-ant-ort01-hsh_[0-9a-f]{64}"\}$' "$TMP/oauth-login.out" || fail "the new session was not seeded with phantom credentials: $(cat "$TMP/oauth-login.out")"
+if grep -q 'real-' "$TMP/oauth-login.out"; then
+	fail "real tokens reached the new session: $(cat "$TMP/oauth-login.out")"
+fi
+grep -Eq '^seedapi=200$' "$TMP/oauth-login.out" || fail "the seeded phantom did not redeem to the host-refreshed token: $(cat "$TMP/oauth-login.out")"
+grep -q "auth=Bearer sk-ant-oat01-real-3" "$TMP/oauth.log" || fail "the upstream did not receive the token the host refreshed during promote: $(grep 'api auth' "$TMP/oauth.log" | tail -3)"
+grep -Eq '^localrefresh=.*"access_token":"sk-ant-oat01-hsh_[0-9a-f]{64}"' "$TMP/oauth-login.out" || fail "the session's refresh was not answered with phantoms: $(cat "$TMP/oauth-login.out")"
+grep -Eq '^seedapi2=200$' "$TMP/oauth-login.out" || fail "the phantom from the local refresh answer did not redeem: $(cat "$TMP/oauth-login.out")"
+REFRESHES_AFTER_LOGIN="$(grep -c 'token-json grant=refresh_token' "$TMP/oauth.log" || true)"
+[ "$REFRESHES_AFTER_LOGIN" = "$REFRESHES_AFTER_PROMOTE" ] || fail "the session's refresh reached the token endpoint ($REFRESHES_AFTER_PROMOTE -> $REFRESHES_AFTER_LOGIN); it must be answered by the proxy"
+[ "$REFRESHES_AFTER_PROMOTE" -gt "$REFRESHES_BEFORE" ] || fail "promote did not refresh on the host"
+pass "a new session gets seeded phantoms, redeems them to the host-held login, and its refreshes never leave the proxy"
 
 echo "== step 10: the oauth flow inside the hsh-vibe image"
 if podman image exists localhost/hsh-vibe:latest; then
@@ -1648,7 +1699,7 @@ c.commit()
 PY
 done
 "$HSH" secret ls --db "$TMP/ver-secrets.db" >"$TMP/ver.out" 2>&1 && fail "a secret store with a newer schema was opened"
-grep -q "secrets.db has schema version 99, newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "unexpected secret store error: $(cat "$TMP/ver.out")"
+grep -q "secrets.db has schema version 99, newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "unexpected secret store error: $(cat "$TMP/ver.out")"
 "$HSH" proxy denied --db "$TMP/ver-monitor.db" >"$TMP/ver.out" 2>&1 && fail "a monitor database with a newer schema was opened"
 grep -q "monitor.db has schema version 99, newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "unexpected monitor database error: $(cat "$TMP/ver.out")"
 pass "secrets.db and monitor.db with a newer schema version are refused"

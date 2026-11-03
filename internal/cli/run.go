@@ -29,6 +29,7 @@ import (
 	"hsh/internal/sessiondb"
 	"hsh/internal/state"
 	"hsh/internal/update"
+	"hsh/internal/workspace"
 )
 
 type runOptions struct {
@@ -344,17 +345,15 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		return secretStore, nil
 	}
 	storeFor := func(c *config.Config) config.SecretStore {
-		for _, s := range c.Secrets {
-			if strings.HasPrefix(s.From, "hsh://") {
-				store, err := openStore()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "hsh: warning: opening the secret store: %v\n", err)
-					return nil
-				}
-				return store
-			}
+		if !configUsesStore(c) && !fileExists(filepath.Join(sessionDir, sessionPhantomsFile)) {
+			return nil
 		}
-		return nil
+		store, err := openStore()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hsh: warning: opening the secret store: %v\n", err)
+			return nil
+		}
+		return store
 	}
 	warnedMissing := map[string]bool{}
 	missingSet := func(missing []string) map[string]bool {
@@ -366,16 +365,12 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	warnedOAuth := map[string]bool{}
 	resolve := func(c *config.Config) error {
-		rs, missing, err := config.ResolveSecrets(c, storeFor(c))
+		res, err := resolveSessionSecrets(sessionDir, c, storeFor(c), time.Now())
 		if err != nil {
 			return err
 		}
-		providers, oauthWarnings, err := config.ResolveOAuth(c, oauthProvidersDir())
-		if err != nil {
-			return err
-		}
-		rs.OAuth = providers
-		for _, w := range oauthWarnings {
+		rs, missing := res.Secrets, res.Missing
+		for _, w := range res.Warnings {
 			if !warnedOAuth[w] {
 				warnedOAuth[w] = true
 				fmt.Fprintf(os.Stderr, "hsh: warning: %s\n", w)
@@ -394,10 +389,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 				delete(warnedMissing, m)
 			}
 		}
-		if err := config.WriteSecretsFile(secretsPath, rs); err != nil {
+		if err := config.WriteSecretsFile(secretsPath, sortedResolved(rs)); err != nil {
 			return err
 		}
-		infof("hsh: %d secret(s) resolved, %d missing\n", len(rs.Secrets), len(missing))
+		infof("hsh: %d secret(s) and %d OAuth login(s) resolved, %d missing\n", len(rs.Secrets), len(rs.OAuthSecrets), len(missing))
 		return nil
 	}
 	if err := resolve(cfg); err != nil {
@@ -552,6 +547,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"-v", exe+":"+sshdPath+":ro",
 		"-v", caCertPath+":/hsh-run/ca.crt:ro",
 		"-v", notice.SessionDir(sessionDir)+":"+notice.Dir+":ro",
+		"-v", sessionSeedDir(sessionDir)+":"+workspace.SeedDir+":ro",
 	)
 	interactive := isTerminal(os.Stdin)
 	if interactive {
@@ -653,7 +649,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			}
 		}
 		if detachable {
-			if err := spawnReaper(exe, podName, wsName, sessionDir); err != nil {
+			if err := spawnReaper(exe, podName, wsName, sessionDir, ro.secretDB); err != nil {
 				fmt.Fprintf(os.Stderr, "hsh: warning: starting the session reaper: %v\n", err)
 			}
 			defer markAttached(sessionDir)()
@@ -672,7 +668,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if out, err := podman(wsArgs...); err != nil {
 			return fmt.Errorf("create workspace container: %w\n%s", err, out)
 		}
-		if err := spawnReaper(exe, podName, wsName, sessionDir); err != nil {
+		if err := spawnReaper(exe, podName, wsName, sessionDir, ro.secretDB); err != nil {
 			fmt.Fprintf(os.Stderr, "hsh: warning: starting the session reaper: %v\n", err)
 		}
 		unmark := markAttached(sessionDir)
@@ -691,7 +687,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	companionCtx, stopCompanion := context.WithCancel(context.Background())
+	go newOAuthCompanion(sessionDir, sessionConfig, ro.secretDB).run(companionCtx)
 	runErr := cmd.Run()
+	stopCompanion()
 	cleanup()
 	code := 0
 	if runErr != nil {

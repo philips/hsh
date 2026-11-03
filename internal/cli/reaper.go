@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"hsh/internal/secretstore"
 )
 
 const reaperStartTimeout = 60 * time.Second
@@ -20,8 +23,8 @@ func stopSessionPod(podName, sessionDir string) {
 	}
 }
 
-func spawnReaper(exe, podName, wsName, sessionDir string) error {
-	cmd := exec.Command(exe, "--pod", podName, "--ws", wsName, "--session-dir", sessionDir)
+func spawnReaper(exe, podName, wsName, sessionDir, secretDB string) error {
+	cmd := exec.Command(exe, "--pod", podName, "--ws", wsName, "--session-dir", sessionDir, "--secret-db", secretDB)
 	cmd.Args[0] = "hsh-reaper"
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -35,6 +38,7 @@ func Reaper(args []string) error {
 	podName := fs.String("pod", "", "session pod")
 	wsName := fs.String("ws", "", "workspace container")
 	sessionDir := fs.String("session-dir", "", "session state directory")
+	secretDB := fs.String("secret-db", secretstore.DefaultPath(), "secret store holding the session's OAuth logins")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -49,6 +53,9 @@ func Reaper(args []string) error {
 	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		return nil
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go newOAuthCompanion(*sessionDir, filepath.Join(*sessionDir, "config.json"), *secretDB).run(ctx)
 	return reap(*podName, *wsName, *sessionDir)
 }
 
