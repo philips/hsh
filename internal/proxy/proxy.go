@@ -279,6 +279,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("%s %s%s: injecting header %s", r.Method, r.URL.Host, r.URL.RequestURI(), s.Header)
 		}
 	}
+	if protocol, ok := upgradeProtocol(r.Header); ok {
+		log.Printf("%s %s%s -> allowed (upgrade to %s)", r.Method, r.URL.Host, r.URL.RequestURI(), protocol)
+		p.forwardUpgradeHTTP(w, r, protocol, p.noteStatus(redeemed))
+		return
+	}
 	log.Printf("%s %s%s -> allowed", r.Method, r.URL.Host, r.URL.RequestURI())
 	p.forwardHTTP(w, r, p.noteStatus(redeemed))
 }
@@ -414,6 +419,11 @@ func (p *Proxy) serveRequests(conn io.Writer, br *bufio.Reader, req *http.Reques
 				req.Header.Set(s.Header, s.Prefix+s.Value)
 				log.Printf("%s %s%s: injecting header %s", req.Method, target, req.URL.RequestURI(), s.Header)
 			}
+		}
+		if protocol, ok := upgradeProtocol(req.Header); ok {
+			log.Printf("%s %s%s -> allowed (upgrade to %s)", req.Method, target, req.URL.RequestURI(), protocol)
+			p.forwardUpgrade(conn, br, req, protocol, p.noteStatus(redeemed))
+			return
 		}
 		log.Printf("%s %s%s -> allowed", req.Method, target, req.URL.RequestURI())
 		p.forwardRequest(conn, req, p.noteStatus(redeemed))

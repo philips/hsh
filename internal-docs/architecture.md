@@ -528,7 +528,12 @@ terminating TLS, and the secret must never enter the workspace. Hosts
 without secrets are tunneled end-to-end instead. The known costs are that
 the proxy can read and modify all traffic to intercepted hosts, non-HTTP
 protocols to those hosts break, and clients that use their own CA bundle
-need a per-client CA variable.
+need a per-client CA variable. HTTP upgrades (WebSockets, such as Codex's
+`wss://chatgpt.com/backend-api/codex/responses`) do work: the proxy keeps
+the `Connection: upgrade` / `Upgrade` headers on the handshake, injects
+secrets or redeems phantoms on it like on any request, writes the
+upstream's `101 Switching Protocols` back, and then relays bytes in both
+directions without looking at the frames.
 
 ## Configuration hot reload
 
