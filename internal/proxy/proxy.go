@@ -45,6 +45,8 @@ type state struct {
 	mode         string
 	secrets      []config.ResolvedSecret
 	oauth        []oauthProvider
+	oauthSecrets []config.ResolvedOAuthSecret
+	markers      map[string]markerRef
 }
 
 type Proxy struct {
@@ -55,6 +57,9 @@ type Proxy struct {
 	monitorDB *sql.DB
 	store     *tokenStore
 	holds     holdState
+
+	localMu   sync.Mutex
+	lastLocal map[string]time.Time
 
 	mu sync.RWMutex
 	st state
@@ -103,7 +108,7 @@ func New(opts Options) (*Proxy, error) {
 			_ = monitordb.ResetHolding(db, opts.Session)
 		}
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, monitorDB: db, store: loadTokenStore(opts.OAuthStore)}, nil
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, monitorDB: db, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -169,7 +174,10 @@ func (p *Proxy) reload() error {
 	}
 	p.st.secrets = rs.Secrets
 	p.st.oauth = oauthProviders(rs.OAuth)
+	p.st.oauthSecrets = rs.OAuthSecrets
+	p.st.markers = buildMarkerIndex(rs.OAuthSecrets)
 	p.mu.Unlock()
+	p.pruneBoundCaptures()
 	return nil
 }
 
@@ -260,14 +268,19 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.oauthServeHTTP(w, r, prov)
 		return
 	}
-	if !p.redeemBearerHeader(r.Header, host) {
+	redeemed := p.redeemBearerHeader(r.Header, host)
+	if redeemed.failure != "" {
+		p.writeLoginFailureHTTP(w, redeemed)
+		return
+	}
+	if !redeemed.ok {
 		for _, s := range p.secretsFor(host) {
 			r.Header.Set(s.Header, s.Prefix+s.Value)
 			log.Printf("%s %s%s: injecting header %s", r.Method, r.URL.Host, r.URL.RequestURI(), s.Header)
 		}
 	}
 	log.Printf("%s %s%s -> allowed", r.Method, r.URL.Host, r.URL.RequestURI())
-	p.forwardHTTP(w, r)
+	p.forwardHTTP(w, r, p.noteStatus(redeemed))
 }
 
 func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
@@ -387,14 +400,23 @@ func (p *Proxy) serveRequests(conn io.Writer, br *bufio.Reader, req *http.Reques
 			req = nil
 			continue
 		}
-		if !p.redeemBearerHeader(req.Header, host) {
+		redeemed := p.redeemBearerHeader(req.Header, host)
+		if redeemed.failure != "" {
+			p.writeLoginFailureConn(conn, redeemed)
+			if req.Close {
+				return
+			}
+			req = nil
+			continue
+		}
+		if !redeemed.ok {
 			for _, s := range secrets {
 				req.Header.Set(s.Header, s.Prefix+s.Value)
 				log.Printf("%s %s%s: injecting header %s", req.Method, target, req.URL.RequestURI(), s.Header)
 			}
 		}
 		log.Printf("%s %s%s -> allowed", req.Method, target, req.URL.RequestURI())
-		p.forwardRequest(conn, req)
+		p.forwardRequest(conn, req, p.noteStatus(redeemed))
 		if req.Close {
 			return
 		}
@@ -402,7 +424,7 @@ func (p *Proxy) serveRequests(conn io.Writer, br *bufio.Reader, req *http.Reques
 	}
 }
 
-func (p *Proxy) forwardRequest(w io.Writer, req *http.Request) {
+func (p *Proxy) forwardRequest(w io.Writer, req *http.Request, onStatus func(int)) {
 	removeHopHeaders(req.Header)
 	req.RequestURI = ""
 	req.Close = false
@@ -413,6 +435,9 @@ func (p *Proxy) forwardRequest(w io.Writer, req *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if onStatus != nil {
+		onStatus(resp.StatusCode)
+	}
 	removeHopHeaders(resp.Header)
 	if resp.ContentLength >= 0 {
 		resp.Proto = "HTTP/1.1"
@@ -458,7 +483,7 @@ func bodyAllowedForStatus(status int) bool {
 	return true
 }
 
-func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request, onStatus func(int)) {
 	removeHopHeaders(r.Header)
 	r.RequestURI = ""
 	r.Close = false
@@ -469,6 +494,9 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	if onStatus != nil {
+		onStatus(resp.StatusCode)
+	}
 	removeHopHeaders(resp.Header)
 	for k, vv := range resp.Header {
 		for _, v := range vv {

@@ -32,6 +32,7 @@ type oauthProvider struct {
 	apiHosts    []string
 	header      string
 	prefix      string
+	expiresIn   string
 }
 
 func oauthProviders(resolved []oauthprov.Resolved) []oauthProvider {
@@ -46,6 +47,7 @@ func oauthProviders(resolved []oauthprov.Resolved) []oauthProvider {
 			apiHosts:    r.APIHosts,
 			header:      r.Header,
 			prefix:      r.Prefix,
+			expiresIn:   r.ExpiresIn,
 		})
 	}
 	return out
@@ -68,10 +70,12 @@ func (p *oauthProvider) fieldNames() []string {
 }
 
 type storedToken struct {
-	Provider string `json:"provider"`
-	Field    string `json:"field"`
-	Value    string `json:"value"`
-	Created  string `json:"created"`
+	Provider  string            `json:"provider"`
+	Field     string            `json:"field"`
+	Value     string            `json:"value"`
+	Created   string            `json:"created"`
+	ExpiresAt string            `json:"expires_at,omitempty"`
+	Meta      map[string]string `json:"meta,omitempty"`
 }
 
 type tokenStore struct {
@@ -100,11 +104,31 @@ func (s *tokenStore) lookup(phantom string) (storedToken, bool) {
 	return t, ok
 }
 
+func (s *tokenStore) prune(drop func(key string) bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for k := range s.m {
+		if drop(k) {
+			delete(s.m, k)
+			n++
+		}
+	}
+	if n > 0 {
+		s.persistLocked()
+	}
+	return n
+}
+
 func (s *tokenStore) put(phantom string, t storedToken) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	t.Created = time.Now().UTC().Format(time.RFC3339)
+	t.Created = time.Now().UTC().Format(time.RFC3339Nano)
 	s.m[phantom] = t
+	s.persistLocked()
+}
+
+func (s *tokenStore) persistLocked() {
 	if s.path == "" {
 		return
 	}
@@ -201,7 +225,14 @@ func (p *Proxy) oauthAPIProviders(host string) []oauthProvider {
 	return out
 }
 
-func (p *Proxy) redeemBearerHeader(h http.Header, host string) bool {
+func (p *Proxy) redeemBearerHeader(h http.Header, host string) redeemResult {
+	if r := p.redeemOAuthSecret(h, host); r.ok || r.failure != "" {
+		return r
+	}
+	return redeemResult{ok: p.redeemCaptured(h, host)}
+}
+
+func (p *Proxy) redeemCaptured(h http.Header, host string) bool {
 	for _, prov := range p.oauthAPIProviders(host) {
 		value := h.Get(prov.header)
 		if !strings.HasPrefix(value, prov.prefix) {
@@ -359,7 +390,7 @@ func (p *Proxy) redeemRequestBody(body []byte, contentType string, prov *oauthPr
 	return []byte(vals.Encode())
 }
 
-var tokenLikeFields = []string{"access_token", "refresh_token", "id_token", "accessToken", "refreshToken", "idToken"}
+var tokenLikeFields = oauthprov.TokenLikeFields
 
 func successStatus(status int) bool {
 	return status >= 200 && status < 300
@@ -377,6 +408,11 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider, status in
 		return body, nil
 	}
 	changed := false
+	parsed := oauthprov.ParseTokenResponse(doc, prov.fields, prov.expiresIn, time.Now())
+	expiresAt := ""
+	if !parsed.ExpiresAt.IsZero() {
+		expiresAt = parsed.ExpiresAt.UTC().Format(time.RFC3339)
+	}
 	for _, f := range prov.fields {
 		real, ok := doc[f.Path].(string)
 		if !ok || real == "" {
@@ -389,7 +425,7 @@ func (p *Proxy) captureTokenResponse(body []byte, prov *oauthProvider, status in
 		if err != nil {
 			return nil, fmt.Errorf("generate a phantom for %s %s: %w", prov.name, f.Path, err)
 		}
-		p.store.put(phantom, storedToken{Provider: prov.name, Field: f.Path, Value: real})
+		p.store.put(phantom, storedToken{Provider: prov.name, Field: f.Path, Value: real, ExpiresAt: expiresAt, Meta: parsed.Meta})
 		doc[f.Path] = phantom
 		changed = true
 		log.Printf("oauth: captured %s %s (sandbox sees a phantom)", prov.name, f.Path)
@@ -486,6 +522,11 @@ func (p *Proxy) oauthExchange(req *http.Request, prov *oauthProvider) (*http.Res
 	}
 	ct := req.Header.Get("Content-Type")
 	logExchangeRequest(prov, body, ct)
+	if s, ok := p.localRefreshTarget(body, ct, prov); ok {
+		resp, respBody := p.localRefreshAnswer(s, prov)
+		resp.ProtoMajor, resp.ProtoMinor = 1, 1
+		return resp, respBody, nil
+	}
 	body = p.redeemRequestBody(body, ct, prov)
 	if len(body) > 0 {
 		req.Body = io.NopCloser(bytes.NewReader(body))

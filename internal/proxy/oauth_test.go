@@ -174,6 +174,7 @@ func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, n
 	if !caPool.AppendCertsFromPEM(ca.CertPEM()) {
 		t.Fatal("parse proxy CA")
 	}
+	proxyDirs[ln.Addr().String()] = dir
 	return ln.Addr().String(), caPool
 }
 
