@@ -720,21 +720,12 @@ a binary, otherwise it downloads the latest release).
 
 ## Future work
 
-- **Apply the data-flow rule to the rest of the proxy mounts.** Today
-  every proxy gets the whole state directory read-write at `/hsh-state`.
-  That includes every session's `secrets.json` and `ca.key` and the
-  shared `monitor.db`, which the proxy writes directly. Under the rule,
-  each proxy gets only its own session directory (read-only) plus its
-  `proxy/` directory (read-write). Shared databases would be fed by
-  host-side copies out of the session directory.
-
+- **Apply the data-flow rule to the rest of the proxy mounts** and
+  **bind static secrets to approved hosts**: planned in
+  plans/0043-secret-hardening.md.
 - **Network policies on the same layering.** The policy-files idea in
   TODO.md (github.com, the Go module proxy, …) wants the same structure:
   shipped descriptors in the binary, `$XDG_CONFIG_HOME/hsh/<kind>/NAME.json`
   overrides, `NAME.d/*.json` drop-ins, and labels that name rather than
   define. Build the layering as a generic package
   (`internal/descriptors`, keyed by kind) so policies reuse it.
-- **Static secrets bound to hosts.** A label can already declare
-  `"from": "hsh://anthropic-api-key", "hosts": ["evil.example"]`. Record
-  the approved hosts when a secret is added, and let configs narrow but
-  not widen them, the same rule D applies to OAuth secrets.
