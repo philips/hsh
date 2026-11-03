@@ -708,6 +708,14 @@ REFRESHES_AFTER_LOGIN="$(grep -c 'token-json grant=refresh_token' "$TMP/oauth.lo
 [ "$REFRESHES_AFTER_PROMOTE" -gt "$REFRESHES_BEFORE" ] || fail "promote did not refresh on the host"
 pass "a new session gets seeded phantoms, redeems them to the host-held login, and its refreshes never leave the proxy"
 
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" oauth refresh --secret-db "$OAUTH_DB" ant-login >"$TMP/oauth-refresh.out" 2>&1 || fail "hsh oauth refresh failed: $(cat "$TMP/oauth-refresh.out")"
+grep -q "refreshed ant-login (testant)" "$TMP/oauth-refresh.out" || fail "hsh oauth refresh did not report the refresh: $(cat "$TMP/oauth-refresh.out")"
+grep -q "token-json grant=refresh_token refresh=sk-ant-ort01-real-3" "$TMP/oauth.log" || fail "hsh oauth refresh did not spend the stored refresh token on the host: $(grep token-json "$TMP/oauth.log")"
+if grep -q 'real-' "$TMP/oauth-refresh.out"; then
+	fail "hsh oauth refresh printed token material"
+fi
+pass "hsh oauth refresh refreshes a stored login on the host"
+
 echo "== step 10: the oauth flow inside the hsh-vibe image"
 if podman image exists localhost/hsh-vibe:latest; then
 	oauth_flow localhost/hsh-vibe:latest

@@ -403,3 +403,64 @@ func TestOAuthCompanionRefreshes(t *testing.T) {
 		t.Fatalf("a failed login must not be retried every tick: %v", env.endpoint.refreshes)
 	}
 }
+
+func TestRefreshStoredLogin(t *testing.T) {
+	env := setupPhase2(t, `{"version": 1}`, "real-refresh-1")
+	login := config.OAuthSecret{Name: "work", Provider: "testlogin", Tokens: map[string]string{"access_token": phase2JWT(0), "id_token": phase2JWT(0), "refresh_token": "real-refresh-1"}, ExpiresAt: time.Now().Add(9 * time.Hour)}
+	if err := env.store.PutOAuth(login, false); err != nil {
+		t.Fatal(err)
+	}
+	sessions := t.TempDir()
+	mk := func(id, cfg string, active bool) string {
+		dir := filepath.Join(sessions, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if active {
+			if err := os.WriteFile(filepath.Join(dir, "secrets.json"), []byte(`{"secrets":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	uses := `{"version": 1, "secrets": {"LOGIN": {"from": "hsh://work"}}}`
+	active := mk("aaa111", uses, true)
+	idle := mk("bbb222", uses, false)
+	other := mk("ccc333", `{"version": 1}`, true)
+	out, err := refreshStoredLogin(context.Background(), env.store, "work", env.endpoint.srv.Client(), sessions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env.endpoint.refreshes) != 1 || env.endpoint.refreshes[0] != "real-refresh-1" {
+		t.Fatalf("refreshes = %v", env.endpoint.refreshes)
+	}
+	if !strings.Contains(out, "refreshed work (testlogin)") || !strings.Contains(out, "aaa111") || strings.Contains(out, "ccc333") {
+		t.Fatalf("output:\n%s", out)
+	}
+	rs, raw := readSecretsJSON(t, active)
+	if len(rs.OAuthSecrets) != 1 || !strings.HasSuffix(rs.OAuthSecrets[0].AccessToken, ".real-sig-1") || strings.Contains(raw, "real-refresh") {
+		t.Fatalf("the active session must get the new access token (and never the refresh token): %s", raw)
+	}
+	if fileExists(filepath.Join(idle, "secrets.json")) {
+		t.Fatal("an idle session must not be given a secrets.json")
+	}
+	if _, raw := readSecretsJSON(t, other); strings.Contains(raw, "oauth_secrets") {
+		t.Fatalf("a session that does not use the login must be left alone: %s", raw)
+	}
+	env.endpoint.mu.Lock()
+	env.endpoint.accept = map[string]bool{}
+	env.endpoint.mu.Unlock()
+	_, err = refreshStoredLogin(context.Background(), env.store, "work", env.endpoint.srv.Client(), sessions)
+	if err == nil || !strings.Contains(err.Error(), "now marked failed") || !strings.Contains(err.Error(), "hsh oauth promote --force testlogin work") {
+		t.Fatalf("a refused refresh must say what to do: %v", err)
+	}
+	if rs, _ := readSecretsJSON(t, active); rs.OAuthSecrets[0].Failure == "" {
+		t.Fatal("the failure must reach the running session's proxy")
+	}
+	if _, err := refreshStoredLogin(context.Background(), env.store, "nope", env.endpoint.srv.Client(), sessions); err == nil || !strings.Contains(err.Error(), "no OAuth login named nope") {
+		t.Fatalf("unknown login: %v", err)
+	}
+}

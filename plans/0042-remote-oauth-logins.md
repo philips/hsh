@@ -555,6 +555,11 @@ These stay useful for harnesses without a headless mode:
    - The claude-code and codex labels carry optional `CLAUDE_LOGIN`
      (`hsh://anthropic-login`, seed `claude-code`) and `CODEX_LOGIN`
      (`hsh://openai-codex-login`, seed `codex`) entries.
+   - `hsh oauth refresh NAME` (added after the first live tests): one
+     host refresh under the row lock, then a push into every running
+     session that uses the login. It is the way to test a refresh, since
+     `HSH_OAUTH_REFRESH_MARGIN` longer than the token lifetime would
+     refresh on every tick.
    - Not done: the monitor notice for a failed login (the 401 body and
      `hsh secret ls` cover it); pi seeds (pi's `auth.json` is baked into
      the image and holds every provider); a live test with real accounts.

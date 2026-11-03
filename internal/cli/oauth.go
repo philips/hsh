@@ -28,6 +28,7 @@ func oauthCommand() *ff.Command {
 			oauthCallbackCommand(),
 			oauthStatusCommand(),
 			oauthPromoteCommand(),
+			oauthRefreshCommand(),
 			oauthProviderCommand(),
 		},
 	}

@@ -387,7 +387,9 @@ every 20 seconds:
   when the content changed); the proxy reloads it within a second.
   Companions never write another session's directory.
 - `HSH_OAUTH_REFRESH_MARGIN` and `HSH_OAUTH_COMPANION_TICK` (Go
-  durations) override the margin and the interval.
+  durations, set on `hsh run`; the reaper inherits them) override the
+  margin and the interval. A margin longer than the token's lifetime
+  makes every tick refresh; to test a refresh use `hsh oauth refresh`.
 - The companion logs to `sessions/<id>/oauth-companion.log`.
 
 The proxy, for its part:
@@ -403,6 +405,12 @@ The proxy, for its part:
   breaks the refresh-on-401 loops both Codex and Claude Code run;
 - writes `refresh-wanted` when a local refresh happens within 15 minutes
   of expiry, or when the upstream answers 401 to a request it redeemed.
+
+`hsh oauth refresh [--secret-db PATH] NAME` refreshes a login on the
+host right away, under the same row lock, and pushes the new token into
+every running session that uses it (referenced in its config or bound by
+promote). It also retries a login marked failed, which clears the
+failure if the provider accepts the refresh token.
 
 If the host refresh is refused (`invalid_grant`, revoked), the login is
 marked failed (`hsh secret ls` shows `FAILED: …`), the companion stops
