@@ -1,6 +1,6 @@
 # Subscription logins for Codex and Claude Code on a remote hsh host
 
-> **Status: Phase 0 done, Phase 1 implemented, Phase 2 not started.**
+> **Status: Phase 0 done, Phases 1 and 2 implemented; Phase 2 awaits a live test.**
 > Phases at the end. Current behavior is documented in
 > internal-docs/oauth.md.
 
@@ -499,6 +499,65 @@ These stay useful for harnesses without a headless mode:
    sandbox, promote, and every later session works without a login. The
    host companion refreshes and pushes access tokens down. No proxy or
    sandbox ever holds the refresh token.
+   **Implemented** (functional test step 9b, unit tests). Notes on how it
+   landed:
+   - Storage: an `oauth_secrets` table in `secrets.db` (provider, tokens
+     and non-token response fields as JSON, `expires_at`,
+     `refreshed_at`, `failure`). `dbschema` gained additive migrations,
+     so existing stores upgrade from version 1 instead of having to be
+     deleted. `hsh secret ls` shows logins (`oauth:PROVIDER`, expiry or
+     `FAILED`), `hsh secret rm` removes them, and static and OAuth names
+     cannot shadow each other.
+   - Per-session phantoms live in the host-owned
+     `sessions/<id>/oauth-phantoms.json` (`primary` markers per login and
+     field, `bound` markers from promote). The proxy redeems by the
+     `hsh_<64 hex>` marker found in the presented value rather than the
+     full string, so a JWT phantom can carry the refreshed token's claims
+     while its marker stays stable.
+   - `secrets.json` gains `oauth_secrets`: access token, expiry,
+     failure, markers, presented values and non-token fields. Never the
+     refresh token. Providers of referenced logins are added to the
+     session's resolved providers automatically.
+   - `hsh oauth promote [--session] [--force] [--secret-db] PROVIDER
+     [NAME]` (default name `PROVIDER-login`) follows E: newest capture
+     per field, then put, bind, push down, wait for the proxy to reload,
+     verify with a host refresh, and retry once with a newer capture.
+     Bound logins are resolved for the session even without a config
+     reference.
+   - Companion: `hsh-reaper` (interactive sessions, also while detached;
+     it now gets `--secret-db`) or the `hsh run` process (non-interactive
+     runs). It ticks every 20 s, refreshes within 15 min of expiry or on
+     a `proxy/refresh-wanted/<name>` marker (at most every 2 min), and
+     coordinates through `BEGIN IMMEDIATE`. It stops retrying a login
+     whose refresh was refused, rewrites only its own `secrets.json`
+     (only on change; static secrets are now sorted so the file is
+     stable), and logs to `sessions/<id>/oauth-companion.log`.
+     `HSH_OAUTH_REFRESH_MARGIN` and `HSH_OAUTH_COMPANION_TICK` override
+     the timings. `WriteSecretsFile` uses a unique temp file because two
+     host processes may now write it.
+   - Proxy: local refresh answers with mirrored `expires_in`, one per
+     login per 30 s (then `503`, never an OAuth error). It writes
+     `refresh-wanted` within 15 min of expiry or on an upstream 401, and
+     answers a failed login with a `401` explaining how to re-promote.
+     Captured tokens whose markers are bound are pruned from the
+     session's `oauth-tokens.json`.
+   - Seeds (F): descriptors carry named `seeds`; a secrets entry selects
+     them with `"seed": [...]` (new field, plus `"optional": true` to
+     silence the missing-login warning). `hsh run` renders them into
+     `sessions/<id>/seed/` (manifest + files), mounted read-only at
+     `/hsh-run/seed`. The workspace entrypoint writes a file only when
+     its path does not exist yet. Shipped seeds: `claude-code` and `codex`.
+   - Descriptors gained `expires_in`, `refresh` (`client_id`,
+     `request_body`, `extra`, and `url` for tests and providers whose
+     refresh endpoint differs) and `seeds`. Shipped: refresh for
+     `anthropic` (JSON) and `openai-codex` (JSON). `openai` (pi's Sign in
+     with ChatGPT) has none, so it cannot be promoted.
+   - The claude-code and codex labels carry optional `CLAUDE_LOGIN`
+     (`hsh://anthropic-login`, seed `claude-code`) and `CODEX_LOGIN`
+     (`hsh://openai-codex-login`, seed `codex`) entries.
+   - Not done: the monitor notice for a failed login (the 401 body and
+     `hsh secret ls` cover it); pi seeds (pi's `auth.json` is baked into
+     the image and holds every provider); a live test with real accounts.
 
 ## Phase 0 results
 
