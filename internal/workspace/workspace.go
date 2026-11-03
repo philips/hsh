@@ -182,6 +182,9 @@ func enterSession(opts InnerOptions) error {
 	if err := os.MkdirAll(opts.Home, 0o755); err != nil {
 		return err
 	}
+	if err := applySeeds(SeedDir); err != nil {
+		fmt.Fprintf(os.Stderr, "hsh: seeding credential files: %v\n", err)
+	}
 	applyNotice(&opts, notice.Path)
 	stripSetuid(opts.Workspace)
 
