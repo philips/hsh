@@ -175,7 +175,8 @@ func TestStoreWithANewerSchemaIsRefusedAndLeftAlone(t *testing.T) {
 	}
 	raw.Close()
 	_, _, err = Open(path)
-	if err == nil || !strings.Contains(err.Error(), "secret store: secrets.db has schema version 2, newer than this hsh reads (version 1); update hsh") {
+	want := fmt.Sprintf("secret store: secrets.db has schema version %d, newer than this hsh reads (version %d); update hsh", SchemaVersion+1, SchemaVersion)
+	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("open: %v", err)
 	}
 }
