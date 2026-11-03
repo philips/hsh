@@ -2,6 +2,10 @@
 
 In `container`-runtime sessions, `podman exec` into the workspace container starts in the pod network namespace, outside the inner namespace the shell runs in, so anything run that way skips the veth isolation and the egress proxy entirely. Document in `internal-docs/architecture.md` that the hsh commands (`hsh resume`, `hsh ssh`, `hsh forward`) are the supported ways to reach inside a sandbox, and that direct `podman exec` is not: anything that should follow the network policy must go through them. gVisor sessions are unaffected (their traffic goes through the netstack).
 
+## hsh wipe command
+
+hsh is still a very early project. Add a "wipe" subcommand that requires a user to type YES on an interactive prompt which will wipe all configuration and state files. This is for ease of upgrades if schemas change during the alpha period.
+
 ## hsh bug subcommand
 
 Implement a subcommand that can gather up info and send it to IL automatically via the webhook
