@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -83,6 +85,60 @@ func exchangeLines(t *testing.T, conn net.Conn, br *bufio.Reader) {
 		if got != "echo:"+msg {
 			t.Fatalf("relayed %q, want %q", got, "echo:"+msg)
 		}
+	}
+}
+
+type writeRecorder struct {
+	writes []int
+	buf    bytes.Buffer
+}
+
+func (w *writeRecorder) Write(p []byte) (int, error) {
+	w.writes = append(w.writes, len(p))
+	return w.buf.Write(p)
+}
+
+func headEndsFirstWrite(t *testing.T, w *writeRecorder) string {
+	t.Helper()
+	if len(w.writes) == 0 {
+		t.Fatal("no writes reached the client")
+	}
+	head, _, ok := bytes.Cut(w.buf.Bytes(), []byte("\r\n\r\n"))
+	if !ok {
+		t.Fatalf("response head never completed: %d writes %v", len(w.writes), w.writes)
+	}
+	if w.writes[0] < len(head)+4 {
+		t.Fatalf("response head (%d bytes) split across %d writes %v; clients meter the handshake for denial-of-service (tungstenite aborts with Attack attempt detected after 64 small reads), the head must be one write",
+			len(head)+4, len(w.writes), w.writes)
+	}
+	return string(head)
+}
+
+func TestUpgrade101ReachesClientInOneWrite(t *testing.T) {
+	up := newEchoUpstream(t, true)
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: x509.NewCertPool()}}
+	transport.TLSClientConfig.RootCAs.AddCert(up.srv.Certificate())
+	p := &Proxy{transport: transport}
+	req := upgradeRequest(t, up.srv.URL, "/ws")
+	w := &writeRecorder{}
+	p.forwardUpgrade(w, strings.NewReader(""), req, "websocket", nil)
+	head := headEndsFirstWrite(t, w)
+	if !strings.HasPrefix(head, "HTTP/1.1 101 ") || !strings.Contains(head, "Sec-Websocket-Accept: test-accept") {
+		t.Fatalf("handshake head: %q", head)
+	}
+}
+
+func TestUpgradeRefusedReachesClientInOneWrite(t *testing.T) {
+	up := newEchoUpstream(t, true)
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: x509.NewCertPool()}}
+	transport.TLSClientConfig.RootCAs.AddCert(up.srv.Certificate())
+	p := &Proxy{transport: transport}
+	req := upgradeRequest(t, up.srv.URL, "/not-ws")
+	w := &writeRecorder{}
+	p.forwardUpgrade(w, strings.NewReader(""), req, "websocket", nil)
+	head := headEndsFirstWrite(t, w)
+	if !strings.HasPrefix(head, "HTTP/1.1 405 ") {
+		t.Fatalf("refused upgrade head: %q", head)
 	}
 }
 

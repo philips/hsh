@@ -1,3 +1,7 @@
+## Document that `podman exec` bypasses the workspace network namespace
+
+In `container`-runtime sessions, `podman exec` into the workspace container starts in the pod network namespace, outside the inner namespace the shell runs in, so anything run that way skips the veth isolation and the egress proxy entirely. Document in `internal-docs/architecture.md` that the hsh commands (`hsh resume`, `hsh ssh`, `hsh forward`) are the supported ways to reach inside a sandbox, and that direct `podman exec` is not: anything that should follow the network policy must go through them. gVisor sessions are unaffected (their traffic goes through the netstack).
+
 ## hsh bug subcommand
 
 Implement a subcommand that can gather up info and send it to IL automatically via the webhook
