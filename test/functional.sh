@@ -446,10 +446,10 @@ echo "$OUT" | grep -q "^$SESS_B " || fail "hsh ls did not list the running sandb
 echo "$OUT" | grep -q "$TMP/workspace" || fail "hsh ls did not show the workspace label"
 pass "hsh ls lists sandboxes with session id first, then status and workspace"
 
-POD_A_ID="$(podman pod inspect "$POD_A" --format '{{.Id}}')"
-"$HSH" ls -q | grep -q "^$POD_A_ID$" || fail "hsh ls -q did not print pod IDs"
-"$HSH" ls --no-trunc -q | grep -q "^$POD_A_ID$" || fail "hsh ls --no-trunc -q did not print the full ID"
-pass "hsh ls -q and --no-trunc -q print pod IDs"
+"$HSH" ls -q | grep -q "^$SESS_A$" || fail "hsh ls -q did not print session ids: $("$HSH" ls -q)"
+"$HSH" ls -q | grep -q "^$SESS_B$" || fail "hsh ls -q did not print every session id"
+"$HSH" ls -q --latest | grep -qx "$SESS_B" || fail "hsh ls -q --latest did not print the newest session id"
+pass "hsh ls -q prints session ids"
 
 OUT="$("$HSH" ls --workspace "$TMP/workspace")"
 echo "$OUT" | grep -q "^$SESS_A " || fail "hsh ls --workspace did not list the workspace's sandbox"

@@ -129,15 +129,8 @@ There is a fork of gVisor that support macOS:
 - https://github.com/google/gvisor/issues/1270#issuecomment-4369433538
 
 
-## `hsh ls -q` should print session ids
-
-`hsh ls -q` passes `--quiet` to `podman pod ls` and prints 64-character podman pod IDs. No hsh command takes those: `hsh rm`, `hsh resume`, `--session`, and the `hsh-<session>-proxy` container names all use the session id from the `SESSION` column of `hsh ls`. Print session ids instead, so `hsh rm $(hsh ls -q ...)` and `podman logs -f hsh-$(hsh ls -q --latest)-proxy` work.
-
 ## Clickable links from harnesses inside the sandbox
 
-Outside hsh, `claude auth login` and `codex login` print a clickable login link; inside hsh they do not (seen with both Claude Code and Codex). Two likely causes, check both:
-
-- Capability detection: the workspace only gets `TERM=xterm`, without `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM`, `VTE_VERSION`, or `WT_SESSION`, so supports-hyperlinks style detection decides the terminal cannot render OSC 8 hyperlinks and the harness prints a plain URL that its UI hard-wraps across lines, which the outer terminal cannot detect as one link. Forward the outer terminal's capability variables into the workspace (or set `FORCE_HYPERLINK=1` when the outer terminal supports OSC 8).
-- The relay: check that `internal/relay` and libghostty-vt pass OSC 8 sequences through unchanged (including across the status-line repaint) and do not turn a soft-wrapped long URL into hard line breaks.
+Outside hsh, `claude auth login` and `codex login` print a clickable login link; inside hsh they did not (seen with both Claude Code and Codex). Interactive sessions now forward the outer terminal's capability variables (`TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`, `LC_TERMINAL`, `FORCE_HYPERLINK`, ...) and set `FORCE_HYPERLINK=1` when the outer `TERM` names a hyperlink-capable terminal, since the workspace's `TERM` is `xterm` (Claude Code's detection reads exactly these). Remaining: confirm on a real terminal over SSH that the links are clickable. If they still are not, check that `internal/relay` and libghostty-vt pass OSC 8 sequences through unchanged (including across the status-line repaint) and do not turn a soft-wrapped long URL into hard line breaks.
 
 Quick checks inside a session: `printf '\e]8;;https://example.com\e\\link\e]8;;\e\\\n'` (is `link` clickable?) and `printf 'https://example.com/%0200d\n' 0` (is the whole wrapped URL one link?). Compare with `hsh run` with `"monitor": {"enabled": false}`, which attaches the container without the relay.

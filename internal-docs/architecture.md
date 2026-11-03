@@ -702,7 +702,7 @@ semantics of `podman pod ls` / `podman pod rm`:
 
 ```
 hsh ls                                    # SESSION first (usable with --session, resume, rm), then status and WORKSPACE
-hsh ls -q --sort name                     # quiet, sorted
+hsh ls -q --sort name                     # session ids only, sorted
 hsh ls --workspace ~/repo                 # the sandbox for one workspace
 hsh rm 53bd3fc7e5ba                       # remove a leftover by session id (refuses if running)
 hsh rm -f hsh-53bd3fc7e5ba                # stop running containers, then remove
@@ -977,7 +977,14 @@ podman build -t hsh-example test/fixtures/
 ```
 
 The workspace shell inherits the image's environment (including `PATH`), so
-`ENV` directives in the image apply. The workspace home directory is
+`ENV` directives in the image apply. Interactive sessions also get the
+outer terminal's capability variables when they are set (`TERM_PROGRAM`,
+`TERM_PROGRAM_VERSION`, `COLORTERM`, `VTE_VERSION`, `WT_SESSION`,
+`LC_TERMINAL`, `LC_TERMINAL_VERSION`, `KONSOLE_VERSION`, `DOMTERM`,
+`FORCE_HYPERLINK`), so harnesses detect hyperlink and color support as
+they would outside. Inside, `TERM` is `xterm`; when the outer `TERM` names
+a hyperlink-capable terminal (ghostty, kitty, alacritty, wezterm, foot,
+contour) and `FORCE_HYPERLINK` is unset, it is set to `1`. The workspace home directory is
 `/home/hsh`; the fixture image sets `HOME` to the same value and
 installs Pi there.
 

@@ -16,7 +16,7 @@ func lsCommand() *ff.Command {
 	var sortBy, format, workspace string
 	var filters []string
 	return newCommand("ls", "hsh ls [FLAGS]", "list hsh sandboxes (pods), like podman pod ls", func(fs *ff.FlagSet) {
-		fs.BoolVar(&quiet, 'q', "quiet", "print pod IDs only")
+		fs.BoolVar(&quiet, 'q', "quiet", "print session ids only (what hsh rm, hsh resume, --session and hsh-<id>-proxy use)")
 		fs.BoolVar(&noHeading, 'n', "noheading", "do not print headers")
 		fs.BoolVar(&noTrunc, 0, "no-trunc", "do not truncate pod and container IDs")
 		fs.StringVar(&sortBy, 0, "sort", "created", "sort output by created, id, name, or number")
@@ -107,7 +107,7 @@ func lsCommand() *ff.Command {
 
 		if quiet {
 			for _, p := range pods {
-				fmt.Println(p.ID)
+				fmt.Println(p.Session())
 			}
 			return nil
 		}

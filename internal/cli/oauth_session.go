@@ -15,6 +15,7 @@ import (
 
 	"hsh/internal/config"
 	"hsh/internal/oauthprov"
+	"hsh/internal/secretstore"
 	"hsh/internal/workspace"
 )
 
@@ -295,4 +296,47 @@ func configUsesStore(c *config.Config) bool {
 		}
 	}
 	return false
+}
+
+type loginLister interface {
+	config.SecretStore
+	List() ([]secretstore.Entry, error)
+}
+
+func unusedLoginHints(cfg *config.Config, store loginLister) []string {
+	named := map[string]bool{}
+	for _, p := range cfg.OAuth.Providers {
+		named[p] = true
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	used := map[string]bool{}
+	for _, r := range config.OAuthSecretRefs(cfg, store) {
+		used[r.StoreName] = true
+	}
+	entries, err := store.List()
+	if err != nil {
+		return nil
+	}
+	var hints []string
+	for _, e := range entries {
+		if e.Kind != "oauth" || !named[e.Provider] || used[e.Name] {
+			continue
+		}
+		seed := ""
+		if l, err := oauthprov.Load(oauthProvidersDir(), e.Provider); err == nil {
+			names := make([]string, 0, len(l.Descriptor.Seeds))
+			for n := range l.Descriptor.Seeds {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			if len(names) > 0 {
+				b, _ := json.Marshal(names)
+				seed = fmt.Sprintf(", \"seed\": %s", b)
+			}
+		}
+		hints = append(hints, fmt.Sprintf("the OAuth login hsh://%s (%s) is in the secret store, but this session's config does not use it, so the session starts logged out; rebuild the image if its label predates logins, or add to a config: \"secrets\": {\"LOGIN\": {\"from\": \"hsh://%s\"%s}}", e.Name, e.Provider, e.Name, seed))
+	}
+	return hints
 }

@@ -226,8 +226,8 @@ The egress proxy log is the primary diagnostic - the login's HTTP traffic
 all crosses it. While the session runs:
 
 ```
-server$ hsh ls                         # the SESSION column is the session id
-server$ podman logs -f hsh-<session>-proxy
+server$ hsh ls -q                      # session ids
+server$ podman logs -f hsh-<session>-proxy 2>&1
 ```
 
 What a healthy login looks like, in order:

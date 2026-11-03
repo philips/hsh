@@ -464,3 +464,27 @@ func TestRefreshStoredLogin(t *testing.T) {
 		t.Fatalf("unknown login: %v", err)
 	}
 }
+
+func TestUnusedLoginHints(t *testing.T) {
+	env := setupPhase2(t, `{"version": 1}`)
+	for _, n := range []string{"work", "spare"} {
+		if err := env.store.PutOAuth(config.OAuthSecret{Name: n, Provider: "testlogin", Tokens: map[string]string{"access_token": "a", "refresh_token": "r"}, ExpiresAt: time.Now().Add(time.Hour)}, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := env.store.PutOAuth(config.OAuthSecret{Name: "claude", Provider: "anthropic", Tokens: map[string]string{"access_token": "a", "refresh_token": "r"}, ExpiresAt: time.Now().Add(time.Hour)}, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.FromImageLabel(`{"version": 1, "oauth": {"providers": ["testlogin"]}, "secrets": {"LOGIN": {"from": "hsh://work", "seed": ["creds"]}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hints := unusedLoginHints(cfg, env.store)
+	if len(hints) != 1 || !strings.Contains(hints[0], "hsh://spare (testlogin)") || !strings.Contains(hints[0], `"seed": ["creds"]`) {
+		t.Fatalf("hints = %v", hints)
+	}
+	cfg, _ = config.FromImageLabel(`{"version": 1}`)
+	if hints := unusedLoginHints(cfg, env.store); len(hints) != 0 {
+		t.Fatalf("a session that names no provider gets no hint: %v", hints)
+	}
+}

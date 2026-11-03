@@ -398,6 +398,15 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if err := resolve(cfg); err != nil {
 		return err
 	}
+	if !resumeSession && secretstore.Exists(ro.secretDB) {
+		if store, err := openStore(); err == nil {
+			if lister, ok := store.(loginLister); ok {
+				for _, h := range unusedLoginHints(cfg, lister) {
+					fmt.Fprintf(os.Stderr, "hsh: note: %s\n", h)
+				}
+			}
+		}
+	}
 	go config.WatchFile(sessionConfig, time.Second, func([]byte) {
 		cfg2, err := config.Load(sessionConfig)
 		if err != nil {
@@ -552,6 +561,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	interactive := isTerminal(os.Stdin)
 	if interactive {
 		wsArgs = append(wsArgs, "-i", "-t")
+		wsArgs = append(wsArgs, terminalEnvArgs(os.Getenv)...)
 	} else {
 		wsArgs = append(wsArgs, "-i")
 	}
