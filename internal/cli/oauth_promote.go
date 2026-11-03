@@ -85,6 +85,50 @@ func latestCapture(storePath, provider string) (*sessionCapture, error) {
 	return c, nil
 }
 
+func capturedProviders(storePath string) ([]string, error) {
+	data, err := os.ReadFile(storePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var m map[string]capturedToken
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", storePath, err)
+	}
+	set := map[string]bool{}
+	for _, t := range m {
+		if t.Field == "refresh_token" {
+			set[t.Provider] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for p := range set {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func choosePromoteProvider(requested string, captured []string, session string) (string, error) {
+	if len(captured) == 0 {
+		return "", fmt.Errorf("session %s has no captured login (log in inside it first, e.g. claude auth login or codex login --device-auth)", session)
+	}
+	if requested == "" {
+		if len(captured) == 1 {
+			return captured[0], nil
+		}
+		return "", fmt.Errorf("session %s captured logins for %s; name one: hsh oauth promote PROVIDER", session, strings.Join(captured, ", "))
+	}
+	for _, c := range captured {
+		if c == requested {
+			return requested, nil
+		}
+	}
+	return "", fmt.Errorf("session %s has no captured %s login; it captured %s (try: hsh oauth promote %s)", session, requested, strings.Join(captured, ", "), captured[0])
+}
+
 func fieldNames(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -97,21 +141,23 @@ func fieldNames(m map[string]string) []string {
 func oauthPromoteCommand() *ff.Command {
 	var session, secretDB string
 	var force bool
-	return newCommand("promote", "hsh oauth promote [FLAGS] PROVIDER [NAME]",
+	return newCommand("promote", "hsh oauth promote [FLAGS] [PROVIDER [NAME]]",
 		"move a login captured in a session into the secret store, refreshed by the host and usable by every session", func(fs *ff.FlagSet) {
 			fs.StringVar(&session, 0, "session", "", "the session that holds the login (default: the current workspace's only session)")
 			fs.StringVar(&secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store")
 			fs.BoolVar(&force, 0, "force", "replace an existing login with this name")
 		}, func(ctx context.Context, args []string) error {
-			if len(args) < 1 || len(args) > 2 {
-				return fmt.Errorf("oauth promote takes PROVIDER [NAME]")
+			if len(args) > 2 {
+				return fmt.Errorf("oauth promote takes [PROVIDER [NAME]]")
 			}
-			provider := args[0]
-			name := provider + "-login"
+			provider, name := "", ""
+			if len(args) >= 1 {
+				provider = args[0]
+			}
 			if len(args) == 2 {
 				name = args[1]
 			}
-			sessionID, err := resolveSession(session, "hsh oauth promote --session <id> PROVIDER [NAME]")
+			sessionID, err := resolveSession(session, "hsh oauth promote --session <id> [PROVIDER [NAME]]")
 			if err != nil {
 				return err
 			}
@@ -149,6 +195,17 @@ type promoteOptions struct {
 }
 
 func promoteLogin(ctx context.Context, o promoteOptions) (string, error) {
+	storePath := filepath.Join(o.sessionDir, "proxy", "oauth-tokens.json")
+	captured, err := capturedProviders(storePath)
+	if err != nil {
+		return "", err
+	}
+	if o.provider, err = choosePromoteProvider(o.provider, captured, filepath.Base(o.sessionDir)); err != nil {
+		return "", err
+	}
+	if o.name == "" {
+		o.name = o.provider + "-login"
+	}
 	l, err := oauthprov.Load(oauthProvidersDir(), o.provider)
 	if err != nil {
 		return "", err
@@ -156,7 +213,6 @@ func promoteLogin(ctx context.Context, o promoteOptions) (string, error) {
 	if l.Descriptor.Refresh == nil {
 		return "", fmt.Errorf("provider %s has no refresh section, so the host cannot keep the login alive; add one with: hsh oauth provider edit %s", o.provider, o.provider)
 	}
-	storePath := filepath.Join(o.sessionDir, "proxy", "oauth-tokens.json")
 	capture, err := latestCapture(storePath, o.provider)
 	if err != nil {
 		return "", err

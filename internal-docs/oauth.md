@@ -318,8 +318,10 @@ server$  hsh oauth promote anthropic        # stored as hsh://anthropic-login
 server$  hsh run ghcr.io/philips/hsh-claude-code   # a new session: already logged in
 ```
 
-`hsh oauth promote [--session ID] [--force] [--secret-db PATH] PROVIDER [NAME]`
-(`NAME` defaults to `PROVIDER-login`):
+`hsh oauth promote [--session ID] [--force] [--secret-db PATH] [PROVIDER [NAME]]`
+(`PROVIDER` defaults to the one provider the session captured a login
+for, and a name the session did not capture is refused with the ones it
+did; `NAME` defaults to `PROVIDER-login`):
 
 1. reads the newest captured access and refresh token (and id token,
    expiry, and non-token response fields such as `scope`) for

@@ -296,12 +296,32 @@ func TestPromoteRetriesWithANewerCapture(t *testing.T) {
 func TestPromoteRequiresCapturedTokens(t *testing.T) {
 	env := setupPhase2(t, `{"version": 1}`)
 	_, err := promoteLogin(context.Background(), promoteOptions{sessionDir: env.sessionDir, provider: "testlogin", name: "work", store: env.store, client: env.endpoint.srv.Client()})
-	if err == nil || !strings.Contains(err.Error(), "log in inside the session first") {
+	if err == nil || !strings.Contains(err.Error(), "has no captured login") {
 		t.Fatalf("err = %v", err)
 	}
-	_, err = promoteLogin(context.Background(), promoteOptions{sessionDir: env.sessionDir, provider: "openai", name: "x", store: env.store, client: env.endpoint.srv.Client()})
+	writeCapture(t, env.sessionDir, map[string]capturedToken{"rt-" + marker("b"): {Provider: "openai", Field: "refresh_token", Value: "x"}, "x-" + marker("c"): {Provider: "openai", Field: "access_token", Value: "y"}})
+	_, err = promoteLogin(context.Background(), promoteOptions{sessionDir: env.sessionDir, store: env.store, client: env.endpoint.srv.Client()})
 	if err == nil || !strings.Contains(err.Error(), "no refresh section") {
 		t.Fatalf("a provider without refresh must be refused: %v", err)
+	}
+}
+
+func TestPromoteChoosesTheCapturedProvider(t *testing.T) {
+	env := setupPhase2(t, `{"version": 1}`, "real-refresh-1")
+	writeCapture(t, env.sessionDir, capturedLogin(1, "real-refresh-1", time.Now()))
+	_, err := promoteLogin(context.Background(), promoteOptions{sessionDir: env.sessionDir, provider: "openai", store: env.store, client: env.endpoint.srv.Client()})
+	if err == nil || !strings.Contains(err.Error(), "it captured testlogin (try: hsh oauth promote testlogin)") {
+		t.Fatalf("a provider the session did not capture must point at the one it did: %v", err)
+	}
+	out, err := promoteLogin(context.Background(), promoteOptions{sessionDir: env.sessionDir, store: env.store, client: env.endpoint.srv.Client()})
+	if err != nil {
+		t.Fatalf("with one captured provider, PROVIDER is optional: %v", err)
+	}
+	if !strings.Contains(out, "hsh://testlogin-login") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if got, err := choosePromoteProvider("", []string{"a", "b"}, "s"); err == nil || !strings.Contains(err.Error(), "captured logins for a, b") {
+		t.Fatalf("two captured providers must be named: %q %v", got, err)
 	}
 }
 
