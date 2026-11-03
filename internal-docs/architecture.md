@@ -12,7 +12,12 @@ controlled egress. It is a single static Go binary that plays three roles:
 
 Host-side subcommands manage state around the sandbox: `hsh secret`
 (the secret store below), `hsh proxy` (denial review) and `hsh monitor`
-(the review TUI), and `hsh ls`/`hsh rm` (sandbox lifecycle).
+(the review TUI), and `hsh ls`/`hsh rm` (sandbox lifecycle). Everything
+hsh prints to the user — CLI output, error strings, TUI text — is
+indexed by `internal-docs/find-messages.sh`; see
+[messages](messages.md).
+`hsh wipe` removes all configuration and state files (see
+[Lifecycle and cleanup](#lifecycle-and-cleanup)).
 `hsh version` prints the release tag, git commit, and platform. The tag
 is stamped by the release workflow with
 `-ldflags "-X hsh/internal/version.Tag=$GITHUB_REF_NAME"`; local builds
@@ -727,6 +732,20 @@ exited), and `--garbage` removes session state directories whose pod is
 already gone. A SANDBOX argument may be the full pod name, a session id,
 or a unique prefix of one. Pods that are not hsh sandboxes are never
 touched.
+
+During the alpha period config and state schemas can change between
+releases, so `hsh wipe` offers a one-command clean slate: it deletes the
+whole config dir (`$XDG_CONFIG_HOME/hsh`: settings, secrets, oauth
+providers, image shortnames) and the whole state dir
+(`$XDG_STATE_HOME/hsh`: sessions, monitor and metrics databases, crash
+log) after printing both and requiring the user to type `YES` (exact,
+case-sensitive) at a prompt; any other answer removes nothing. It refuses
+while hsh pods exist and points at `hsh rm --all --force` first — wiping
+state under a live sandbox would break the pod — but if the podman check
+itself fails (a broken install being one reason to wipe) it warns and
+continues after the confirmation. `hsh wipe` skips the auto-update hooks,
+so the detached update-check child cannot recreate the state dir after
+the wipe.
 
 ## Sessions and workspaces
 

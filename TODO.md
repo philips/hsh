@@ -1,10 +1,10 @@
+## Review all console and TUI messages for terseness and accuracy
+
+Some messages are chatty. Run `./internal-docs/find-messages.sh > /tmp/hsh-messages.txt` then `nvim -q /tmp/hsh-messages.txt` and walk the quickfix (it indexes every user-facing message: CLI prints, error strings surfaced by main.go, verbose progress, and the monitor TUI — palette status lines, proxywatch help text, relay status bar) with the review checklist in `internal-docs/messages.md`. Reword for terseness and accuracy; check that suggested commands, key names, and counts are still right, and that warnings are on stderr and progress is in `infof`. Error-string rewording can break tests — run the suite after each pass.
+
 ## Document that `podman exec` bypasses the workspace network namespace
 
 In `container`-runtime sessions, `podman exec` into the workspace container starts in the pod network namespace, outside the inner namespace the shell runs in, so anything run that way skips the veth isolation and the egress proxy entirely. Document in `internal-docs/architecture.md` that the hsh commands (`hsh resume`, `hsh ssh`, `hsh forward`) are the supported ways to reach inside a sandbox, and that direct `podman exec` is not: anything that should follow the network policy must go through them. gVisor sessions are unaffected (their traffic goes through the netstack).
-
-## hsh wipe command
-
-hsh is still a very early project. Add a "wipe" subcommand that requires a user to type YES on an interactive prompt which will wipe all configuration and state files. This is for ease of upgrades if schemas change during the alpha period.
 
 ## hsh bug subcommand
 

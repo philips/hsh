@@ -87,6 +87,7 @@ func Root() *ff.Command {
 			detachCommand(),
 			versionCommand(),
 			updateCommand(),
+			wipeCommand(),
 		},
 	}
 	root.Subcommands = append(root.Subcommands, helpCommand(root))
@@ -98,7 +99,7 @@ func Run(args []string) error {
 	if err := root.Parse(args); err != nil {
 		return runResult(root, err)
 	}
-	if sel := root.GetSelected(); sel != nil && sel != root && sel.Name != "update" && (sshProxyCmd == nil || sel != sshProxyCmd) {
+	if sel := root.GetSelected(); sel != nil && sel != root && sel.Name != "update" && sel.Name != "wipe" && (sshProxyCmd == nil || sel != sshProxyCmd) {
 		autoUpdateHook()
 		spawnCheckHook()
 	}
