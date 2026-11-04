@@ -298,11 +298,21 @@ func (c *Config) validateSecretRefs() error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if _, _, err := ParseSecretRef(c.Secrets[name].From); err != nil {
+		scheme, ref, err := ParseSecretRef(c.Secrets[name].From)
+		if err != nil {
 			return fmt.Errorf("secret %s: %w", name, err)
+		}
+		if scheme == "env" {
+			return fmt.Errorf("secret %s: %w (%q): they let a config send any variable of your environment to any host; store the value with: hsh secret add %s --host HOST, and reference it as \"hsh://%s\"", name, ErrEnvReference, c.Secrets[name].From, storeNameFor(ref), storeNameFor(ref))
 		}
 	}
 	return nil
+}
+
+var ErrEnvReference = errors.New("environment references are not supported")
+
+func storeNameFor(envVar string) string {
+	return strings.ReplaceAll(strings.ToLower(envVar), "_", "-")
 }
 
 func Load(path string) (*Config, error) {
@@ -475,51 +485,130 @@ type SecretStore interface {
 	Get(name string) (string, error)
 }
 
-func ResolveSecrets(cfg *Config, store SecretStore) (ResolvedSecrets, []string, error) {
-	var out ResolvedSecrets
-	var missing []string
-	for name, s := range cfg.Secrets {
+type SecretHostStore interface {
+	SecretHosts(name string) ([]string, error)
+}
+
+type UnapprovedRoute struct {
+	Secret string
+	Store  string
+	Hosts  []string
+}
+
+type SecretResolution struct {
+	Secrets    ResolvedSecrets
+	Missing    []string
+	Unapproved []UnapprovedRoute
+}
+
+func approvedHosts(store SecretStore, name string) ([]string, error) {
+	hs, ok := store.(SecretHostStore)
+	if !ok {
+		return nil, nil
+	}
+	return hs.SecretHosts(name)
+}
+
+func splitApproved(hosts, approved []string) (kept, dropped []string) {
+	for _, h := range hosts {
+		if HostCovered(approved, h) {
+			kept = append(kept, h)
+		} else {
+			dropped = append(dropped, h)
+		}
+	}
+	return kept, dropped
+}
+
+func sortedSecretNames(cfg *Config) []string {
+	names := make([]string, 0, len(cfg.Secrets))
+	for name := range cfg.Secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func ResolveSecrets(cfg *Config, store SecretStore) (SecretResolution, error) {
+	var out SecretResolution
+	for _, name := range sortedSecretNames(cfg) {
+		s := cfg.Secrets[name]
 		scheme, ref, err := ParseSecretRef(s.From)
 		if err != nil {
-			return out, nil, err
+			return out, err
+		}
+		if scheme != "hsh" {
+			return out, fmt.Errorf("secret %s: only hsh:// references are supported, got %q", name, s.From)
+		}
+		if oauthStore, ok := store.(OAuthSecretStore); ok {
+			if _, err := oauthStore.GetOAuth(ref); err == nil {
+				continue
+			}
 		}
 		var v string
-		switch scheme {
-		case "env":
-			v = os.Getenv(ref)
-		case "hsh":
-			if oauthStore, ok := store.(OAuthSecretStore); ok {
-				if _, err := oauthStore.GetOAuth(ref); err == nil {
-					continue
-				}
+		if store != nil {
+			got, err := store.Get(ref)
+			if err != nil && !errors.Is(err, ErrSecretNotFound) {
+				return out, fmt.Errorf("secret store: %w", err)
 			}
-			if store != nil {
-				got, err := store.Get(ref)
-				if err != nil {
-					if errors.Is(err, ErrSecretNotFound) {
-						v = ""
-						break
-					}
-					return out, nil, fmt.Errorf("secret store: %w", err)
-				}
-				v = got
-			}
+			v = got
 		}
 		if v == "" {
 			if !s.Optional {
-				missing = append(missing, s.From)
+				out.Missing = append(out.Missing, s.From)
 			}
 			continue
 		}
-		out.Secrets = append(out.Secrets, ResolvedSecret{
+		approved, err := approvedHosts(store, ref)
+		if err != nil {
+			return out, fmt.Errorf("secret store: %w", err)
+		}
+		kept, dropped := splitApproved(s.Hosts, approved)
+		if len(dropped) > 0 {
+			out.Unapproved = append(out.Unapproved, UnapprovedRoute{Secret: name, Store: ref, Hosts: dropped})
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		out.Secrets.Secrets = append(out.Secrets.Secrets, ResolvedSecret{
 			Name:   name,
 			Value:  v,
 			Header: s.HeaderName(name),
 			Prefix: s.Prefix,
-			Hosts:  s.Hosts,
+			Hosts:  kept,
 		})
 	}
-	return out, missing, nil
+	return out, nil
+}
+
+func UnapprovedRoutes(cfg *Config, store SecretStore) ([]UnapprovedRoute, error) {
+	var out []UnapprovedRoute
+	if store == nil {
+		return nil, nil
+	}
+	for _, name := range sortedSecretNames(cfg) {
+		s := cfg.Secrets[name]
+		scheme, ref, err := ParseSecretRef(s.From)
+		if err != nil || scheme != "hsh" {
+			continue
+		}
+		if oauthStore, ok := store.(OAuthSecretStore); ok {
+			if _, err := oauthStore.GetOAuth(ref); err == nil {
+				continue
+			}
+		}
+		if _, err := store.Get(ref); err != nil {
+			continue
+		}
+		approved, err := approvedHosts(store, ref)
+		if err != nil {
+			return nil, fmt.Errorf("secret store: %w", err)
+		}
+		if _, dropped := splitApproved(s.Hosts, approved); len(dropped) > 0 {
+			out = append(out, UnapprovedRoute{Secret: name, Store: ref, Hosts: dropped})
+		}
+	}
+	return out, nil
 }
 
 func WriteSecretsFile(path string, rs ResolvedSecrets) error {

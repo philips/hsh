@@ -259,16 +259,18 @@ func mergeProviders(named, extra []oauthprov.Resolved) []oauthprov.Resolved {
 }
 
 type sessionResolution struct {
-	Secrets  config.ResolvedSecrets
-	Missing  []string
-	Warnings []string
+	Secrets    config.ResolvedSecrets
+	Missing    []string
+	Unapproved []config.UnapprovedRoute
+	Warnings   []string
 }
 
 func resolveSessionSecrets(sessionDir string, cfg *config.Config, store config.SecretStore, now time.Time) (*sessionResolution, error) {
-	rs, missing, err := config.ResolveSecrets(cfg, store)
+	res, err := config.ResolveSecrets(cfg, store)
 	if err != nil {
 		return nil, err
 	}
+	rs := res.Secrets
 	providers, warnings, err := config.ResolveOAuth(cfg, oauthProvidersDir())
 	if err != nil {
 		return nil, err
@@ -286,7 +288,7 @@ func resolveSessionSecrets(sessionDir string, cfg *config.Config, store config.S
 	if err := writeSessionSeeds(sessionDir, so.Seeds); err != nil {
 		return nil, err
 	}
-	return &sessionResolution{Secrets: rs, Missing: missing, Warnings: warnings}, nil
+	return &sessionResolution{Secrets: rs, Missing: res.Missing, Unapproved: res.Unapproved, Warnings: warnings}, nil
 }
 
 func configUsesStore(c *config.Config) bool {

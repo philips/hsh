@@ -55,12 +55,27 @@ func (r *Relay) overlayCallLocked(where string, f func()) (ok bool) {
 func (r *Relay) pollLocked() {
 	r.lastPoll = time.Now()
 	r.pollNow = false
+	if r.cfg.Notice != nil {
+		if nt := printable(r.cfg.Notice()); nt != r.notice {
+			r.notice = nt
+			r.dirty = true
+		}
+	}
 	n, heldN, err := r.cfg.Count()
 	if err != nil || (n == r.pending && heldN == r.heldReqs) {
 		return
 	}
 	r.pending, r.heldReqs = n, heldN
 	r.dirty = true
+}
+
+func printable(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c < 0x20 || c == 0x7f || (c >= 0x80 && c < 0xa0) {
+			return -1
+		}
+		return c
+	}, s)
 }
 
 func (r *Relay) openReviewLocked() {
@@ -238,6 +253,13 @@ func (r *Relay) statusLineLocked() string {
 			text = " hsh | " + name + " | * 1 proxy request needs review" + heldNote + " | " + r.keyName() + " to review"
 		default:
 			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review%s | %s to review", name, n, heldNote, r.keyName())
+		}
+		if r.notice != "" {
+			sgr = sgrRed
+			text = " hsh | " + name + " | " + r.notice
+			if n := r.pending; n > 0 {
+				text += fmt.Sprintf(" | * %d to review%s | %s", n, heldNote, r.keyName())
+			}
 		}
 	}
 	return sgr + padTo(text, r.cols) + "\x1b[0m"

@@ -127,7 +127,7 @@ func sessionOAuthStore(sessionID string) string {
 }
 
 func printOAuthStore(path string) error {
-	data, err := os.ReadFile(path)
+	data, err := state.ReadUntrusted(path, state.MaxUntrustedFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Printf("%s: no captured tokens (no login has completed yet)\n", path)

@@ -7,8 +7,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"hsh/internal/monitordb"
 )
 
 func captureStdout(t *testing.T, f func()) string {
@@ -70,15 +68,10 @@ func TestGroupUnknownSubcommand(t *testing.T) {
 }
 
 func TestProxyDeniedWatchStopsOnInterrupt(t *testing.T) {
-	db := t.TempDir() + "/monitor.db"
-	h, err := monitordb.Open(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.Close()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run([]string{"proxy", "denied", "--db", db, "--watch"})
+		done <- Run([]string{"proxy", "denied", "--watch"})
 	}()
 	time.Sleep(500 * time.Millisecond)
 	syscall.Kill(os.Getpid(), syscall.SIGINT)

@@ -62,6 +62,38 @@ provider API hosts in `network.allow`, and the `secrets` that reference
 the [hsh secret store](config.md#the-hsh-secret-store) (`hsh://NAME`)
 for the provider's API key.
 
+### Image trust
+
+The label is a config written by whoever built the image, and anyone can
+publish an image. So hsh applies an image's built-in config only once the
+user trusts that exact image. Until then `hsh run IMAGE` ignores the parts
+that reach outside the sandbox:
+
+- `network.allow` (the session starts with an empty allowlist),
+- `network.mode` (forced to `allowlist`),
+- `oauth` (no providers),
+- `mounts` (reset to the default `.:/workspace`; the image could otherwise
+  mount any host path, such as `~/.ssh`),
+
+and warns with what it dropped, how to show the built-in config
+(`podman image inspect --format '{{index .Labels "org.ifup.hsh"}}' IMAGE`),
+and how to trust it: `hsh run --trust-image IMAGE` applies the whole config
+and records the image id in `$XDG_CONFIG_HOME/hsh/trusted-images` (one line
+per image: id, the reference it was trusted under, time). Later runs of the
+same image id apply the config without the flag. The image id is the digest
+of the image config, which holds the label, so a rebuilt or re-pulled image
+with any change is untrusted again. Hosts denied in a session can still be
+approved one by one through the monitor.
+
+The rest of the built-in config applies either way: its secret routes
+(already limited to the hosts approved for each secret,
+[host binding](config.md#host-binding)), the agent argv, the shell, context
+files, the network notice, and `approval_wait`, which only act inside the
+sandbox or within the user's approvals. Images built locally
+(`localhost/...`) and configs passed with `--config` are not restricted;
+the shipped harness images are, until trusted once. A resumed session keeps
+the config it was created with.
+
 It also declares the agent argv, in two forms:
 
 ```json
@@ -216,12 +248,13 @@ time, so before the first run store the provider key under the image's
 expected name:
 
 ```
-hsh secret add anthropic-api-key
+hsh secret add --host api.anthropic.com anthropic-api-key
 ```
 
-A missing store entry is a warning and the request is forwarded without
-the header (the same fail-open behavior as an unset environment
-variable). The container never sees the raw secret, only the injected
+The `--host` is the user's approval: a label can ask to send a stored
+secret anywhere, but it is injected only for hosts approved for it
+([host binding](config.md#host-binding)). A missing store entry is a
+warning and the request is forwarded without the header. The container never sees the raw secret, only the injected
 header on matching hosts.
 
 ## Nested sandboxes

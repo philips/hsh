@@ -1,7 +1,6 @@
 package palette
 
 import (
-	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,7 +20,7 @@ import (
 )
 
 type Options struct {
-	DB           *sql.DB
+	DB           *monitordb.Store
 	Filter       monitordb.Filter
 	ShowIgnored  bool
 	Pending      []monitordb.DeniedHost
@@ -490,7 +489,7 @@ func (m Model) allowCmd(session, entry string) tea.Cmd {
 		}
 		cleared := 0
 		if db != nil {
-			pending, err := monitordb.Pending(db, monitordb.Filter{Session: session})
+			pending, err := db.Pending(monitordb.Filter{Session: session})
 			if err != nil {
 				return allowMsg{err: err}
 			}
@@ -501,7 +500,7 @@ func (m Model) allowCmd(session, entry string) tea.Cmd {
 				}
 			}
 			if len(hosts) > 0 {
-				if err := monitordb.MarkAllowed(db, session, hosts); err != nil {
+				if err := db.MarkAllowed(session, hosts); err != nil {
 					return allowMsg{err: err}
 				}
 			}

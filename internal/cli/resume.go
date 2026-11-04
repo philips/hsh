@@ -9,19 +9,16 @@ import (
 
 	"github.com/peterbourgon/ff/v4"
 
-	"hsh/internal/monitordb"
 	"hsh/internal/secretstore"
 )
 
 func resumeCommand() *ff.Command {
 	ro := runOptions{
-		monitorDB: monitordb.DefaultPath(),
-		secretDB:  secretstore.DefaultPath(),
-		pull:      "never",
-		resume:    true,
+		secretDB: secretstore.DefaultPath(),
+		pull:     "never",
+		resume:   true,
 	}
 	fs := ff.NewFlagSet("resume")
-	fs.StringVar(&ro.monitorDB, 0, "monitor-db", monitordb.DefaultPath(), "monitor database")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.takeOver, 0, "take-over", "detach whatever terminal is attached to the session first")

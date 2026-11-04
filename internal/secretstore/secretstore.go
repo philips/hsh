@@ -2,18 +2,21 @@ package secretstore
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"hsh/internal/config"
-	"hsh/internal/dbschema"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
+
+	"hsh/internal/config"
+	"hsh/internal/dbschema"
 
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 const oauthSchema = `
 CREATE TABLE IF NOT EXISTS oauth_secrets (
@@ -33,11 +36,14 @@ CREATE TABLE IF NOT EXISTS secrets (
     name       TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    hosts      TEXT NOT NULL DEFAULT '[]'
 );
 ` + oauthSchema
 
-var migrations = map[int]string{1: oauthSchema}
+const hostsMigration = `ALTER TABLE secrets ADD COLUMN hosts TEXT NOT NULL DEFAULT '[]';`
+
+var migrations = map[int]string{1: oauthSchema, 2: hostsMigration}
 
 var ErrNotFound = config.ErrSecretNotFound
 var ErrExists = errors.New("secret already exists (use --force to overwrite)")
@@ -50,6 +56,7 @@ type Entry struct {
 	UpdatedAt string
 	ExpiresAt string
 	Failure   string
+	Hosts     []string
 }
 
 type Store interface {
@@ -103,11 +110,37 @@ func Open(path string) (*DB, bool, error) {
 		db.Close()
 		return nil, false, fmt.Errorf("secret store: %w", err)
 	}
+	if err := ensureHostsColumn(db); err != nil {
+		db.Close()
+		return nil, false, fmt.Errorf("secret store: %w", err)
+	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		db.Close()
 		return nil, false, err
 	}
 	return &DB{db: db}, created, nil
+}
+
+func ensureHostsColumn(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('secrets')`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			return err
+		}
+		if col == "hosts" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(hostsMigration)
+	return err
 }
 
 func (d *DB) Get(name string) (string, error) {
@@ -170,9 +203,9 @@ func (d *DB) Delete(name string) error {
 }
 
 func (d *DB) List() ([]Entry, error) {
-	rows, err := d.db.Query(`SELECT name, 'static', '', created_at, updated_at, '', '' FROM secrets
+	rows, err := d.db.Query(`SELECT name, 'static', '', created_at, updated_at, '', '', hosts FROM secrets
 		UNION ALL
-		SELECT name, 'oauth', provider, created_at, refreshed_at, expires_at, failure FROM oauth_secrets
+		SELECT name, 'oauth', provider, created_at, refreshed_at, expires_at, failure, '[]' FROM oauth_secrets
 		ORDER BY 1 ASC`)
 	if err != nil {
 		return nil, err
@@ -181,12 +214,117 @@ func (d *DB) List() ([]Entry, error) {
 	var out []Entry
 	for rows.Next() {
 		var e Entry
-		if err := rows.Scan(&e.Name, &e.Kind, &e.Provider, &e.CreatedAt, &e.UpdatedAt, &e.ExpiresAt, &e.Failure); err != nil {
+		var hosts string
+		if err := rows.Scan(&e.Name, &e.Kind, &e.Provider, &e.CreatedAt, &e.UpdatedAt, &e.ExpiresAt, &e.Failure, &hosts); err != nil {
+			return nil, err
+		}
+		if e.Hosts, err = decodeHosts(e.Name, hosts); err != nil {
 			return nil, err
 		}
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func decodeHosts(name, raw string) ([]string, error) {
+	var hosts []string
+	if err := json.Unmarshal([]byte(raw), &hosts); err != nil {
+		return nil, fmt.Errorf("secret %s: hosts: %w", name, err)
+	}
+	return hosts, nil
+}
+
+func (d *DB) SecretHosts(name string) ([]string, error) {
+	var raw string
+	err := d.db.QueryRow(`SELECT hosts FROM secrets WHERE name = ?`, name).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := d.GetOAuth(name); err == nil {
+			return nil, fmt.Errorf("%q is an OAuth login; its hosts come from the provider descriptor (hsh oauth provider cat)", name)
+		}
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return decodeHosts(name, raw)
+}
+
+func NormalizeHosts(hosts []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, h := range hosts {
+		n, err := config.NormalizeSecretHost(h)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (d *DB) SetHosts(name string, hosts []string) error {
+	norm, err := NormalizeHosts(hosts)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(norm)
+	if err != nil {
+		return err
+	}
+	res, err := d.db.Exec(`UPDATE secrets SET hosts = ?, updated_at = ? WHERE name = ?`, string(data), time.Now().UTC().Format(time.RFC3339), name)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		_, err := d.SecretHosts(name)
+		return err
+	}
+	return nil
+}
+
+func (d *DB) AllowHosts(name string, hosts ...string) ([]string, error) {
+	cur, err := d.SecretHosts(name)
+	if err != nil {
+		return nil, err
+	}
+	next := append(append([]string{}, cur...), hosts...)
+	if err := d.SetHosts(name, next); err != nil {
+		return nil, err
+	}
+	return d.SecretHosts(name)
+}
+
+func (d *DB) DisallowHosts(name string, hosts ...string) ([]string, error) {
+	cur, err := d.SecretHosts(name)
+	if err != nil {
+		return nil, err
+	}
+	drop := map[string]bool{}
+	for _, h := range hosts {
+		n, err := config.NormalizeSecretHost(h)
+		if err != nil {
+			return nil, err
+		}
+		drop[n] = true
+	}
+	var next []string
+	for _, h := range cur {
+		if !drop[h] {
+			next = append(next, h)
+		}
+	}
+	if err := d.SetHosts(name, next); err != nil {
+		return nil, err
+	}
+	return d.SecretHosts(name)
 }
 
 func (d *DB) Close() error {

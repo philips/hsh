@@ -1,7 +1,6 @@
 package proxywatch
 
 import (
-	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,7 +19,7 @@ import (
 )
 
 type Model struct {
-	db          *sql.DB
+	db          *monitordb.Store
 	filter      monitordb.Filter
 	showIgnored bool
 	status      string
@@ -78,7 +77,7 @@ func defaultColumns(width int) []table.Column {
 	}
 }
 
-func New(db *sql.DB, filter monitordb.Filter, pending, ignored []monitordb.DeniedHost, showIgnored bool) Model {
+func New(db *monitordb.Store, filter monitordb.Filter, pending, ignored []monitordb.DeniedHost, showIgnored bool) Model {
 	m := Model{
 		db:          db,
 		filter:      filter,
@@ -447,11 +446,11 @@ func (m Model) actionCmd(kind action, rows []monitordb.DeniedHost) tea.Cmd {
 						return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
 					}
 				}
-				if err := monitordb.MarkAllowed(db, session, hosts); err != nil {
+				if err := db.MarkAllowed(session, hosts); err != nil {
 					return actionMsg{kind: kind, err: err}
 				}
 			case actionIgnore:
-				if err := monitordb.MarkIgnored(db, session, hosts); err != nil {
+				if err := db.MarkIgnored(session, hosts); err != nil {
 					return actionMsg{kind: kind, err: err}
 				}
 			}
@@ -510,11 +509,11 @@ func (m Model) refreshCmd() tea.Cmd {
 	db := m.db
 	filter := m.filter
 	return func() tea.Msg {
-		pending, err := monitordb.Pending(db, filter)
+		pending, err := db.Pending(filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		ignored, err := monitordb.Ignored(db, filter)
+		ignored, err := db.Ignored(filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}

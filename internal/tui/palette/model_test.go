@@ -1,7 +1,6 @@
 package palette
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,13 +11,14 @@ import (
 
 	"hsh/internal/config"
 	"hsh/internal/monitordb"
+	"hsh/internal/monitordb/monitordbtest"
 	"hsh/internal/relay"
 	"hsh/internal/settings"
 	"hsh/internal/state"
 )
 
 type env struct {
-	db       *sql.DB
+	db       *monitordb.Store
 	settings string
 }
 
@@ -26,12 +26,7 @@ func newEnv(t *testing.T) *env {
 	t.Helper()
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	db, err := monitordb.Open(filepath.Join(dir, "monitor.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return &env{db: db, settings: filepath.Join(dir, "config", "hsh", "settings.json")}
+	return &env{db: monitordb.DefaultStore(), settings: filepath.Join(dir, "config", "hsh", "settings.json")}
 }
 
 func (e *env) session(t *testing.T, id, workspace string) string {
@@ -53,7 +48,7 @@ func (e *env) session(t *testing.T, id, workspace string) string {
 func (e *env) model(t *testing.T, session string) Model {
 	t.Helper()
 	f := monitordb.Filter{Session: session}
-	pending, err := monitordb.Pending(e.db, f)
+	pending, err := e.db.Pending(f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +111,7 @@ func TestOpensThePaletteWhenNothingNeedsReview(t *testing.T) {
 func TestOpensTheReviewWhenSomethingNeedsReview(t *testing.T) {
 	e := newEnv(t)
 	e.session(t, "s1", "/ws")
-	if err := monitordb.Record(e.db, "/ws", "s1", "a.example", "a.example:443"); err != nil {
+	if err := monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "a.example", Target: "a.example:443"}); err != nil {
 		t.Fatal(err)
 	}
 	m := e.model(t, "s1")
@@ -155,7 +150,7 @@ func TestEscInAReviewOpenedFromThePaletteGoesBack(t *testing.T) {
 func TestEscInTheReviewFilterClearsTheFilterFirst(t *testing.T) {
 	e := newEnv(t)
 	e.session(t, "s1", "/ws")
-	_ = monitordb.Record(e.db, "/ws", "s1", "a.example", "a.example:443")
+	_ = monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "a.example", Target: "a.example:443"})
 	m := e.model(t, "s1")
 	m, _ = press(t, m, typed("/"), typed("a"), esc)
 	if m.view != viewReview {
@@ -234,8 +229,8 @@ func TestAddAllowlistItemInTheSession(t *testing.T) {
 	e := newEnv(t)
 	path := e.session(t, "s1", "/ws")
 	m := e.model(t, "s1")
-	_ = monitordb.Record(e.db, "/ws", "s1", "api.example.com", "api.example.com:443")
-	_ = monitordb.Record(e.db, "/ws", "s1", "other.test", "other.test:443")
+	_ = monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "api.example.com", Target: "api.example.com:443"})
+	_ = monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "other.test", Target: "other.test:443"})
 	m, _ = press(t, m, down, enter)
 	if m.view != viewAllowHost {
 		t.Fatalf("view = %v", m.view)
@@ -249,7 +244,7 @@ func TestAddAllowlistItemInTheSession(t *testing.T) {
 	if strings.Join(cfg.Network.Allow, ",") != "keep.example,*.example.com" {
 		t.Fatalf("allow = %v", cfg.Network.Allow)
 	}
-	pending, _ := monitordb.Pending(e.db, monitordb.Filter{Session: "s1"})
+	pending, _ := e.db.Pending(monitordb.Filter{Session: "s1"})
 	if len(pending) != 1 || pending[0].Host != "other.test" {
 		t.Fatalf("the wildcard did not approve the matching pending host: %+v", pending)
 	}

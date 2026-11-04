@@ -36,7 +36,7 @@ podman build -t localhost/pi images/pi
 Stash some credentials into the proxy for hsh to use:
 
 ```
-hsh secret add mistral-api-key
+hsh secret add --host api.mistral.ai mistral-api-key
 ```
 
 Run the pi container you just built

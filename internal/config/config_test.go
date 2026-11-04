@@ -46,6 +46,7 @@ func TestParseSecretRef(t *testing.T) {
 
 type fakeStore struct {
 	values map[string]string
+	hosts  map[string][]string
 }
 
 func (f *fakeStore) Get(name string) (string, error) {
@@ -53,6 +54,10 @@ func (f *fakeStore) Get(name string) (string, error) {
 		return v, nil
 	}
 	return "", ErrSecretNotFound
+}
+
+func (f *fakeStore) SecretHosts(name string) ([]string, error) {
+	return f.hosts[name], nil
 }
 
 type brokenStore struct{}
@@ -63,60 +68,92 @@ func (brokenStore) Get(name string) (string, error) {
 
 func TestResolveSecretsRefs(t *testing.T) {
 	cfg := &Config{Secrets: map[string]Secret{
-		"API_KEY": {From: "env://HSH_TEST_ENV_KEY", Hosts: []string{"a.example"}, Header: "Authorization", Prefix: "Bearer "},
-		"LEGACY":  {From: "HSH_TEST_LEGACY", Hosts: []string{"l.example"}},
-		"STORED":  {From: "hsh://stored-key", Hosts: []string{"s.example"}},
+		"STORED":  {From: "hsh://stored-key", Hosts: []string{"s.example"}, Header: "Authorization", Prefix: "Bearer "},
 		"MISSING": {From: "hsh://gone", Hosts: []string{"m.example"}},
-		"UNSET":   {From: "env://HSH_TEST_DEFINITELY_UNSET", Hosts: []string{"u.example"}},
+		"OPT":     {From: "hsh://also-gone", Hosts: []string{"o.example"}, Optional: true},
 	}}
-	t.Setenv("HSH_TEST_ENV_KEY", "env-value")
-	t.Setenv("HSH_TEST_LEGACY", "legacy-value")
-	store := &fakeStore{values: map[string]string{"stored-key": "store-value"}}
+	store := &fakeStore{values: map[string]string{"stored-key": "store-value"}, hosts: map[string][]string{"stored-key": {"s.example"}}}
 
-	rs, missing, err := ResolveSecrets(cfg, store)
+	res, err := ResolveSecrets(cfg, store)
 	if err != nil {
 		t.Fatalf("ResolveSecrets: %v", err)
 	}
-	byName := map[string]ResolvedSecret{}
-	for _, s := range rs.Secrets {
-		byName[s.Name] = s
+	if len(res.Secrets.Secrets) != 1 {
+		t.Fatalf("resolved = %+v", res.Secrets.Secrets)
 	}
-	if v := byName["API_KEY"]; v.Value != "env-value" || v.Header != "Authorization" || v.Prefix != "Bearer " {
-		t.Errorf("API_KEY resolved wrong: %+v", v)
-	}
-	if v := byName["LEGACY"]; v.Value != "legacy-value" || v.Header != "LEGACY" {
-		t.Errorf("LEGACY resolved wrong: %+v", v)
-	}
-	if v := byName["STORED"]; v.Value != "store-value" {
+	if v := res.Secrets.Secrets[0]; v.Name != "STORED" || v.Value != "store-value" || v.Header != "Authorization" || v.Prefix != "Bearer " {
 		t.Errorf("STORED resolved wrong: %+v", v)
 	}
-	if _, ok := byName["MISSING"]; ok {
-		t.Error("MISSING should not be resolved")
+	if strings.Join(res.Missing, ",") != "hsh://gone" {
+		t.Errorf("missing = %v", res.Missing)
 	}
-	if _, ok := byName["UNSET"]; ok {
-		t.Error("UNSET should not be resolved")
+	if len(res.Unapproved) != 0 {
+		t.Errorf("unapproved = %+v", res.Unapproved)
 	}
-	if len(missing) != 2 {
-		t.Errorf("missing = %v, want 2 entries", missing)
+}
+
+func TestResolveSecretsBindsStaticSecretsToApprovedHosts(t *testing.T) {
+	cfg := &Config{Secrets: map[string]Secret{
+		"K":     {From: "hsh://key", Hosts: []string{"api.example.com", "evil.example", "*.svc.example.com", "*.example.org"}},
+		"OTHER": {From: "hsh://unbound", Hosts: []string{"api.example.com"}},
+	}}
+	store := &fakeStore{
+		values: map[string]string{"key": "v", "unbound": "w"},
+		hosts:  map[string][]string{"key": {"api.example.com", "*.example.com"}},
 	}
-	wantMissing := map[string]bool{"hsh://gone": true, "env://HSH_TEST_DEFINITELY_UNSET": true}
-	for _, m := range missing {
-		if !wantMissing[m] {
-			t.Errorf("unexpected missing entry %q", m)
-		}
+	res, err := ResolveSecrets(cfg, store)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(res.Secrets.Secrets) != 1 || res.Secrets.Secrets[0].Name != "K" {
+		t.Fatalf("a secret with no approved host for its routes was resolved: %+v", res.Secrets.Secrets)
+	}
+	if got := strings.Join(res.Secrets.Secrets[0].Hosts, ","); got != "api.example.com,*.svc.example.com" {
+		t.Fatalf("injected for %s", got)
+	}
+	want := []UnapprovedRoute{
+		{Secret: "K", Store: "key", Hosts: []string{"evil.example", "*.example.org"}},
+		{Secret: "OTHER", Store: "unbound", Hosts: []string{"api.example.com"}},
+	}
+	if len(res.Unapproved) != 2 || strings.Join(res.Unapproved[0].Hosts, ",") != "evil.example,*.example.org" || res.Unapproved[1].Store != "unbound" {
+		t.Fatalf("unapproved = %+v, want %+v", res.Unapproved, want)
+	}
+	routes, err := UnapprovedRoutes(cfg, store)
+	if err != nil || len(routes) != 2 || routes[0].Secret != "K" || routes[1].Secret != "OTHER" {
+		t.Fatalf("UnapprovedRoutes = %+v %v", routes, err)
+	}
+}
+
+func TestResolveSecretsWithoutHostApprovalsInjectsNothing(t *testing.T) {
+	cfg := &Config{Secrets: map[string]Secret{"K": {From: "hsh://key", Hosts: []string{"a.example"}}}}
+	res, err := ResolveSecrets(cfg, plainStore{"key": "v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Secrets.Secrets) != 0 || len(res.Unapproved) != 1 {
+		t.Fatalf("%+v", res)
+	}
+}
+
+type plainStore map[string]string
+
+func (p plainStore) Get(name string) (string, error) {
+	if v, ok := p[name]; ok {
+		return v, nil
+	}
+	return "", ErrSecretNotFound
 }
 
 func TestResolveSecretsNilStore(t *testing.T) {
 	cfg := &Config{Secrets: map[string]Secret{
 		"STORED": {From: "hsh://stored-key", Hosts: []string{"s.example"}},
 	}}
-	_, missing, err := ResolveSecrets(cfg, nil)
+	res, err := ResolveSecrets(cfg, nil)
 	if err != nil {
 		t.Fatalf("ResolveSecrets with nil store: %v", err)
 	}
-	if len(missing) != 1 || missing[0] != "hsh://stored-key" {
-		t.Errorf("missing = %v, want [hsh://stored-key]", missing)
+	if len(res.Missing) != 1 || res.Missing[0] != "hsh://stored-key" {
+		t.Errorf("missing = %v, want [hsh://stored-key]", res.Missing)
 	}
 }
 
@@ -124,9 +161,65 @@ func TestResolveSecretsStoreFailure(t *testing.T) {
 	cfg := &Config{Secrets: map[string]Secret{
 		"STORED": {From: "hsh://stored-key"},
 	}}
-	_, _, err := ResolveSecrets(cfg, brokenStore{})
+	_, err := ResolveSecrets(cfg, brokenStore{})
 	if err == nil {
 		t.Fatal("expected an error from a failing store")
+	}
+}
+
+func TestEnvironmentReferencesAreRefused(t *testing.T) {
+	for _, from := range []string{"env://AWS_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"} {
+		label := `{"version":1,"secrets":{"K":{"from":"` + from + `","hosts":["evil.example"]}}}`
+		_, err := FromImageLabel(label)
+		if !errors.Is(err, ErrEnvReference) || !strings.Contains(err.Error(), "hsh secret add aws-secret-access-key --host HOST") {
+			t.Errorf("label with %s: %v", from, err)
+		}
+		_, err = Load(writeConfig(t, label))
+		if !errors.Is(err, ErrEnvReference) {
+			t.Errorf("config file with %s: %v", from, err)
+		}
+	}
+}
+
+func TestNormalizeSecretHost(t *testing.T) {
+	for in, want := range map[string]string{
+		"api.example.com":            "api.example.com",
+		"API.Example.com.":           "api.example.com",
+		"https://api.example.com/v1": "api.example.com",
+		"api.example.com:443":        "api.example.com",
+		"*.Example.com":              "*.example.com",
+		"127.0.0.1":                  "127.0.0.1",
+		"host.containers.internal":   "host.containers.internal",
+		"[::1]":                      "::1",
+	} {
+		got, err := NormalizeSecretHost(in)
+		if err != nil || got != want {
+			t.Errorf("NormalizeSecretHost(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "*", "*.", "a b", "a..b", "evil\x1b.example", "-a.example", "a.*.example"} {
+		if got, err := NormalizeSecretHost(bad); err == nil {
+			t.Errorf("NormalizeSecretHost(%q) = %q, want an error", bad, got)
+		}
+	}
+}
+
+func TestHostCovered(t *testing.T) {
+	approved := []string{"api.example.com", "*.svc.example.org"}
+	for host, want := range map[string]bool{
+		"api.example.com":     true,
+		"API.example.com.":    true,
+		"x.svc.example.org":   true,
+		"*.svc.example.org":   true,
+		"*.a.svc.example.org": true,
+		"svc.example.org":     false,
+		"*.example.org":       false,
+		"*.example.com":       false,
+		"other.example.com":   false,
+	} {
+		if got := HostCovered(approved, host); got != want {
+			t.Errorf("HostCovered(%q) = %v, want %v", host, got, want)
+		}
 	}
 }
 

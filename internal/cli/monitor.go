@@ -17,11 +17,9 @@ import (
 )
 
 func monitorCommand() *ff.Command {
-	var dbPath string
 	var all bool
 	var filter monitordb.Filter
 	return newCommand("monitor", "hsh monitor [FLAGS]", "command palette: review denied hosts, add allowlist entries, change settings (TUI)", func(fs *ff.FlagSet) {
-		fs.StringVar(&dbPath, 0, "db", monitordb.DefaultPath(), "monitor database path")
 		fs.BoolVar(&all, 0, "all", "show ignored hosts")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
@@ -36,23 +34,18 @@ func monitorCommand() *ff.Command {
 			fmt.Fprintln(os.Stderr, warn)
 		}
 		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps()}
-		if monitordb.Exists(dbPath) {
-			db, err := monitordb.Open(dbPath)
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-			if opts.Pending, err = monitordb.Pending(db, filter); err != nil {
-				return err
-			}
-			if all {
-				if opts.Ignored, err = monitordb.Ignored(db, filter); err != nil {
-					return err
-				}
-			}
-			opts.DB = db
-			defer watchSessions(filter)()
+		store := monitordb.DefaultStore()
+		var err error
+		if opts.Pending, err = store.Pending(filter); err != nil {
+			return err
 		}
+		if all {
+			if opts.Ignored, err = store.Ignored(filter); err != nil {
+				return err
+			}
+		}
+		opts.DB = store
+		defer watchSessions(filter)()
 		if _, err := tea.NewProgram(crashlog.Guard("hsh monitor", palette.New(opts)), tea.WithAltScreen()).Run(); err != nil {
 			if errors.Is(err, tea.ErrProgramPanic) {
 				return fmt.Errorf("the monitor crashed; details in %s", crashlog.Path())

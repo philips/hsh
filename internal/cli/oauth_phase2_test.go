@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -487,4 +488,8 @@ func TestUnusedLoginHints(t *testing.T) {
 	if hints := unusedLoginHints(cfg, env.store); len(hints) != 0 {
 		t.Fatalf("a session that names no provider gets no hint: %v", hints)
 	}
+}
+
+func refreshWantedPath(sessionDir, secret string) string {
+	return filepath.Join(sessionDir, "proxy", "refresh-wanted", url.PathEscape(secret))
 }

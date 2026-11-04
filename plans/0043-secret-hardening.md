@@ -1,6 +1,8 @@
 # Secret hardening
 
-> **Status: proposal.**
+> **Status: sections 1, 2 and 5 implemented, and section 3 as deny by
+> default with `--trust-image` (see "How it landed"); the interactive
+> review and section 4 (keyring backend) are tracked in TODO.md.**
 
 ## Goal
 
@@ -181,3 +183,79 @@ demand.
   on the first-use prompt?
 - `env://` in user config files: keep it with per-host approval, or
   deprecate it in favour of `hsh secret add`?
+
+### Decisions
+
+- Union the monitors in the readers
+- hsh secret add should take a host or list of hosts. we should also have a hsh secret edit that opens an editor for easier UX with long lists
+- yes, deprecate env:// in user config files and images- too dangerous
+
+## How it landed
+
+### 1. Proxy mounts
+
+- The proxy no longer mounts the state directory. Its host paths are the
+  session directory (ro, `/hsh-session`), its own `proxy/` (rw,
+  `/hsh-proxy-state`), and the gVisor `netstack/` socket directory.
+- Two SQLite databases per session, one writer each:
+  `sessions/<id>/proxy/proxy.db` (the proxy's denials and hold counts) and
+  `sessions/<id>/monitor.db` (the host's approve/ignore decisions, read by
+  the proxy read-only for "ignored"). Both use the rollback journal, not
+  WAL: with one writer there is no need for WAL, and a read-only reader
+  then creates no files (a WAL reader opens `-shm` read-write, which a
+  compromised proxy could symlink to any host file).
+- Readers union `proxy.db` and `monitor.db` across `sessions/*`; session and
+  workspace come from the directory name and the `workspace` file, not
+  from the proxy. SQLite never opens `proxy.db` by name: the host opens it
+  with `O_NOFOLLOW|O_NONBLOCK` (no symlink swap, no FIFO), takes SQLite's
+  shared `fcntl` lock on that descriptor with a short timeout, skips it
+  while an interrupted write's journal is present, reads at most 8 MiB,
+  and loads the bytes into an in-memory database. Hosts are validated.
+  The companion's `refresh-wanted` markers are resolved relative to an
+  `O_NOFOLLOW` directory descriptor. The shared
+  `monitor.db`, `hsh run/resume --monitor-db`, the `--db` flags of
+  `hsh monitor`/`proxy denied`/`proxy allow`, and `hsh-proxy
+  --session/--workspace` are gone.
+- `hsh resume` recreates a stopped proxy container that still has the old
+  `/hsh-state` mount and warns when it is running.
+- Host reads of `proxy/oauth-tokens.json` (`hsh oauth status`, `promote`)
+  use the same untrusted-file reader.
+- Functional step 19b checks the isolation with `podman exec`.
+
+### 2. Host binding
+
+- `secrets.db` schema version 3 adds `hosts` (JSON array). `hsh secret add`
+  requires `--host` (repeatable, comma-separated) for a new secret;
+  `--force` keeps the hosts unless `--host` is given. `hsh secret allow`,
+  `disallow`, and `edit` (`$VISUAL`/`$EDITOR`, one host per line) change
+  them; `secret ls` shows them.
+- `config.ResolveSecrets` injects a static secret only for route hosts its
+  approved hosts cover (exact, or under an approved wildcard) and reports
+  the rest; `hsh run` warns with the config source and the `hsh secret
+  allow` command, and asks in a terminal before resolving.
+- Environment references (`env://`, bare names) are refused at config load
+  everywhere: labels, `--config` files, and session configs (resume names
+  the file to change).
+
+### 5. Smaller items
+
+- The inline status line turns red with `login NAME failed: ...` while a
+  login in the session's `secrets.json` is marked failed.
+- Successful responses of up to 1 MiB from any path on a provider's token
+  host are scanned for token-like fields (`Accept-Encoding` narrowed to
+  gzip so the body can be decoded); a hit is a 502.
+- Functional step 9b ends by searching proxy, companion, and hsh logs for
+  the fake providers' real tokens.
+
+### 3. Image trust (deny by default)
+
+- An image's built-in config (its label) is untrusted until
+  `hsh run --trust-image IMAGE` records the image id in
+  `$XDG_CONFIG_HOME/hsh/trusted-images`. Until then its
+  `network.allow`, `network.mode` (forced to `allowlist`), OAuth providers,
+  and mounts are dropped with a warning; secret routes, the agent argv, and
+  other in-sandbox settings apply. `localhost/` images and `--config` files
+  are exempt. This breaks the shipped images until they are trusted once,
+  which is accepted.
+- Mounts were added to the list: an image could otherwise mount any host
+  path into the sandbox.

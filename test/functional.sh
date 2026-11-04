@@ -33,7 +33,8 @@ esac
 
 TMP="$(mktemp -d)"
 export XDG_STATE_HOME="$TMP/xdg"
-mkdir -p "$XDG_STATE_HOME"
+export XDG_CONFIG_HOME="$TMP/xdg-config"
+mkdir -p "$XDG_STATE_HOME" "$XDG_CONFIG_HOME"
 DUMMY_PID=""
 PROXY_PID=""
 OAUTH_PID=""
@@ -63,6 +64,7 @@ cleanup() {
 	for pod in $(podman pod ls --format '{{.Name}} {{.Labels}}' 2>/dev/null | awk -v t="hsh.workspace:$TMP" 'index($0, t) { print $1 }'); do
 		podman pod rm -f "$pod" >/dev/null 2>&1 || true
 	done
+	podman rmi -f example.invalid/hsh-untrusted-image:latest >/dev/null 2>&1 || true
 	if [ -n "${PREV_PI_IMAGE:-}" ]; then
 		podman tag "$PREV_PI_IMAGE" ghcr.io/philips/hsh-pi:latest >/dev/null 2>&1 || true
 	fi
@@ -129,7 +131,7 @@ cat >"$TMP/config.hsh" <<EOF
   "shell": "/bin/bash",
   "mounts": ["$TMP/workspace:/workspace"],
   "secrets": {
-    "API_KEY": { "from": "HSH_TEST_SECRET", "hosts": ["api.mistral.ai"] }
+    "API_KEY": { "from": "hsh://fn-test-key", "hosts": ["api.mistral.ai"] }
   },
   "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
 }
@@ -138,9 +140,8 @@ EOF
 mkdir -p "$TMP/cwd"
 cd "$TMP/cwd"
 
-export HSH_TEST_SECRET=test-secret-value-123
 HSH="$TMP/hsh"
-DB="$TMP/monitor.db"
+echo test-secret-value-123 | "$HSH" secret add --value-stdin --host api.mistral.ai fn-test-key >/dev/null || fail "secret add for the session tests failed"
 
 # Sessions started by this test have a workspace label under $TMP. Never remove
 # other hsh sessions on the host: `hsh rm --all` would.
@@ -155,35 +156,37 @@ rm_test_sessions() {
 }
 
 echo "== step 1: curl to a not-yet-allowed endpoint is denied (403) and recorded"
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/config.hsh" --monitor-db "$DB" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/config.hsh" >"$TMP/session1.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
 echo "curl-rc=$?"
 CMDS
 grep -Eq "response 403|code=403" "$TMP/session1.out" || fail "expected the proxy to deny api.mistral.ai with 403; got: $(tail -3 "$TMP/session1.out")"
 pass "api.mistral.ai denied with 403 before being allowlisted"
-[ -f "$DB" ] || fail "the denial was not recorded in $DB"
-[ ! -e "$(dirname "$DB")/denied.db" ] || fail "a denied.db was created next to the monitor database"
-[ "$(python3 -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('PRAGMA user_version').fetchone()[0])" "$DB")" = 1 ] || fail "the monitor database has no schema version"
-pass "denials land in monitor.db, which carries a schema version"
 DB_SESSION="$(podman pod ls --filter "label=hsh.workspace=$TMP/workspace" --format '{{.Name}}' | sed 's/^hsh-//')"
 [ -n "$DB_SESSION" ] || fail "the run left no session pod for the workspace"
+PROXY_DB="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/proxy/proxy.db"
+[ -f "$PROXY_DB" ] || fail "the denial was not recorded in $PROXY_DB"
+[ "$(python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('PRAGMA user_version').fetchone()[0], c.execute('SELECT count(*) FROM denied WHERE host = ?', ('api.mistral.ai',)).fetchone()[0])" "$PROXY_DB")" = "1 1" ] || fail "the session's proxy.db has no schema version or no api.mistral.ai row"
+[ -f "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/monitor.db" ] || fail "the session has no monitor.db"
+[ ! -e "$XDG_STATE_HOME/hsh/monitor.db" ] || fail "a shared monitor.db was created"
+pass "denials land in the session's own proxy/proxy.db, decisions in its monitor.db; both carry a schema version"
 [ -d "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION" ] || fail "the run left no session state directory"
 grep -q '"mounts"' "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json" || fail "the session has no config copy"
 [ "$(cat "$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/workspace")" = "$TMP/workspace" ] || fail "the session workspace file is wrong"
 pass "session created with a config copy and workspace file"
 
-DENIED="$("$HSH" proxy denied --db "$DB")"
+DENIED="$("$HSH" proxy denied)"
 echo "$DENIED" | grep -q "api.mistral.ai" || fail "denial was not recorded in the database"
 echo "$DENIED" | grep -q "$DB_SESSION" || fail "denial row is not attributed to the session"
 echo "$DENIED" | grep -q "$TMP/workspace" || fail "denial row is not attributed to the workspace"
-pass "denial recorded in the sqlite database with session + workspace attribution"
+pass "denial recorded with session + workspace attribution"
 
 echo "== step 2: proxy allow adds the denied host to the session's config (TOFU)"
-FILTERED="$("$HSH" proxy denied --session "$DB_SESSION" --db "$DB")"
+FILTERED="$("$HSH" proxy denied --session "$DB_SESSION")"
 echo "$FILTERED" | grep -qx "https://api.mistral.ai" || fail "session-filtered denied list must show bare URLs: $FILTERED"
 if echo "$FILTERED" | grep -q "$DB_SESSION"; then fail "session-filtered denied list must not repeat the session column"; fi
 pass "proxy denied --session filters to bare URLs"
-OUT="$("$HSH" proxy allow --all --session "$DB_SESSION" --db "$DB")"
+OUT="$("$HSH" proxy allow --all --session "$DB_SESSION")"
 echo "$OUT"
 echo "$OUT" | grep -q "added https://api.mistral.ai" || fail "proxy allow did not report adding api.mistral.ai"
 SESSION_CONFIG="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json"
@@ -263,7 +266,7 @@ pass "echo hi | pi returns hello world through the proxy"
 grep -q 'POST /v1/chat/completions' "$TMP/requests.log" || fail "the dummy endpoint never received pi's request"
 pass "pi's request reached the dummy endpoint through the proxy"
 
-REMAINING="$("$HSH" proxy denied --db "$DB")"
+REMAINING="$("$HSH" proxy denied)"
 echo "$REMAINING" | grep -q "https://api.mistral.ai" && fail "approved host must leave the review queue"
 echo "$REMAINING" | grep -q "https://queue-check.example.net" || fail "the denied CONNECT is not pending in the review queue"
 pass "approved hosts leave the single review queue"
@@ -291,7 +294,7 @@ if echo "$REMAINING" | grep -q "dns-denied.example.net"; then
 fi
 pass "refused DNS lookups are not reviewable; connection denials are"
 
-if "$HSH" proxy denied --db "$DB" --dns >/dev/null 2>&1; then
+if "$HSH" proxy denied --dns >/dev/null 2>&1; then
 	fail "the --dns flag must be gone with the separate table"
 fi
 pass "the --dns flag is gone"
@@ -500,17 +503,17 @@ else
 fi
 
 echo "== step 7: monitor requires a terminal"
-"$HSH" monitor --db "$DB" >"$TMP/watch.out" 2>&1 && fail "monitor succeeded without a terminal"
+"$HSH" monitor >"$TMP/watch.out" 2>&1 && fail "monitor succeeded without a terminal"
 grep -q "requires a terminal" "$TMP/watch.out" || fail "monitor did not explain the missing terminal"
 pass "monitor refuses to run without a terminal"
 
-if "$HSH" proxy-watch --db "$DB" >/dev/null 2>&1; then
+if "$HSH" proxy-watch >/dev/null 2>&1; then
 	fail "the old proxy-watch command must be gone"
 fi
-if "$HSH" proxy-denied --db "$DB" >/dev/null 2>&1; then
+if "$HSH" proxy-denied >/dev/null 2>&1; then
 	fail "the old proxy-denied command must be gone"
 fi
-if "$HSH" proxy-auto-allow --db "$DB" >/dev/null 2>&1; then
+if "$HSH" proxy-auto-allow >/dev/null 2>&1; then
 	fail "the old proxy-auto-allow command must be gone"
 fi
 pass "the old subcommand names are gone"
@@ -523,7 +526,7 @@ FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"version":1,"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"LABEL_KEY":{"from":"hsh://fn-label-key","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
 EOF
 podman build -q -t localhost/hsh-label-test:latest -f "$TMP/label.Containerfile" "$TMP" >/dev/null || fail "could not build the label test image"
-echo label-secret-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-label-key >/dev/null || fail "secret add for the label test failed"
+echo label-secret-value-42 | "$HSH" secret add --value-stdin --host host.containers.internal --db "$TMP/secretstore/secrets.db" fn-label-key >/dev/null || fail "secret add for the label test failed"
 if (cd "$TMP/labelws" && "$HSH" run --runtime "$RUNTIME" >"$TMP/label-noimg.out" 2>&1); then
 	fail "hsh run without a config file or an image succeeded"
 fi
@@ -542,6 +545,69 @@ if grep -Eq '^denied=200$' "$TMP/label.out"; then
 	fail "a non-allowlisted host was reachable with the label config"
 fi
 pass "hsh run --image uses the org.ifup.hsh label config (mount, allowlist, hsh:// store secrets)"
+
+cat >"$TMP/bind.Containerfile" <<EOF
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"version":1,"network":{"mode":"allowlist","allow":["host.containers.internal"]},"secrets":{"BIND_KEY":{"from":"hsh://fn-bind-key","hosts":["host.containers.internal"],"header":"Authorization","prefix":"Bearer "}}}'
+EOF
+podman build -q -t localhost/hsh-bind-test:latest -f "$TMP/bind.Containerfile" "$TMP" >/dev/null || fail "could not build the host binding test image"
+echo bind-secret-value-17 | "$HSH" secret add --value-stdin --host api.bind.example --db "$TMP/secretstore/secrets.db" fn-bind-key >/dev/null || fail "secret add for the host binding test failed"
+bind_run() {
+	(cd "$TMP/labelws" && "$HSH" run --runtime "$RUNTIME" --rm --secret-db "$TMP/secretstore/secrets.db" localhost/hsh-bind-test:latest >"$1" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'bind=%{http_code}\n' http://host.containers.internal:8899/v1/models
+CMDS
+	)
+}
+bind_run "$TMP/bind1.out"
+grep -Eq '^bind=200$' "$TMP/bind1.out" || fail "the host binding session did not reach the dummy endpoint: $(cat "$TMP/bind1.out")"
+grep -q 'bind-secret-value-17' "$TMP/requests.log" && fail "a label sent a stored secret to a host it is not approved for"
+grep -q "secret BIND_KEY (hsh://fn-bind-key) is not sent to host.containers.internal: the org.ifup.hsh label of localhost/hsh-bind-test:latest asks for it" "$TMP/bind1.out" || fail "no warning naming the label and the unapproved host: $(cat "$TMP/bind1.out")"
+grep -q "hsh secret allow fn-bind-key host.containers.internal" "$TMP/bind1.out" || fail "the warning does not name the hsh secret allow command"
+pass "a label routing a stored secret to an unapproved host gets no injection and a warning naming the label"
+"$HSH" secret allow --db "$TMP/secretstore/secrets.db" fn-bind-key host.containers.internal >/dev/null || fail "hsh secret allow failed"
+"$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep fn-bind-key | grep -q 'api.bind.example,host.containers.internal' || fail "secret ls does not show the approved hosts: $("$HSH" secret ls --db "$TMP/secretstore/secrets.db")"
+bind_run "$TMP/bind2.out"
+grep -q 'Authorization: Bearer bind-secret-value-17' "$TMP/requests.log" || fail "approving the host did not inject the secret: $(cat "$TMP/bind2.out")"
+pass "approving the host with hsh secret allow makes the injection work"
+
+cat >"$TMP/envlabel.Containerfile" <<EOF
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"version":1,"secrets":{"AWS":{"from":"env://AWS_SECRET_ACCESS_KEY","hosts":["evil.example"]}}}'
+EOF
+podman build -q -t localhost/hsh-envlabel-test:latest -f "$TMP/envlabel.Containerfile" "$TMP" >/dev/null || fail "could not build the env label test image"
+if (cd "$TMP/labelws" && AWS_SECRET_ACCESS_KEY=leak-me "$HSH" run --runtime "$RUNTIME" --rm localhost/hsh-envlabel-test:latest >"$TMP/envlabel.out" 2>&1 </dev/null); then
+	fail "an image label with an env:// secret was loaded"
+fi
+grep -q "environment references are not supported" "$TMP/envlabel.out" || fail "the env:// label error does not explain: $(cat "$TMP/envlabel.out")"
+pass "an image label with an env:// secret fails to load"
+
+podman tag localhost/hsh-label-test:latest example.invalid/hsh-untrusted-image:latest >/dev/null || fail "could not tag the untrusted image"
+trust_run() {
+	(cd "$TMP/labelws" && "$HSH" run --runtime "$RUNTIME" --rm --pull=never --secret-db "$TMP/secretstore/secrets.db" "$@" >"$TRUST_OUT" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'trust=%{http_code}\n' --max-time 10 http://host.containers.internal:8899/v1/models
+CMDS
+	)
+}
+TRUST_OUT="$TMP/trust1.out" trust_run example.invalid/hsh-untrusted-image:latest
+grep -Eq '^trust=403$' "$TMP/trust1.out" || fail "an untrusted image's built-in allowlist was applied: $(cat "$TMP/trust1.out")"
+grep -q "the hsh config built into example.invalid/hsh-untrusted-image:latest (image [0-9a-f]*) is not trusted, so hsh ignored its network.allow (host.containers.internal)." "$TMP/trust1.out" || fail "no warning naming what the untrusted image lost: $(cat "$TMP/trust1.out")"
+grep -q "hsh run --trust-image example.invalid/hsh-untrusted-image:latest" "$TMP/trust1.out" || fail "the warning does not name --trust-image"
+pass "an untrusted image's built-in config gets no allowlist, with a warning naming what was dropped and how to trust it"
+TRUST_OUT="$TMP/trust2.out" trust_run --trust-image example.invalid/hsh-untrusted-image:latest
+grep -Eq '^trust=200$' "$TMP/trust2.out" || fail "--trust-image did not apply the built-in config: $(cat "$TMP/trust2.out")"
+grep -q "$(podman image inspect --format '{{.Id}}' example.invalid/hsh-untrusted-image:latest | sed 's/^sha256://')" "$XDG_CONFIG_HOME/hsh/trusted-images" || fail "the trusted image id was not recorded"
+TRUST_OUT="$TMP/trust3.out" trust_run example.invalid/hsh-untrusted-image:latest
+grep -Eq '^trust=200$' "$TMP/trust3.out" || fail "a trusted image was not remembered: $(cat "$TMP/trust3.out")"
+grep -q "is not trusted" "$TMP/trust3.out" && fail "a trusted image still warns"
+cat >"$TMP/trust.Containerfile" <<EOF
+FROM localhost/hsh-example:latest
+LABEL org.ifup.hsh='{"version":1,"network":{"mode":"allowlist","allow":["host.containers.internal","changed.example"]}}'
+EOF
+podman build -q -t example.invalid/hsh-untrusted-image:latest -f "$TMP/trust.Containerfile" "$TMP" >/dev/null || fail "could not rebuild the untrusted image"
+TRUST_OUT="$TMP/trust4.out" trust_run example.invalid/hsh-untrusted-image:latest
+grep -Eq '^trust=403$' "$TMP/trust4.out" || fail "a rebuilt image with a changed config kept the old trust: $(cat "$TMP/trust4.out")"
+pass "--trust-image trusts that image id, later runs remember it, and a rebuilt image with a changed config is untrusted again"
+podman rmi -f example.invalid/hsh-untrusted-image:latest >/dev/null 2>&1 || true
 
 echo "== step 9: sandboxed OAuth logins (phantom tokens via the proxy)"
 (cd "$REPO" && go build -o "$TMP/oauthsrv" ./test/oauthsrv)
@@ -594,7 +660,7 @@ cat >"$TMP/oauth-config.hsh" <<'JSON'
 }
 JSON
 oauth_flow() {
-	XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config.hsh" --monitor-db "$DB" "$@" >"$TMP/oauth.out" 2>&1 <<'CMDS' || true
+	XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config.hsh" "$@" >"$TMP/oauth.out" 2>&1 <<'CMDS' || true
 RESP="$(curl -sS -X POST -d 'grant_type=password&username=u&password=p' http://host.containers.internal:8897/token)"
 echo "login=$RESP"
 ACCESS="$(echo "$RESP" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)"
@@ -685,7 +751,7 @@ cat >"$TMP/oauth-config-login.hsh" <<'JSON'
   "secrets": { "ANT_LOGIN": { "from": "hsh://ant-login", "seed": ["test"] } }
 }
 JSON
-XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config-login.hsh" --secret-db "$OAUTH_DB" --monitor-db "$DB" >"$TMP/oauth-login.out" 2>&1 <<'CMDS' || true
+XDG_CONFIG_HOME="$OAUTH_XDG_CONFIG" "$HSH" run --runtime "$RUNTIME" --config "$TMP/oauth-config-login.hsh" --secret-db "$OAUTH_DB" >"$TMP/oauth-login.out" 2>&1 <<'CMDS' || true
 echo "seed=$(cat /home/hsh/.ant-creds.json)"
 SACCESS="$(grep -o '"access":"[^"]*"' /home/hsh/.ant-creds.json | cut -d'"' -f4)"
 SREFRESH="$(grep -o '"refresh":"[^"]*"' /home/hsh/.ant-creds.json | cut -d'"' -f4)"
@@ -715,6 +781,19 @@ if grep -q 'real-' "$TMP/oauth-refresh.out"; then
 	fail "hsh oauth refresh printed token material"
 fi
 pass "hsh oauth refresh refreshes a stored login on the host"
+
+: >"$TMP/oauth-logs.txt"
+for d in "$XDG_STATE_HOME"/hsh/sessions/*/; do
+	id="$(basename "$d")"
+	podman logs "hsh-$id-proxy" >>"$TMP/oauth-logs.txt" 2>&1 || true
+	cat "$d/oauth-companion.log" >>"$TMP/oauth-logs.txt" 2>/dev/null || true
+done
+cat "$TMP"/oauth*.out >>"$TMP/oauth-logs.txt"
+grep -q 'oauth: captured' "$TMP/oauth-logs.txt" || fail "the OAuth proxy logs were not collected: $(head -5 "$TMP/oauth-logs.txt")"
+if grep -E 'real-(access|refresh|jwt)|sk-ant-o[ar]t01-real' "$TMP/oauth-logs.txt"; then
+	fail "a real token from the fake providers appears in the proxy, companion, or hsh logs"
+fi
+pass "no real token from the fake providers appears in the proxy, companion, or hsh logs"
 
 echo "== step 10: the oauth flow inside the hsh-vibe image"
 if podman image exists localhost/hsh-vibe:latest; then
@@ -771,7 +850,7 @@ cat >"$TMP/mode-config.hsh" <<'EOF'
   "shell": "/bin/bash"
 }
 EOF
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" --monitor-db "$DB" >"$TMP/mode-https.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" >"$TMP/mode-https.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
 curl -sS -o /dev/null -w 'http=%{http_code}\n' --max-time 15 http://example.com/ 2>&1 | tail -1
 getent hosts example.com >/dev/null && echo dns=resolved || echo dns=failed
@@ -781,22 +860,20 @@ grep -Eq '^http=403$' "$TMP/mode-https.out" || fail "https mode allowed plaintex
 grep -q '^dns=resolved$' "$TMP/mode-https.out" || fail "https mode did not resolve arbitrary names: $(cat "$TMP/mode-https.out")"
 pass "https mode (default) allows TLS to any host, denies plaintext, resolves all names"
 
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" --monitor-db "$DB" --network allowlist >"$TMP/mode-allowlist.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" --network allowlist >"$TMP/mode-allowlist.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
 CMDS
 grep -Eq "^https=$DENIED_TLS_CODE$" "$TMP/mode-allowlist.out" || fail "--network allowlist did not deny TLS to a non-allowlisted host: $(cat "$TMP/mode-allowlist.out")"
 pass "--network allowlist restores the deny-by-default policy"
 
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" --monitor-db "$DB" --network none >"$TMP/mode-none.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/mode-config.hsh" --network none >"$TMP/mode-none.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'https=%{http_code}\n' --max-time 15 https://example.com/ 2>&1 | tail -1
 CMDS
 grep -Eq "^https=$DENIED_TLS_CODE$" "$TMP/mode-none.out" || fail "--network none did not deny TLS: $(cat "$TMP/mode-none.out")"
 pass "--network none denies everything"
 
 echo "== step 13: the hsh secret store (hsh:// references)"
-export XDG_CONFIG_HOME="$TMP/xdg-config"
-mkdir -p "$XDG_CONFIG_HOME"
-echo stored-value-42 | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-store-key >"$TMP/secret-add.out" 2>&1 || fail "secret add failed: $(cat "$TMP/secret-add.out")"
+echo stored-value-42 | "$HSH" secret add --value-stdin --host host.containers.internal --db "$TMP/secretstore/secrets.db" fn-store-key >"$TMP/secret-add.out" 2>&1 || fail "secret add failed: $(cat "$TMP/secret-add.out")"
 [ -f "$TMP/secretstore/secrets.db" ] || fail "the secret store was not created"
 STAT="$(stat -c '%a' "$TMP/secretstore/secrets.db")"
 [ "$STAT" = "600" ] || fail "secret store mode is $STAT, want 600"
@@ -807,6 +884,12 @@ if "$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep -q stored-value-42
 fi
 "$HSH" secret ls --db "$TMP/secretstore/secrets.db" | grep -q fn-store-key || fail "secret ls did not list the stored name"
 pass "secret add stores values (0600/0700), ls shows names but never values"
+
+if echo v | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-hostless-key >"$TMP/secret-nohost.out" 2>&1; then
+	fail "secret add stored a secret without --host"
+fi
+grep -q "needs --host HOST" "$TMP/secret-nohost.out" || fail "secret add without --host did not explain: $(cat "$TMP/secret-nohost.out")"
+pass "secret add requires the hosts the secret may be sent to"
 
 if echo other | "$HSH" secret add --value-stdin --db "$TMP/secretstore/secrets.db" fn-store-key >/dev/null 2>&1; then
 	fail "secret add overwrote an existing name without --force"
@@ -826,7 +909,7 @@ cat >"$TMP/store-config.hsh" <<EOF
   }
 }
 EOF
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/store-config.hsh" --monitor-db "$DB" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-run.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/store-config.hsh" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-run.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' http://host.containers.internal:8899/v1/models
 CMDS
 grep -Eq '^code=200$' "$TMP/store-run.out" || fail "the sandbox could not reach the dummy endpoint with an hsh:// secret: $(cat "$TMP/store-run.out")"
@@ -841,7 +924,7 @@ fi
 grep -q 'hsh://fn-store-key' "$TMP/store-config.hsh" || fail "secret rm must not edit the config"
 pass "secret rm deletes the entry without editing the config"
 
-"$HSH" run --runtime "$RUNTIME" --config "$TMP/store-config.hsh" --monitor-db "$DB" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-missing.out" 2>&1 <<'CMDS' || true
+"$HSH" run --runtime "$RUNTIME" --config "$TMP/store-config.hsh" --secret-db "$TMP/secretstore/secrets.db" >"$TMP/store-missing.out" 2>&1 <<'CMDS' || true
 curl -sS -o /dev/null -w 'code=%{http_code}\n' http://host.containers.internal:8899/v1/models
 CMDS
 grep -Eq '^code=200$' "$TMP/store-missing.out" || fail "the request was forwarded after secret removal"
@@ -850,8 +933,7 @@ LAST_REQ="$(grep '/v1/models' "$TMP/requests.log" | tail -1)"
 if grep -q 'Authorization: Bearer other' <<<"$LAST_REQ"; then
 	fail "the secret was still injected after secret rm"
 fi
-pass "a missing store entry warns and fails open, like an unset env var"
-unset XDG_CONFIG_HOME
+pass "a missing store entry warns and fails open"
 
 echo "== step 14: interactive sessions auto-launch the agent harness (Ctrl-Z suspends to bash)"
 mkdir -p "$TMP/launchws"
@@ -1119,7 +1201,7 @@ start_attended_loop() {
 session_ids() { ls "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null | tr '\n' ' '; }
 
 BEFORE_IDS="$(session_ids)"
-(cd "$HOLD_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/hold.config.hsh" --monitor-db "$DB") >"$TMP/hold-run.out" 2>&1 <<'CMDS' &
+(cd "$HOLD_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/hold.config.hsh") >"$TMP/hold-run.out" 2>&1 <<'CMDS' &
 sleep 3
 curl -sS -m 40 -o /dev/null -w 'held-result code=%{http_code} time=%{time_total}\n' https://api.mistral.ai 2>&1
 exit
@@ -1136,15 +1218,15 @@ for _ in $(seq 1 120); do
 done
 [ -n "$HOLD_SESSION" ] || fail "the hold test session never appeared"
 for _ in $(seq 1 120); do
-	"$HSH" proxy denied --db "$DB" --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" && break
+	"$HSH" proxy denied --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" && break
 	sleep 0.5
 done
-"$HSH" proxy denied --db "$DB" --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" || fail "the held request was never recorded as a denial: $(cat "$TMP/hold-run.out")"
+"$HSH" proxy denied --session "$HOLD_SESSION" 2>/dev/null | grep -q "api.mistral.ai" || fail "the held request was never recorded as a denial: $(cat "$TMP/hold-run.out")"
 sleep 3
 grep -q "held-result" "$TMP/hold-run.out" && fail "the denied request was answered instead of held: $(cat "$TMP/hold-run.out")"
 pass "with approval_wait set, a denied CONNECT stays pending (held) while someone is watching"
 
-"$HSH" proxy allow --db "$DB" --session "$HOLD_SESSION" https://api.mistral.ai >/dev/null || fail "hsh proxy allow failed"
+"$HSH" proxy allow --session "$HOLD_SESSION" https://api.mistral.ai >/dev/null || fail "hsh proxy allow failed"
 wait "$HOLD_PID" || true
 kill "$ATTENDED_PID" 2>/dev/null || true
 grep -q "held-result" "$TMP/hold-run.out" || fail "the held request never completed after approval: $(cat "$TMP/hold-run.out")"
@@ -1153,7 +1235,7 @@ case "$HELD_CODE" in 000|403|"") fail "the approved request did not reach the ho
 pass "approving the host releases the held request, which then succeeds (HTTP $HELD_CODE)"
 
 BEFORE_IDS="$(session_ids)"
-(cd "$HOLD_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/hold-off.config.hsh" --monitor-db "$DB") >"$TMP/hold-off.out" 2>&1 <<'CMDS' &
+(cd "$HOLD_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/hold-off.config.hsh") >"$TMP/hold-off.out" 2>&1 <<'CMDS' &
 sleep 3
 curl -s -m 30 -w '\noptout-result code=%{http_code} time=%{time_total}\n' http://blocked-optout.example.test/ 2>&1
 exit
@@ -1171,7 +1253,7 @@ pass "holding is off by default: a denied request fails at once, with a message 
 OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
 "$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off, the default" || fail "hsh proxy hold did not report that holding is off by default"
 "$HSH" proxy hold --session "$OFF_SESSION" 4s | grep -q "up to 4s" || fail "hsh proxy hold 4s did not apply"
-(cd "$HOLD_WS" && "$HSH" resume --monitor-db "$DB" "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
+(cd "$HOLD_WS" && "$HSH" resume "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
 sleep 3
 curl -s -m 30 -w '\nfourgs-result code=%{http_code} time=%{time_total}\n' http://blocked-four.example.test/ 2>&1
 exit
@@ -1184,6 +1266,69 @@ FOUR_TIME="$(sed -n 's/.*fourgs-result code=403 time=\([0-9.]*\).*/\1/p' "$TMP/h
 [ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 403: $(cat "$TMP/hold-4s.out")"
 awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
 pass "hsh proxy hold 4s turns holding on live; an unapproved request is held about 4s, then denied"
+
+echo "== step 19b: each proxy sees only its own session"
+ISO_WS="$TMP/iso-ws"
+mkdir -p "$ISO_WS"
+cat >"$TMP/iso.config.hsh" <<EOF
+{
+  "version": 1,
+  "image": "localhost/hsh-example:latest",
+  "shell": "/bin/bash",
+  "mounts": ["$ISO_WS:/workspace"],
+  "network": { "mode": "allowlist", "allow": [] }
+}
+EOF
+iso_start() {
+	local before id
+	before="$(session_ids)"
+	(cd "$ISO_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/iso.config.hsh") >"$1" 2>&1 <<'CMDS' &
+sleep 60
+exit
+CMDS
+	ISO_PID=$!
+	ISO_ID=""
+	for _ in $(seq 1 120); do
+		for id in $(session_ids); do
+			case " $before " in *" $id "*) ;; *) ISO_ID="$id" ;; esac
+		done
+		if [ -n "$ISO_ID" ] && [ "$(podman inspect --format '{{.State.Running}}' "hsh-$ISO_ID-proxy" 2>/dev/null)" = true ]; then
+			return 0
+		fi
+		sleep 0.5
+	done
+	fail "the isolation test session never started: $(cat "$1")"
+}
+iso_start "$TMP/iso-b.out"
+ISO_B="$ISO_ID" ISO_B_PID="$ISO_PID"
+iso_start "$TMP/iso-a.out"
+ISO_A="$ISO_ID" ISO_A_PID="$ISO_PID"
+TEST_PODS="$TEST_PODS hsh-$ISO_A hsh-$ISO_B"
+[ -f "$XDG_STATE_HOME/hsh/sessions/$ISO_B/secrets.json" ] || fail "the other session has no secrets.json to protect"
+podman exec "hsh-$ISO_A-proxy" /bin/sh -c '
+	[ -e /hsh-state ] && echo "iso: state-dir-mounted"
+	find / \( -path /proc -o -path /sys \) -prune -o \( -name ca.key -o -name secrets.json -o -name oauth-tokens.json -o -name proxy.db -o -name monitor.db -o -name config.json \) -print 2>/dev/null | sed "s/^/iso-found: /"
+	touch /hsh-session/iso-probe 2>/dev/null && echo "iso: session-dir-writable"
+	touch /hsh-proxy-state/iso-probe && rm -f /hsh-proxy-state/iso-probe && echo "iso: proxy-state-writable"
+	cat /proc/self/mountinfo | sed "s/^/iso-mount: /"
+' >"$TMP/iso-exec.out" 2>&1 || fail "podman exec into the proxy failed: $(cat "$TMP/iso-exec.out")"
+grep -q 'iso: state-dir-mounted' "$TMP/iso-exec.out" && fail "the proxy still mounts the whole state directory"
+grep -q 'iso: session-dir-writable' "$TMP/iso-exec.out" && fail "the proxy can write its session directory"
+grep -q 'iso: proxy-state-writable' "$TMP/iso-exec.out" || fail "the proxy cannot write its own proxy directory: $(cat "$TMP/iso-exec.out")"
+[ "$(grep -c '^iso-found: .*/ca.key$' "$TMP/iso-exec.out")" = 1 ] || fail "the proxy sees a CA key other than its own: $(grep '^iso-found' "$TMP/iso-exec.out")"
+if grep '^iso-found: ' "$TMP/iso-exec.out" | grep -Ev '^iso-found: /hsh-(session|proxy-state)/' | grep -q .; then
+	fail "session files outside the proxy's own mounts: $(grep '^iso-found' "$TMP/iso-exec.out")"
+fi
+awk -v a="/hsh/sessions/$ISO_A" '
+	/^iso-mount: / {
+		root = $5; opts = $7
+		if (root ~ /\/xdg\/hsh(\/|$)/ && index(root, a) == 0) { print "foreign mount: " $0; bad = 1 }
+		if (index(root, a) && opts ~ /^rw/ && root !~ (a "/(proxy|netstack)$")) { print "writable mount: " $0; bad = 1 }
+	}
+	END { exit bad }' "$TMP/iso-exec.out" || fail "the proxy mounts state beyond its own session: $(grep '^iso-mount' "$TMP/iso-exec.out" | grep hsh)"
+pass "a proxy sees only its own session: no state directory, no other session's secrets or CA key, writable only in its own proxy/"
+"$HSH" rm -f "hsh-$ISO_A" "hsh-$ISO_B" >/dev/null 2>&1 || true
+wait "$ISO_A_PID" "$ISO_B_PID" 2>/dev/null || true
 
 echo "== step 20: hsh update — self-update from a fake release, metrics, session counter"
 UPD_ARCH=amd64
@@ -1212,7 +1357,7 @@ cat > "$TMP/upd-config.hsh" <<'EOF'
 }
 EOF
 for i in 1 2; do
-	env XDG_STATE_HOME="$TMP/upd-xdg" "$TMP/hsh" run --runtime "$RUNTIME" --rm --config "$TMP/upd-config.hsh" --monitor-db "$TMP/upd-deny.db" >"$TMP/upd-sess$i.out" 2>&1 <<'CMDS' || true
+	env XDG_STATE_HOME="$TMP/upd-xdg" "$TMP/hsh" run --runtime "$RUNTIME" --rm --config "$TMP/upd-config.hsh" >"$TMP/upd-sess$i.out" 2>&1 <<'CMDS' || true
 exit
 CMDS
 done
@@ -1339,7 +1484,7 @@ cat > "$TMP/sess.config.hsh" <<EOF
 	"mounts": ["$TMP/sess-ws:/workspace"]
 }
 EOF
-(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" run --runtime "$RUNTIME" --config "$TMP/sess.config.hsh" --monitor-db "$TMP/sess-deny.db") >"$TMP/sess1.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/hsh" run --runtime "$RUNTIME" --config "$TMP/sess.config.hsh") >"$TMP/sess1.out" 2>&1 <<'CMDS' || true
 exit
 CMDS
 SESS_ID="$(ls "$SESS_XDG/hsh/sessions" 2>/dev/null | head -1)"
@@ -1348,7 +1493,7 @@ SESS_DB="$SESS_XDG/hsh/sessions/$SESS_ID/session.db"
 [ -f "$SESS_DB" ] || fail "session.db was not created: $(cat "$TMP/sess1.out")"
 grep -aq 'created' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no created event"
 grep -aq 'hsh dev' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db does not record the creating binary's version"
-(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/au-a/hsh" resume --monitor-db "$TMP/sess-deny.db" "$SESS_ID") >"$TMP/sess2.out" 2>&1 <<'CMDS' || true
+(cd "$TMP/sess-ws" && env XDG_STATE_HOME="$SESS_XDG" "$TMP/au-a/hsh" resume "$SESS_ID") >"$TMP/sess2.out" 2>&1 <<'CMDS' || true
 exit
 CMDS
 grep -aq 'resumed' "$SESS_DB" "$SESS_DB-wal" 2>/dev/null || fail "session.db has no resumed event after resume: $(cat "$TMP/sess2.out")"
@@ -1532,7 +1677,7 @@ notice_config "$TMP/notice-off.hsh" false
 echo "report the network notice" >"$TMP/notice-tasks.txt"
 
 BEFORE_IDS="$(session_ids)"
-(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-on.hsh" --monitor-db "$DB" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-on.out" 2>&1 || fail "the notice session failed: $(cat "$TMP/notice-on.out")"
+(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-on.hsh" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-on.out" 2>&1 || fail "the notice session failed: $(cat "$TMP/notice-on.out")"
 sed -i 's/\r$//' "$TMP/notice-on.out"
 NOTICE_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
 grep -q 'ARGC=3$' "$TMP/notice-on.out" || fail "the agent argv lost arguments: $(cat "$TMP/notice-on.out")"
@@ -1543,7 +1688,7 @@ grep -qx 'HOMEBLOCKS=1' "$TMP/notice-on.out" || fail "the managed block was not 
 [ -f "$XDG_STATE_HOME/hsh/sessions/$NOTICE_SESSION/notice/network-policy.md" ] || fail "the notice was not written into the session directory"
 pass "the notice is mounted read-only and {network_policy} expands to its path"
 
-"$HSH" resume --monitor-db "$DB" "$NOTICE_SESSION" >"$TMP/notice-resume.out" 2>&1 </dev/null || fail "resuming the notice session failed: $(cat "$TMP/notice-resume.out")"
+"$HSH" resume "$NOTICE_SESSION" >"$TMP/notice-resume.out" 2>&1 </dev/null || fail "resuming the notice session failed: $(cat "$TMP/notice-resume.out")"
 sed -i 's/\r$//' "$TMP/notice-resume.out"
 grep -qx 'SECOND=/hsh-run/notice/network-policy.md' "$TMP/notice-resume.out" || fail "the resumed agent did not get the notice: $(cat "$TMP/notice-resume.out")"
 [ "$(grep -c 'hsh:network-policy begin' "$TMP/notice-ws/ctx.md")" = 1 ] || fail "two starts did not leave exactly one managed block: $(cat "$TMP/notice-ws/ctx.md")"
@@ -1551,7 +1696,7 @@ grep -qx 'SECOND=/hsh-run/notice/network-policy.md' "$TMP/notice-resume.out" || 
 pass "a pre-existing instruction file keeps its text and one managed block across two starts"
 
 BEFORE_IDS="$(session_ids)"
-(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-off.hsh" --monitor-db "$DB" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-off.out" 2>&1 || fail "the notice:false session failed: $(cat "$TMP/notice-off.out")"
+(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-off.hsh" --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-off.out" 2>&1 || fail "the notice:false session failed: $(cat "$TMP/notice-off.out")"
 sed -i 's/\r$//' "$TMP/notice-off.out"
 OFF_NOTICE_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
 grep -q 'ARGC=1$' "$TMP/notice-off.out" || fail "network.notice: false did not drop the whole flag: $(cat "$TMP/notice-off.out")"
@@ -1561,7 +1706,7 @@ grep -q 'hsh:network-policy' "$TMP/notice-ws/ctx.md" && fail "a disabled notice 
 [ "$(cat "$TMP/notice-ws/ctx.md")" = "$(printf '# user rules\nkeep me')" ] || fail "removing the block changed the user's text: $(cat "$TMP/notice-ws/ctx.md")"
 pass "network.notice: false writes no notice, drops the flag, and removes an existing managed block"
 
-(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-on.hsh" --monitor-db "$DB" --network none --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-none.out" 2>&1 || fail "the none-mode notice session failed: $(cat "$TMP/notice-none.out")"
+(cd "$TMP/notice-ws" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/notice-on.hsh" --network none --tasks "$TMP/notice-tasks.txt") >"$TMP/notice-none.out" 2>&1 || fail "the none-mode notice session failed: $(cat "$TMP/notice-none.out")"
 sed -i 's/\r$//' "$TMP/notice-none.out"
 grep -q 'ARGC=1$' "$TMP/notice-none.out" || fail "none mode did not drop the notice flag: $(cat "$TMP/notice-none.out")"
 grep -qx 'NOTICE-ABSENT' "$TMP/notice-none.out" || fail "none mode provided a notice"
@@ -1674,11 +1819,11 @@ printf '%s\n' '{ "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }
 printf '%s\n' '{ "version": 99, "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }' >"$TMP/ver-newer.hsh"
 printf '%s\n' '{ "version": 1, "image": "localhost/hsh-example:latest", "network": { "alow": [] } }' >"$TMP/ver-typo.hsh"
 ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 1)' \
-	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-missing.hsh" --monitor-db "$DB"
+	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-missing.hsh"
 ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 1); update hsh' \
-	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-newer.hsh" --monitor-db "$DB"
+	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-newer.hsh"
 ver_expect_failure "a seed config with an unknown field" 'unknown field "alow"' \
-	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-typo.hsh" --monitor-db "$DB"
+	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-typo.hsh"
 pass "seed configs without a version, from a newer hsh, or with unknown fields are refused and create no session"
 
 cat >"$TMP/ver-label.Containerfile" <<'EOF'
@@ -1692,25 +1837,21 @@ LABEL org.ifup.hsh='{"shell":"/bin/bash"}'
 EOF
 podman build -q -t localhost/hsh-ver-missing:latest -f "$TMP/ver-label2.Containerfile" "$TMP" >/dev/null || fail "could not build the unversioned-label image"
 ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 1); update hsh' \
-	"$HSH" run --runtime "$RUNTIME" --pull=never --monitor-db "$DB" localhost/hsh-ver-newer:latest
+	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-newer:latest
 ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 1); rebuild the image' \
-	"$HSH" run --runtime "$RUNTIME" --pull=never --monitor-db "$DB" localhost/hsh-ver-missing:latest
+	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-missing:latest
 pass "image labels without a version or from a newer hsh are refused with what to do"
 
-for db in secrets monitor; do
-	python3 - "$TMP/ver-$db.db" <<'PY'
+python3 - "$TMP/ver-secrets.db" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1])
 c.execute("CREATE TABLE IF NOT EXISTS t (x)")
 c.execute("PRAGMA user_version = 99")
 c.commit()
 PY
-done
 "$HSH" secret ls --db "$TMP/ver-secrets.db" >"$TMP/ver.out" 2>&1 && fail "a secret store with a newer schema was opened"
-grep -q "secrets.db has schema version 99, newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "unexpected secret store error: $(cat "$TMP/ver.out")"
-"$HSH" proxy denied --db "$TMP/ver-monitor.db" >"$TMP/ver.out" 2>&1 && fail "a monitor database with a newer schema was opened"
-grep -q "monitor.db has schema version 99, newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "unexpected monitor database error: $(cat "$TMP/ver.out")"
-pass "secrets.db and monitor.db with a newer schema version are refused"
+grep -q "secrets.db has schema version 99, newer than this hsh reads (version 3); update hsh" "$TMP/ver.out" || fail "unexpected secret store error: $(cat "$TMP/ver.out")"
+pass "secrets.db with a newer schema version is refused"
 
 cat >"$TMP/ver-live.hsh" <<EOF
 {
@@ -1722,7 +1863,7 @@ cat >"$TMP/ver-live.hsh" <<EOF
 }
 EOF
 BEFORE_IDS="$(session_ids)"
-(cd "$VER_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-live.hsh" --monitor-db "$DB") >"$TMP/ver-live.out" 2>&1 <<'CMDS' &
+(cd "$VER_WS" && "$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-live.hsh") >"$TMP/ver-live.out" 2>&1 <<'CMDS' &
 echo "before: $(curl -sS -o /dev/null -w 'code=%{http_code}' --max-time 8 https://example.com 2>&1 | tr '\n' ' ')"
 while [ ! -e /workspace/edited ]; do sleep 1; done
 sleep 4
@@ -1741,7 +1882,7 @@ VER_CFG="$XDG_STATE_HOME/hsh/sessions/$VER_SESSION/config.json"
 grep -Eq 'before:.*(response 403|code=403)' "$TMP/ver-live.out" || fail "example.com was not denied before the edit: $(cat "$TMP/ver-live.out")"
 printf '%s\n' '{ "version": 99, "network": { "mode": "allowlist", "allow": ["example.com", "host.containers.internal"] } }' >"$VER_CFG"
 cp "$VER_CFG" "$TMP/ver-cfg.saved"
-"$HSH" proxy allow --db "$DB" --session "$VER_SESSION" https://other.example >"$TMP/ver.out" 2>&1 && fail "proxy allow edited a config from a newer hsh"
+"$HSH" proxy allow --session "$VER_SESSION" https://other.example >"$TMP/ver.out" 2>&1 && fail "proxy allow edited a config from a newer hsh"
 grep -q "config version 99 is newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "proxy allow did not explain: $(cat "$TMP/ver.out")"
 cmp -s "$VER_CFG" "$TMP/ver-cfg.saved" || fail "a refused proxy allow modified the config"
 touch "$VER_WS/edited"
@@ -1751,10 +1892,10 @@ VER_PROXY_LOG="$(podman logs "hsh-$VER_SESSION-proxy" 2>&1)"
 grep -q "configuration reload failed.*newer than this hsh reads" <<<"$VER_PROXY_LOG" || fail "the proxy did not log the failed reload: $(tail -5 <<<"$VER_PROXY_LOG")"
 pass "a running proxy keeps its last readable policy when the session config becomes unreadable, and logs why"
 
-"$HSH" resume --monitor-db "$DB" "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
+"$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
 grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
 printf '%s\n' '{ "image": "localhost/hsh-example:latest" }' >"$VER_CFG"
-"$HSH" resume --monitor-db "$DB" "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
+"$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
 grep -q "remove the session with: hsh rm $VER_SESSION" "$TMP/ver.out" || fail "resume did not say how to remove the stale session: $(cat "$TMP/ver.out")"
 "$HSH" rm "hsh-$VER_SESSION" >/dev/null 2>&1 || fail "hsh rm could not remove a session whose config is unreadable"
 [ ! -e "$XDG_STATE_HOME/hsh/sessions/$VER_SESSION" ] || fail "hsh rm left the session state"

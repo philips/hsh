@@ -11,11 +11,12 @@ import (
 	"github.com/creack/pty"
 
 	"hsh/internal/monitordb"
+	"hsh/internal/monitordb/monitordbtest"
 	"hsh/internal/tui/proxywatch"
 	"hsh/internal/vt"
 )
 
-func newHarnessRealModel(t *testing.T, dbPath string) *harness {
+func newHarnessRealModel(t *testing.T, sessions string) *harness {
 	t.Helper()
 	key, _ := ParseKey("ctrl-space")
 	cmd := exec.Command("bash", "-c", `stty -echo; while IFS= read -r l; do eval "$l"; done`)
@@ -30,13 +31,9 @@ func newHarnessRealModel(t *testing.T, dbPath string) *harness {
 	user := &userTerminal{term: ut}
 	pr, pw := io.Pipe()
 	h := &harness{t: t, master: master, user: user, keys: pw, done: make(chan struct{})}
+	db := monitordb.NewStore(sessions)
 	count := func() (int, int, error) {
-		db, err := monitordb.Open(dbPath)
-		if err != nil {
-			return 0, 0, err
-		}
-		defer db.Close()
-		pending, err := monitordb.Pending(db, monitordb.Filter{Session: "unit"})
+		pending, err := db.Pending(monitordb.Filter{Session: "unit"})
 		if err != nil {
 			return 0, 0, err
 		}
@@ -46,8 +43,7 @@ func newHarnessRealModel(t *testing.T, dbPath string) *harness {
 		StatusLine: true, Key: key, Name: "unit", PollEvery: time.Hour,
 		Count: count,
 		Overlay: func(cols, rows int) tea.Model {
-			db, _ := monitordb.Open(dbPath)
-			pending, _ := monitordb.Pending(db, monitordb.Filter{Session: "unit"})
+			pending, _ := db.Pending(monitordb.Filter{Session: "unit"})
 			return proxywatch.New(db, monitordb.Filter{Session: "unit"}, pending, nil, false)
 		}})
 	if err != nil {
@@ -71,19 +67,11 @@ func TestQuitKeyClosesTheOverlayAndTrailingBytesGoToTheSession(t *testing.T) {
 		t.Skip("built without GOEXPERIMENT=simd")
 	}
 	dir := t.TempDir()
-	dbPath := dir + "/monitor.db"
-	db, err := monitordb.Open(dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := monitordb.Record(db, "/ws", "unit", "blocked.example.test", "https://blocked.example.test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
+	if err := monitordbtest.Seed(dir+"/unit", monitordb.DeniedHost{Host: "blocked.example.test"}); err != nil {
 		t.Fatal(err)
 	}
 
-	h := newHarnessRealModel(t, dbPath)
+	h := newHarnessRealModel(t, dir)
 	h.press("\x00")
 	h.waitFor("the overlay to open", func() bool {
 		return strings.Contains(h.user.text(), "denied hosts awaiting review")

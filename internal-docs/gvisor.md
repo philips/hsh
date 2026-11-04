@@ -142,7 +142,7 @@ A TLS connection with no SNI falls back to the DNS-answer name, then to
 the destination IP. Denied TLS connections that carry an SNI are completed
 with a certificate from the session CA and answered with the usual 403
 denial message, so agents see the same explanation as through the HTTP
-proxy. Denials, holds, approvals, and `monitor.db` records work as for the
+proxy. Denials, holds, approvals, and denial records work as for the
 HTTP proxy.
 
 In `allowlist` and `none` modes, an A query for a name that is not allowed
@@ -181,6 +181,6 @@ so nothing goes out through the netstack to the proxy.
 
 `test/gvisor.sh` runs end-to-end checks and skips when runsc is missing:
 transparent forwarding with secret injection, the 403 denial message over
-intercepted TLS, IP literals and ICMP refused, `monitor.db` records,
+intercepted TLS, IP literals and ICMP refused, denial records,
 resume after stop, no egress after the proxy is killed, and `hsh forward`,
 `ssh hsh-<id>`, and `hsh oauth callback` through `/hsh-sshd`.

@@ -170,7 +170,15 @@ redemption is a plain lookup of whatever follows the configured prefix.
   carries a token-like field (`access_token`, `refresh_token`,
   `id_token`, `accessToken`, `refreshToken`, `idToken`) that the
   descriptor does not capture. Error responses (4xx/5xx) pass through
-  so the client can show the provider's error.
+  so the client can show the provider's error. The same scan covers
+  every other successful response from a provider's token-endpoint
+  **host** (any path, any method): the proxy narrows the client's
+  `Accept-Encoding` to `gzip` (or `identity`), buffers a 2xx body of up
+  to 1 MiB, and answers 502 when it is a JSON object with a token-like
+  field that is not a known phantom, or uses an encoding the proxy cannot
+  decode. So a descriptor with a wrong `token_endpoint.path` blocks the
+  login instead of handing the real token to the sandbox. Larger bodies
+  (pages, assets) stream through unscanned.
 - **Redeem**: on a request to a provider's API host, a phantom in the
   configured header is replaced with the real token — only if the
   phantom was captured for **that** provider. A phantom presented to
@@ -274,6 +282,11 @@ Failure signatures:
   a shape the proxy cannot rewrite; `carries X, which the descriptor
   does not capture` means the descriptor's `response_fields` miss a
   field - add it with a drop-in (`hsh oauth provider edit NAME`).
+- `oauth: HOST/PATH answered with access_token, but that is not NAME's
+  token endpoint (PATH)` - a token response came from another path on
+  the token host and was blocked with a 502; the descriptor's
+  `token_endpoint.path` does not match what the client calls. Fix it
+  with `hsh oauth provider edit NAME`.
 - `contained none of the declared fields` - the response had no tokens
   at all; if a login still fails, the descriptor's `token_endpoint`
   host+path probably does not match what the client actually calls;
@@ -379,7 +392,10 @@ every 20 seconds:
 
 - a login whose token expires within 15 minutes, or for which the
   session's proxy left a `proxy/refresh-wanted/<name>` marker (at most
-  once per 2 minutes), is refreshed with the descriptor's `refresh`
+  once per 2 minutes), is refreshed (the companion looks the marker up and
+  removes it relative to a directory descriptor opened with `O_NOFOLLOW`,
+  so a proxy that makes `refresh-wanted` a symlink cannot make the host
+  delete a file elsewhere; the marker itself is unlinked, never followed) with the descriptor's `refresh`
   section. Several sessions sharing a login coordinate through a SQLite
   `BEGIN IMMEDIATE` transaction on the login's row: the first one
   refreshes, the others see the new expiry and skip;
@@ -416,7 +432,10 @@ If the host refresh is refused (`invalid_grant`, revoked), the login is
 marked failed (`hsh secret ls` shows `FAILED: …`), the companion stops
 retrying it, and the proxy answers requests carrying its phantoms with a
 `401` whose message says to log in again and run
-`hsh oauth promote --force`.
+`hsh oauth promote --force`. An attached interactive session also shows
+it on the status line, in red: `login NAME failed: log in again, then hsh
+oauth promote --force PROVIDER NAME` (read from the session's
+`secrets.json`, so it appears and clears with the companion's rewrites).
 
 ### Seeds
 
@@ -495,7 +514,8 @@ attackers or hostile providers):
 - Seeds cover Claude Code and Codex. pi keeps every provider in one
   `~/.pi/agent/auth.json` that the image already ships, so a seed (which
   never overwrites) cannot add a login to it.
-- The fail-closed check covers responses from a configured token
-  endpoint. A token-bearing response from a path no descriptor names
-  (the descriptor's `token_endpoint.path` is wrong) is not intercepted
-  as an exchange and passes through like any other request.
+- The fail-closed check covers the configured token endpoint and
+  successful responses of up to 1 MiB from any other path on its host.
+  Only top-level fields of JSON objects are checked, and a token-bearing
+  response on another host (not the descriptor's token host) is not
+  checked.

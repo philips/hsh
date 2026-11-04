@@ -43,7 +43,11 @@ func feedStdin(t *testing.T, value string) {
 func TestSecretAddLsRm(t *testing.T) {
 	db := testStorePath(t)
 	feedStdin(t, "super-secret\n")
-	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); err != nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "mistral-key"); err == nil || !strings.Contains(err.Error(), "needs --host") {
+		t.Fatalf("add without --host: %v", err)
+	}
+	feedStdin(t, "super-secret\n")
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "--host", "api.mistral.ai,https://Other.example/", "--host", "*.mistral.ai", "mistral-key"); err != nil {
 		t.Fatalf("add: %v", err)
 	}
 	store, _, err := secretstore.Open(db)
@@ -54,6 +58,9 @@ func TestSecretAddLsRm(t *testing.T) {
 	v, err := store.Get("mistral-key")
 	if err != nil || v != "super-secret" {
 		t.Fatalf("Get = (%q, %v), want (super-secret, nil)", v, err)
+	}
+	if hosts, _ := store.SecretHosts("mistral-key"); strings.Join(hosts, ",") != "*.mistral.ai,api.mistral.ai,other.example" {
+		t.Fatalf("hosts = %v", hosts)
 	}
 
 	feedStdin(t, "super-secret\n")
@@ -67,6 +74,21 @@ func TestSecretAddLsRm(t *testing.T) {
 	v, err = store.Get("mistral-key")
 	if err != nil || v != "other-secret" {
 		t.Fatalf("Get after --force = (%q, %v), want (other-secret, nil)", v, err)
+	}
+	if hosts, _ := store.SecretHosts("mistral-key"); len(hosts) != 3 {
+		t.Fatalf("add --force without --host dropped the hosts: %v", hosts)
+	}
+	if err := runSecret(t, "disallow", "--db", db, "mistral-key", "*.mistral.ai", "other.example"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecret(t, "allow", "--db", db, "mistral-key", "eu.mistral.ai"); err != nil {
+		t.Fatal(err)
+	}
+	if hosts, _ := store.SecretHosts("mistral-key"); strings.Join(hosts, ",") != "api.mistral.ai,eu.mistral.ai" {
+		t.Fatalf("hosts after allow/disallow = %v", hosts)
+	}
+	if err := runSecret(t, "allow", "--db", db, "mistral-key"); err == nil {
+		t.Fatal("allow without a host succeeded")
 	}
 
 	if err := runSecret(t, "rm", "--db", db, "nope"); !errors.Is(err, secretstore.ErrNotFound) {
@@ -83,7 +105,7 @@ func TestSecretAddLsRm(t *testing.T) {
 func TestSecretAddRejectsEmptyValue(t *testing.T) {
 	db := testStorePath(t)
 	feedStdin(t, "\n")
-	if err := runSecret(t, "add", "--db", db, "--value-stdin", "empty"); err == nil {
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "--host", "a.example", "empty"); err == nil {
 		t.Fatal("expected an error for an empty value")
 	}
 }
@@ -113,5 +135,39 @@ func TestFlagsBeforePositionalsContract(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exactly one NAME") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSecretEditRewritesTheHostList(t *testing.T) {
+	db := testStorePath(t)
+	feedStdin(t, "v\n")
+	if err := runSecret(t, "add", "--db", db, "--value-stdin", "--host", "keep.example", "--host", "drop.example", "k"); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "editor.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ngrep -q '^# Hosts hsh may send the secret k to' \"$1\" || exit 3\ngrep -q '^drop.example$' \"$1\" || exit 4\nprintf '# comment\\nkeep.example\\n\\nNEW.example  *.more.example\\n' > \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("VISUAL", script)
+	if err := runSecret(t, "edit", "--db", db, "k"); err != nil {
+		t.Fatalf("edit: %v", err)
+	}
+	store, _, err := secretstore.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if hosts, _ := store.SecretHosts("k"); strings.Join(hosts, ",") != "*.more.example,keep.example,new.example" {
+		t.Fatalf("hosts after edit = %v", hosts)
+	}
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'not a host!' > \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	feedStdin(t, "")
+	if err := runSecret(t, "edit", "--db", db, "k"); err == nil {
+		t.Fatal("an invalid host list was saved")
+	}
+	if hosts, _ := store.SecretHosts("k"); len(hosts) != 3 {
+		t.Fatalf("a failed edit changed the hosts: %v", hosts)
 	}
 }

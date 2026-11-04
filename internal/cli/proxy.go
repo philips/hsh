@@ -15,11 +15,10 @@ func Proxy(args []string) error {
 	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	caKey := fs.String("ca-key", "/hsh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
-	monitorDB := fs.String("monitor-db", "", "monitor database path (empty disables recording)")
+	proxyDB := fs.String("proxy-db", "", "this session's denial database, in its own writable directory; read by hsh monitor (empty disables recording)")
+	monitorDB := fs.String("monitor-db", "", "this session's review decisions, written by the host and read here read-only")
 	oauthStore := fs.String("oauth-store", "", "oauth token capture store path, in the session's own writable directory (empty keeps captures in memory)")
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
-	session := fs.String("session", "", "session id recorded with each denial")
-	workspace := fs.String("workspace", "", "workspace path recorded with each denial")
 	attended := fs.String("attended", "", "marker file whose recent modification time means someone can approve denied requests (enables holding them)")
 	netstack := fs.String("netstack-socket", "", "serve a gVisor sandbox's network over this SOCK_SEQPACKET socket (runsc --network-proxy-path) instead of listening for proxy clients")
 	if err := fs.Parse(args); err != nil {
@@ -32,11 +31,10 @@ func Proxy(args []string) error {
 		CACertPath:   *caCert,
 		CAKeyPath:    *caKey,
 		RootsPath:    *roots,
+		ProxyDB:      *proxyDB,
 		MonitorDB:    *monitorDB,
 		OAuthStore:   *oauthStore,
 		NetworkMode:  *networkMode,
-		Session:      *session,
-		Workspace:    *workspace,
 		AttendedPath: *attended,
 		NetstackPath: *netstack,
 	})

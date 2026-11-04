@@ -14,7 +14,8 @@ fi
 
 TMP="$(mktemp -d)"
 export XDG_STATE_HOME="$TMP/xdg"
-mkdir -p "$XDG_STATE_HOME"
+export XDG_CONFIG_HOME="$TMP/xdg-config"
+mkdir -p "$XDG_STATE_HOME" "$XDG_CONFIG_HOME"
 DUMMY_PID=""
 PASSED=0
 cleanup() {
@@ -69,12 +70,12 @@ cat >"$TMP/config.hsh" <<EOF
   "shell": "/bin/bash",
   "mounts": ["$TMP/workspace:/workspace"],
   "secrets": {
-    "API_KEY": { "from": "env://HSH_GVISOR_SECRET", "hosts": ["host.containers.internal"], "header": "Authorization", "prefix": "Bearer " }
+    "API_KEY": { "from": "hsh://gvisor-key", "hosts": ["host.containers.internal"], "header": "Authorization", "prefix": "Bearer " }
   },
   "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
 }
 EOF
-export HSH_GVISOR_SECRET=gvisor-secret-value-77
+echo gvisor-secret-value-77 | "$HSH" secret add --value-stdin --host host.containers.internal gvisor-key >/dev/null || fail "secret add failed"
 cd "$TMP/workspace"
 
 echo "== step 1: a gVisor session proxies, injects secrets, and denies"
@@ -112,8 +113,8 @@ if [ -n "$TAGS" ]; then
 	"$HSH" version | grep -q '^gVisor: release-' || fail "hsh version does not report the embedded gVisor"
 	pass "the embedded gVisor is extracted privately under the state directory and used"
 fi
-"$HSH" proxy denied --db "$XDG_STATE_HOME/hsh/monitor.db" 2>/dev/null | grep "$SESSION" | grep -q 'api.mistral.ai' || fail "the denial was not recorded in monitor.db"
-pass "denials are recorded in monitor.db with the session id"
+"$HSH" proxy denied 2>/dev/null | grep "$SESSION" | grep -q 'api.mistral.ai' || fail "the denial was not recorded for the session"
+pass "denials are recorded for the session"
 
 echo "== step 2: resuming a stopped gVisor session reconnects the netstack"
 "$HSH" resume "$SESSION" >"$TMP/run2.out" 2>&1 <<'CMDS' || true

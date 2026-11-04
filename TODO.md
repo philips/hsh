@@ -146,6 +146,33 @@ Interactive sessions set `FORCE_HYPERLINK=1` when the outer `TERM` names a hyper
 - Over transports that re-encode the terminal (mosh): OSC 8 is stripped and the link degrades to plain text; plain URLs stay clickable where the outer terminal auto-detects them (ghostty does).
 - A dropped OSC 8 always degrades to the link's plain text, so nothing above can break output.
 
-## Fix the monitordb concurrent-open flake
+## Update README.md and Documentation/ for secret host binding
 
-`TestConcurrentFirstOpensShareOneSchema` (internal/monitordb/version_test.go) fails intermittently, roughly every third run and often in the full suite, with `SQLITE_BUSY` when ten goroutines open the same database file concurrently. The schema initialization in `Open` needs a busy timeout or a retry, not just the test.
+Plan 0043 changed the secret store's user-facing commands, and the user docs still show the old ones:
+
+- `hsh secret add NAME` now fails without `--host HOST` (repeatable or comma-separated): every static secret records the hosts it may be sent to. `README.md` (`hsh secret add mistral-api-key`) and `Documentation/secrets.md` (`gh auth token | hsh secret add --value-stdin ...`) need the `--host` for their example's API host.
+- Document `hsh secret allow NAME HOST...`, `hsh secret disallow NAME HOST...`, `hsh secret edit NAME` (the host list in `$EDITOR`), and the HOSTS column of `hsh secret ls`.
+- Explain the launch behavior: a config route to an unapproved host is dropped with a warning naming the label or config file and the `hsh secret allow` command, and an interactive `hsh run` asks first.
+- `env://VAR` and bare `VAR` secret references are refused in configs and image labels; remove any examples that use them and show `hsh secret add` instead. Sessions created with such a reference no longer resume.
+- The shared `monitor.db` and the `--monitor-db`/`--db` flags are gone; denials live per session (`sessions/<id>/proxy/proxy.db`, decisions in `sessions/<id>/monitor.db`).
+
+The design side is in `internal-docs/config.md#host-binding` and `internal-docs/architecture.md#denial-records-and-review-decisions`.
+
+## Keyring backend for static secrets (`keyring://NAME`)
+
+`secrets.db` stores values in plaintext (0600, like `~/.netrc`). Add an OS keyring backend (Secret Service on Linux, Keychain on macOS) as a new reference scheme, keeping `hsh://NAME` unchanged:
+
+- `keyring://NAME` resolves the value from the keyring on the host at launch; host binding applies the same way (approved hosts stay in `secrets.db`, keyed by the reference).
+- `hsh secret add --keyring` stores the value in the keyring instead of `secrets.db`.
+- Caveat to document: unattended OAuth refresh (the companion, `hsh-reaper`) and non-interactive runs need an unlocked keyring, which headless servers often lack. OAuth logins stay in `secrets.db` unless the keyring is known to stay unlocked.
+- Until then, document that `secrets.db` and `$XDG_STATE_HOME/hsh` (which holds `secrets.json` while a session runs and the proxy's captured tokens) should live on an encrypted home directory.
+
+See plan 0043, section 4.
+
+## Review an image's built-in config before trusting it
+
+An image's built-in hsh config (its `org.ifup.hsh` label) is untrusted until the user trusts that image id (`hsh run --trust-image IMAGE`, recorded in `$XDG_CONFIG_HOME/hsh/trusted-images`); until then `hsh run` drops its allowlist, network mode, OAuth providers, and mounts (see `internal-docs/images.md#image-trust`). That is deny by default with an all-or-nothing flag.
+
+Replace the flag with a review on the first `hsh run` of an image id: show what the built-in config asks for (allowlist, mode, secret routes, OAuth providers, mounts, agent command), let the user accept it (or parts of it) in the terminal, and for a new id of a repository that was trusted before, show the diff against the last trusted config. Also add a way to list and revoke trusted images (`hsh image trust ls`/`rm`, or an edit command like `hsh secret edit`).
+
+See plan 0043, section 3.

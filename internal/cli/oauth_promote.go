@@ -37,7 +37,7 @@ type sessionCapture struct {
 }
 
 func latestCapture(storePath, provider string) (*sessionCapture, error) {
-	data, err := os.ReadFile(storePath)
+	data, err := state.ReadUntrusted(storePath, state.MaxUntrustedFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("no captured tokens in %s (log in inside the session first)", storePath)
@@ -86,7 +86,7 @@ func latestCapture(storePath, provider string) (*sessionCapture, error) {
 }
 
 func capturedProviders(storePath string) ([]string, error) {
-	data, err := os.ReadFile(storePath)
+	data, err := state.ReadUntrusted(storePath, state.MaxUntrustedFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

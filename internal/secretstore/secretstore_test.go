@@ -180,3 +180,89 @@ func TestStoreWithANewerSchemaIsRefusedAndLeftAlone(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 }
+
+func TestHostsAreRecordedNormalizedAndEdited(t *testing.T) {
+	db, _ := openTest(t)
+	if err := db.Set("k", "v", false); err != nil {
+		t.Fatal(err)
+	}
+	if hosts, err := db.SecretHosts("k"); err != nil || len(hosts) != 0 {
+		t.Fatalf("a new secret has hosts: %v %v", hosts, err)
+	}
+	if err := db.SetHosts("k", []string{"B.example.", "https://a.example/x", "b.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if hosts, _ := db.SecretHosts("k"); strings.Join(hosts, ",") != "a.example,b.example" {
+		t.Fatalf("hosts = %v", hosts)
+	}
+	if hosts, err := db.AllowHosts("k", "*.c.example"); err != nil || strings.Join(hosts, ",") != "*.c.example,a.example,b.example" {
+		t.Fatalf("allow: %v %v", hosts, err)
+	}
+	if hosts, err := db.DisallowHosts("k", "A.example"); err != nil || strings.Join(hosts, ",") != "*.c.example,b.example" {
+		t.Fatalf("disallow: %v %v", hosts, err)
+	}
+	if err := db.Set("k", "v2", true); err != nil {
+		t.Fatal(err)
+	}
+	if hosts, _ := db.SecretHosts("k"); len(hosts) != 2 {
+		t.Fatalf("overwriting the value dropped the hosts: %v", hosts)
+	}
+	if err := db.SetHosts("k", []string{"bad host"}); err == nil {
+		t.Fatal("an invalid host was stored")
+	}
+	if _, err := db.SecretHosts("missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+	if err := db.SetHosts("missing", []string{"a.example"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("set hosts of a missing secret: %v", err)
+	}
+	entries, _ := db.List()
+	if len(entries) != 1 || strings.Join(entries[0].Hosts, ",") != "*.c.example,b.example" {
+		t.Fatalf("list: %+v", entries)
+	}
+}
+
+func TestVersion2StoreMigratesWithNoApprovedHosts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+		INSERT INTO secrets VALUES ('old', 'kept', 'x', 'y');` + oauthSchema + `PRAGMA user_version = 2;`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	db, _, err := Open(path)
+	if err != nil {
+		t.Fatalf("a version 2 store must migrate: %v", err)
+	}
+	defer db.Close()
+	if v, err := db.Get("old"); err != nil || v != "kept" {
+		t.Fatalf("value after migration: %q %v", v, err)
+	}
+	if hosts, err := db.SecretHosts("old"); err != nil || len(hosts) != 0 {
+		t.Fatalf("hosts after migration: %v %v", hosts, err)
+	}
+}
+
+func TestUnversionedStoreWithoutHostsGetsTheColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.db")
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+		INSERT INTO secrets VALUES ('old', 'kept', 'x', 'y');`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+	db, _, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.SetHosts("old", []string{"a.example"}); err != nil {
+		t.Fatalf("the adopted store has no hosts column: %v", err)
+	}
+}

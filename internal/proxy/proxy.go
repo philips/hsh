@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,11 +29,10 @@ type Options struct {
 	CACertPath   string
 	CAKeyPath    string
 	RootsPath    string
+	ProxyDB      string
 	MonitorDB    string
 	OAuthStore   string
 	NetworkMode  string
-	Session      string
-	Workspace    string
 	AttendedPath string
 	NetstackPath string
 }
@@ -54,7 +52,8 @@ type Proxy struct {
 	ca        *certs.CA
 	roots     *x509.CertPool
 	transport *http.Transport
-	monitorDB *sql.DB
+	denials   *monitordb.Recorder
+	decisions *monitordb.Decisions
 	store     *tokenStore
 	holds     holdState
 
@@ -97,18 +96,19 @@ func New(opts Options) (*Proxy, error) {
 		IdleConnTimeout:       90 * time.Second,
 		ResponseHeaderTimeout: 120 * time.Second,
 	}
-	var db *sql.DB
-	if opts.MonitorDB != "" {
+	var rec *monitordb.Recorder
+	if opts.ProxyDB != "" {
 		var err error
-		db, err = monitordb.Open(opts.MonitorDB)
+		rec, err = monitordb.OpenRecorder(opts.ProxyDB)
 		if err != nil {
-			return nil, fmt.Errorf("open monitor database: %w", err)
-		}
-		if opts.Session != "" {
-			_ = monitordb.ResetHolding(db, opts.Session)
+			return nil, fmt.Errorf("open the denial record: %w", err)
 		}
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, monitorDB: db, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
+	var decisions *monitordb.Decisions
+	if opts.MonitorDB != "" {
+		decisions = monitordb.NewDecisions(opts.MonitorDB)
+	}
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, denials: rec, decisions: decisions, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -438,6 +438,9 @@ func (p *Proxy) forwardRequest(w io.Writer, req *http.Request, onStatus func(int
 	removeHopHeaders(req.Header)
 	req.RequestURI = ""
 	req.Close = false
+	if _, ok := p.tokenHostProvider(req.URL.Hostname()); ok {
+		restrictTokenHostEncoding(req.Header)
+	}
 	resp, err := p.transport.RoundTrip(req)
 	if err != nil {
 		log.Printf("upstream %s%s: %v", req.URL.Host, req.URL.RequestURI(), err)
@@ -445,6 +448,11 @@ func (p *Proxy) forwardRequest(w io.Writer, req *http.Request, onStatus func(int
 		return
 	}
 	defer resp.Body.Close()
+	if err := p.guardTokenHostResponse(req, resp); err != nil {
+		log.Printf("oauth: %v", err)
+		fmt.Fprint(w, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+		return
+	}
 	if onStatus != nil {
 		onStatus(resp.StatusCode)
 	}
@@ -497,6 +505,9 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request, onStatus fun
 	removeHopHeaders(r.Header)
 	r.RequestURI = ""
 	r.Close = false
+	if _, ok := p.tokenHostProvider(r.URL.Hostname()); ok {
+		restrictTokenHostEncoding(r.Header)
+	}
 	resp, err := p.transport.RoundTrip(r)
 	if err != nil {
 		log.Printf("upstream %s: %v", r.URL.Host, err)
@@ -504,6 +515,11 @@ func (p *Proxy) forwardHTTP(w http.ResponseWriter, r *http.Request, onStatus fun
 		return
 	}
 	defer resp.Body.Close()
+	if err := p.guardTokenHostResponse(r, resp); err != nil {
+		log.Printf("oauth: %v", err)
+		http.Error(w, "hsh proxy: refused a token-bearing response outside the provider's token endpoint", http.StatusBadGateway)
+		return
+	}
 	if onStatus != nil {
 		onStatus(resp.StatusCode)
 	}

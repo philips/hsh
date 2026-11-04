@@ -10,6 +10,7 @@ import (
 
 	"hsh/internal/config"
 	"hsh/internal/monitordb"
+	"hsh/internal/monitordb/monitordbtest"
 	"hsh/internal/settings"
 	"hsh/internal/state"
 )
@@ -17,45 +18,38 @@ import (
 func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	dbPath := filepath.Join(dir, "monitor.db")
 	sessionDir := state.SessionDir("s1")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(sessionDir, "proxy"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cfgPath := filepath.Join(sessionDir, "config.json")
 	if err := os.WriteFile(cfgPath, []byte(`{"version":1,"image":"x","network":{"mode":"allowlist","allow":["keep.example"]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	db, err := monitordb.Open(dbPath)
+	rec, err := monitordb.OpenRecorder(monitordb.ProxyDBPath(sessionDir))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, h := range []string{"a.example", "a.example", "b.example"} {
-		if err := monitordb.Record(db, "/ws", "s1", h, h+":443"); err != nil {
+		if err := rec.Record(h, h+":443"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := monitordb.Record(db, "/ws", "other", "other.example", "x:443"); err != nil {
+	if err := monitordbtest.Seed(state.SessionDir("other"), monitordb.DeniedHost{Host: "other.example"}); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
 
-	src := &sessionDenials{dbPath: dbPath, session: "s1", cfgPath: cfgPath}
-	defer src.Close()
+	src := &sessionDenials{store: monitordb.DefaultStore(), session: "s1", cfgPath: cfgPath}
 	if n, held, err := src.Count(); err != nil || n != 2 || held != 0 {
 		t.Fatalf("count: %d %d %v", n, held, err)
 	}
-	hdb, _ := monitordb.Open(dbPath)
-	if err := monitordb.AdjustHolding(hdb, "s1", "a.example", 2); err != nil {
+	if err := rec.AdjustHolding("a.example", 2); err != nil {
 		t.Fatal(err)
 	}
-	hdb.Close()
 	if n, held, _ := src.Count(); n != 2 || held != 1 {
 		t.Fatalf("count with one held host: %d %d", n, held)
 	}
-	hdb, _ = monitordb.Open(dbPath)
-	_ = monitordb.ResetHolding(hdb, "s1")
-	hdb.Close()
+	_ = rec.AdjustHolding("a.example", -2)
 
 	model := src.Overlay(100, 30)
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
@@ -91,19 +85,10 @@ func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 func TestPastingIntoTheMonitorFilterDoesNotTriggerCommands(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	dbPath := filepath.Join(dir, "monitor.db")
-	db, err := monitordb.Open(dbPath)
-	if err != nil {
+	if err := monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "a.example"}, monitordb.DeniedHost{Host: "b.example"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, h := range []string{"a.example", "b.example"} {
-		if err := monitordb.Record(db, "/ws", "s1", h, h+":443"); err != nil {
-			t.Fatal(err)
-		}
-	}
-	db.Close()
-	src := &sessionDenials{dbPath: dbPath, session: "s1"}
-	defer src.Close()
+	src := &sessionDenials{store: monitordb.DefaultStore(), session: "s1"}
 
 	model := src.Overlay(120, 30)
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
@@ -129,8 +114,8 @@ func TestPastingIntoTheMonitorFilterDoesNotTriggerCommands(t *testing.T) {
 	}
 }
 
-func TestSessionDenialsWithoutADatabase(t *testing.T) {
-	src := &sessionDenials{dbPath: filepath.Join(t.TempDir(), "none.db"), session: "s", cfgPath: "x"}
+func TestSessionDenialsWithoutARecord(t *testing.T) {
+	src := &sessionDenials{store: monitordb.NewStore(t.TempDir()), session: "s", cfgPath: "x"}
 	n, held, err := src.Count()
 	if err != nil || n != 0 || held != 0 {
 		t.Fatalf("%v %v %v", n, held, err)
@@ -139,11 +124,11 @@ func TestSessionDenialsWithoutADatabase(t *testing.T) {
 
 func TestInlineMonitorIsOffWhenDisabledOrNotInteractive(t *testing.T) {
 	cfg := config.Default()
-	if im, _ := newInlineMonitor(cfg, "s", "db", "cfg", false); im != nil {
+	if im, _ := newInlineMonitor(cfg, "s", "cfg", false); im != nil {
 		t.Fatal("non-interactive session got a relay")
 	}
 	cfg.Monitor.Enabled = false
-	if im, warn := newInlineMonitor(cfg, "s", "db", "cfg", true); im != nil || warn != "" {
+	if im, warn := newInlineMonitor(cfg, "s", "cfg", true); im != nil || warn != "" {
 		t.Fatalf("disabled monitor: %v %q", im, warn)
 	}
 }
@@ -151,8 +136,7 @@ func TestInlineMonitorIsOffWhenDisabledOrNotInteractive(t *testing.T) {
 func TestCtrlCClosesTheMonitorOverlayInsteadOfInterruptingTheSession(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
-	src := &sessionDenials{dbPath: filepath.Join(dir, "monitor.db"), session: "s1"}
-	defer src.Close()
+	src := &sessionDenials{store: monitordb.DefaultStore(), session: "s1"}
 	model := src.Overlay(100, 30)
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	_, cmd := model.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
@@ -168,8 +152,7 @@ func TestOverlayOpensThePaletteWhenNothingNeedsReview(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
-	src := &sessionDenials{dbPath: filepath.Join(dir, "monitor.db"), session: "s1", configKey: "ctrl-b"}
-	defer src.Close()
+	src := &sessionDenials{store: monitordb.DefaultStore(), session: "s1", configKey: "ctrl-b"}
 	model := src.Overlay(100, 30)
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	view := model.View()
@@ -202,5 +185,30 @@ func TestEffectiveMonitorKey(t *testing.T) {
 	}
 	if k, warn := effectiveMonitorKey("ctrl-b"); k != "ctrl-b" || !strings.Contains(warn, "ignoring global settings") {
 		t.Fatalf("broken settings: %q %q", k, warn)
+	}
+}
+
+func TestFailedLoginNoticeNamesTheLoginAndTheFix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets.json")
+	if got := failedLoginNotice(path); got != "" {
+		t.Fatalf("no secrets.json: %q", got)
+	}
+	write := func(rs config.ResolvedSecrets) {
+		t.Helper()
+		if err := config.WriteSecretsFile(path, rs); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(config.ResolvedSecrets{OAuthSecrets: []config.ResolvedOAuthSecret{{Name: "ant-login", Provider: "anthropic"}}})
+	if got := failedLoginNotice(path); got != "" {
+		t.Fatalf("a working login: %q", got)
+	}
+	write(config.ResolvedSecrets{OAuthSecrets: []config.ResolvedOAuthSecret{{Name: "ant-login", Provider: "anthropic", Failure: "invalid_grant"}}})
+	if got := failedLoginNotice(path); got != "login ant-login failed: log in again, then hsh oauth promote --force anthropic ant-login" {
+		t.Fatalf("one failed login: %q", got)
+	}
+	write(config.ResolvedSecrets{OAuthSecrets: []config.ResolvedOAuthSecret{{Name: "a", Failure: "x"}, {Name: "b", Failure: "y"}}})
+	if got := failedLoginNotice(path); !strings.HasPrefix(got, "logins a, b failed") {
+		t.Fatalf("two failed logins: %q", got)
 	}
 }

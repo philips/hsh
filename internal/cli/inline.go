@@ -1,11 +1,12 @@
 package cli
 
 import (
-	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,12 +37,11 @@ func shutdownInline() {
 
 type inlineMonitor struct {
 	session    string
-	dbPath     string
 	configPath string
 	monitor    config.Monitor
 }
 
-func newInlineMonitor(cfg *config.Config, session, dbPath, configPath string, interactive bool) (*inlineMonitor, string) {
+func newInlineMonitor(cfg *config.Config, session, configPath string, interactive bool) (*inlineMonitor, string) {
 	switch {
 	case !cfg.Monitor.Enabled:
 		return nil, ""
@@ -57,7 +57,7 @@ func newInlineMonitor(cfg *config.Config, session, dbPath, configPath string, in
 	if _, err := relay.ParseKey(name); err != nil {
 		return nil, "hsh: " + err.Error() + "; the inline proxy review is disabled"
 	}
-	return &inlineMonitor{session: session, dbPath: dbPath, configPath: configPath, monitor: cfg.Monitor}, ""
+	return &inlineMonitor{session: session, configPath: configPath, monitor: cfg.Monitor}, ""
 }
 
 func effectiveMonitorKey(configKey string) (string, string) {
@@ -72,47 +72,14 @@ func effectiveMonitorKey(configKey string) (string, string) {
 }
 
 type sessionDenials struct {
-	dbPath    string
+	store     *monitordb.Store
 	session   string
 	cfgPath   string
 	configKey string
-
-	mu sync.Mutex
-	db *sql.DB
-}
-
-func (s *sessionDenials) open() (*sql.DB, error) {
-	if s.db != nil {
-		return s.db, nil
-	}
-	if !monitordb.Exists(s.dbPath) {
-		return nil, nil
-	}
-	db, err := monitordb.Open(s.dbPath)
-	if err != nil {
-		return nil, err
-	}
-	s.db = db
-	return db, nil
-}
-
-func (s *sessionDenials) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.db != nil {
-		s.db.Close()
-		s.db = nil
-	}
 }
 
 func (s *sessionDenials) Count() (int, int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	db, err := s.open()
-	if err != nil || db == nil {
-		return 0, 0, err
-	}
-	rows, err := monitordb.Pending(db, monitordb.Filter{Session: s.session})
+	rows, err := s.store.Pending(monitordb.Filter{Session: s.session})
 	held := 0
 	for _, r := range rows {
 		if r.Holding > 0 {
@@ -122,23 +89,46 @@ func (s *sessionDenials) Count() (int, int, error) {
 	return len(rows), held, err
 }
 
+func (s *sessionDenials) Notice() string {
+	return failedLoginNotice(filepath.Join(state.SessionDir(s.session), "secrets.json"))
+}
+
+func failedLoginNotice(secretsPath string) string {
+	data, err := os.ReadFile(secretsPath)
+	if err != nil {
+		return ""
+	}
+	var rs config.ResolvedSecrets
+	if err := json.Unmarshal(data, &rs); err != nil {
+		return ""
+	}
+	var failed []config.ResolvedOAuthSecret
+	for _, o := range rs.OAuthSecrets {
+		if o.Failure != "" {
+			failed = append(failed, o)
+		}
+	}
+	switch len(failed) {
+	case 0:
+		return ""
+	case 1:
+		return fmt.Sprintf("login %s failed: log in again, then hsh oauth promote --force %s %s", failed[0].Name, failed[0].Provider, failed[0].Name)
+	}
+	names := make([]string, len(failed))
+	for i, o := range failed {
+		names[i] = o.Name
+	}
+	return fmt.Sprintf("logins %s failed: log in again, then hsh oauth promote --force for each (hsh secret ls)", strings.Join(names, ", "))
+}
+
 func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	db, err := monitordb.Open(s.dbPath)
-	if err != nil {
-		return errorModel{err: err}
-	}
-	if s.db != nil {
-		s.db.Close()
-	}
-	s.db = db
+	db := s.store
 	filter := monitordb.Filter{Session: s.session}
-	pending, err := monitordb.Pending(db, filter)
+	pending, err := db.Pending(filter)
 	if err != nil {
 		return errorModel{err: err}
 	}
-	ignored, err := monitordb.Ignored(db, filter)
+	ignored, err := db.Ignored(filter)
 	if err != nil {
 		return errorModel{err: err}
 	}
@@ -200,7 +190,7 @@ func (m errorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 func (m errorModel) View() string {
-	return fmt.Sprintf("cannot open the monitor database: %v\n\npress any key to close", m.err)
+	return fmt.Sprintf("cannot read the denial records: %v\n\npress any key to close", m.err)
 }
 
 func attachWithRelay(name string, flags []string, running bool, im *inlineMonitor) (int, error) {
@@ -214,8 +204,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	if err != nil {
 		return 0, err
 	}
-	source := &sessionDenials{dbPath: im.dbPath, session: im.session, cfgPath: im.configPath, configKey: im.monitor.Key}
-	defer source.Close()
+	source := &sessionDenials{store: monitordb.DefaultStore(), session: im.session, cfgPath: im.configPath, configKey: im.monitor.Key}
 
 	master, slave, err := pty.Open()
 	if err != nil {
@@ -225,7 +214,7 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	r, err := relay.New(relay.Config{
 		In: os.Stdin, Out: os.Stdout, Pty: master, Cols: cols, Rows: rows,
 		StatusLine: im.monitor.StatusLine, Key: key,
-		Count: source.Count, Overlay: source.Overlay, Name: im.session,
+		Count: source.Count, Notice: source.Notice, Overlay: source.Overlay, Name: im.session,
 	})
 	if err != nil {
 		slave.Close()

@@ -53,13 +53,13 @@ flowchart TB
         hshrun["hsh run (host process)<br/>resolves secrets, copies config,<br/>creates pod, passes --session/--workspace"]
         pasta["pasta process<br/>(per-pod, dies when the pod stops)"]
         subgraph STATE["state: $XDG_STATE_HOME/hsh/"]
-            monitordb[("monitor.db<br/>global, attributed rows")]
             subgraph SESDIR["sessions/&lt;session-id&gt;/"]
                 cfgcopy[("config.json<br/>the only writable config")]
                 cafiles[("ca.crt / ca.key<br/>MITM CA (0600)")]
                 wsfile[("workspace<br/>absolute path")]
                 secretsjson[("secrets.json<br/>resolved keys + OAuth providers,<br/>scrubbed when idle")]
-                proxydir[("proxy/oauth-tokens.json<br/>OAuth captures (0700/0600),<br/>written by this session's proxy")]
+                decisions[("monitor.db<br/>approve/ignore decisions,<br/>written by the host")]
+                proxydir[("proxy/proxy.db + oauth-tokens.json<br/>denials, OAuth captures (0700/0600),<br/>written by this session's proxy")]
                 oauthph[("oauth-phantoms.json + seed/<br/>per-session login phantoms,<br/>seeded credential files")]
             end
         end
@@ -78,7 +78,7 @@ flowchart TB
     hshrun -->|"copies config, resolves secrets,<br/>writes session state"| SESDIR
 
     class hshrun,pasta,reaper proc
-    class monitordb,cfgcopy,cafiles,wsfile,secretsjson,proxydir,oauthph,secretstore,oauthprov,wsdir file
+    class cfgcopy,cafiles,wsfile,secretsjson,decisions,proxydir,oauthph,secretstore,oauthprov,wsdir file
 ```
 
 ### Pod side
@@ -136,11 +136,11 @@ flowchart LR
             cfgcopy[("config.json")]
             cafiles[("ca.crt / ca.key")]
             secretsjson[("secrets.json")]
+            decisions[("monitor.db")]
             noticedir[("notice/")]
             proxydir[("proxy/")]
             seeddir[("seed/")]
         end
-        monitordb[("monitor.db")]
         caBundle["host CA bundle"]
         wsdir[("workspace directory")]
     end
@@ -155,9 +155,9 @@ flowchart LR
     cfgcopy -.->|"ro → /hsh-session/config.json"| PROXY
     secretsjson -.->|"ro → /hsh-session/secrets.json"| PROXY
     cafiles -.->|"ro → /hsh-session/ca.crt + ca.key"| PROXY
+    decisions -.->|"ro → /hsh-session/monitor.db"| PROXY
     caBundle -.->|"ro → /hsh-roots.pem"| PROXY
-    monitordb <-.->|"rw → /hsh-state/monitor.db"| PROXY
-    proxydir <-.->|"rw → /hsh-proxy-state<br/>(oauth-tokens.json)"| PROXY
+    proxydir <-.->|"rw → /hsh-proxy-state<br/>(proxy.db, oauth-tokens.json)"| PROXY
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
     noticedir -.->|"ro → /hsh-run/notice"| WSC
     seeddir -.->|"ro → /hsh-run/seed"| WSC
@@ -167,7 +167,7 @@ flowchart LR
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
 
     class hshbin,pasta proc
-    class cfgcopy,cafiles,secretsjson,noticedir,proxydir,seeddir,monitordb,wsdir file
+    class cfgcopy,cafiles,secretsjson,decisions,noticedir,proxydir,seeddir,wsdir file
     class PROXY,WSC ctr
 ```
 
@@ -190,7 +190,11 @@ Reading notes:
   lifecycle control, and `===` is the pasta network uplink (see the
   interface diagram for the full mount set). The session directory is
   mounted read-only into the proxy only (config copy, resolved secrets,
-  CA); the workspace sees only the CA certificate and the network notice
+  CA, review decisions); the proxy's only writable host path is the
+  session's own `proxy/` directory. No proxy sees the state directory or
+  another session's directory, so a compromised proxy cannot read other
+  sessions' secrets, CA keys or captured tokens, or edit their configs.
+  The workspace sees only the CA certificate and the network notice
   directory. `secrets.json` never enters the workspace.
 - Pods do not share PID namespaces, so the workspace cannot see or
   signal the proxy's processes.
@@ -303,15 +307,16 @@ enabled per session with `network.approval_wait` (for example `"30s"`; at most
 `5m`; `off`/`0s` disables):
 
 - The denial is recorded first, so the host shows up in `hsh monitor` and
-  the inline status line at once, and `monitor.db`'s `holding` column counts
-  the requests currently held for that host (the monitor lists held hosts
+  the inline status line at once, and the `holding` column of the session's
+  `proxy.db` counts the requests currently held for that host (the monitor lists held hosts
   first with `HELD xN`; the status line says `(N held)`; the proxy zeroes
   its session's counts when it starts).
 - The proxy then polls every 250 ms. It lets the request through as soon
   as the host is allowed (an approval rewrites the session config and the
   proxy's one-second reload picks it up), fails it with the normal 403 as
-  soon as the user *ignores* the host (the row is marked ignored; hosts
-  already ignored are not held at all), and otherwise fails it when the wait
+  soon as the user *ignores* the host (the decision lands in the session's
+  `monitor.db`, which the proxy reads as `/hsh-session/monitor.db`;
+  hosts already ignored are not held at all), and otherwise fails it when the wait
   runs out, when holding is switched off by a reload, when nobody is watching
   any more, or when the client goes away. At most 64 requests are held at
   once; beyond that requests are denied immediately.
@@ -351,72 +356,109 @@ data via DNS tunneling without ever opening a TCP connection the proxy
 could check.
 
 A refused lookup is only logged (`dns: refused <name>`): it is not recorded
-in the `denied` table, not held, and never reaches `hsh monitor`. A lookup
+as a denial, not held, and never reaches `hsh monitor`. A lookup
 is not "the agent tried to reach X" — resolvers and tools issue speculative
 queries, and the workspace cannot reach a resolved name directly anyway —
 so review items come only from connection attempts (a refused CONNECT,
 plaintext request, or transparent connection). Approving a host makes both
 the lookup and the connection work.
 
-### Monitor database
+### Denial records and review decisions
 
-Everything the monitor shows is recorded in one SQLite database
-(modernc.org/sqlite — pure Go, so the `CGO_ENABLED=0` static build is
-unaffected) at `$XDG_STATE_HOME/hsh/monitor.db` (default
-`~/.local/state/hsh/monitor.db`, override with `hsh run --monitor-db PATH`).
-Today it holds the `denied` table below; the file is named for `hsh monitor`
-so later monitor state can live beside it. The database is opened in WAL
-mode with a busy timeout, so the proxy (writer) and the CLI (reader) can use
-it concurrently, including across simultaneous sessions.
+What the monitor shows is kept per session, in two SQLite databases
+(modernc.org/sqlite, pure Go, so the `CGO_ENABLED=0` static build is
+unaffected) with one writer each, so that no process writes where another
+session's proxy or the host trusts it:
 
-The schema version is `PRAGMA user_version`. `internal/dbschema` checks it
-inside one `BEGIN IMMEDIATE` transaction on every open: a file with version 0
-(new, or an existing file created without a version) gets the
-`CREATE TABLE IF NOT EXISTS` schema and the current version, so several
-proxies and a monitor starting at once agree on one schema; a file with a newer
-version is refused (`monitor.db has schema version N, newer than this hsh
-reads (version V); update hsh`) and an older one too (`remove PATH`); there are
-no migrations. `session.db` and `secrets.db` use the same check. A proxy
-container started from an older hsh than the database therefore fails to
-start with that message instead of writing rows it does not understand.
-
-The database is global: rows from every session and workspace land in one
-review queue, attributed per row — `hsh run` passes the session id and the
-workspace path to the proxy container (`--session`/`--workspace` on
-`hsh-proxy`), and both are stored on each row of the single `denied` table
-(keyed by host + session). `hsh proxy denied` and `hsh monitor` filter
-on `--session`/`--workspace`; `hsh proxy allow` takes a `--session` and
-writes that session's config copy, so one session's approvals never
-leak into another session's policy.
+| Database | Written by | Proxy sees it as | Content |
+|---|---|---|---|
+| `sessions/<id>/proxy/proxy.db` | the session's proxy | `/hsh-proxy-state/proxy.db` (rw) | the `denied` table |
+| `sessions/<id>/monitor.db` | the host (`hsh proxy allow`, `hsh monitor`, the inline review) | `/hsh-session/monitor.db` (ro) | the `decisions` table |
 
 ```sql
-CREATE TABLE IF NOT EXISTS denied (
-    host       TEXT NOT NULL,
-    session    TEXT NOT NULL DEFAULT '',
-    workspace  TEXT NOT NULL DEFAULT '',
-    target     TEXT NOT NULL,   -- host:port as requested
+CREATE TABLE IF NOT EXISTS denied (       -- proxy.db
+    host       TEXT PRIMARY KEY,
+    target     TEXT NOT NULL,               -- host:port as requested
     count      INTEGER NOT NULL,
-    first_seen TEXT NOT NULL,   -- RFC 3339, UTC
+    first_seen TEXT NOT NULL,               -- RFC 3339, UTC
     last_seen  TEXT NOT NULL,
-    allowed    INTEGER NOT NULL DEFAULT 0,
-    allowed_at TEXT,
+    holding    INTEGER NOT NULL DEFAULT 0   -- requests currently held
+);
+CREATE TABLE IF NOT EXISTS decisions (    -- monitor.db
+    host       TEXT PRIMARY KEY,
     ignored    INTEGER NOT NULL DEFAULT 0,
-    holding    INTEGER NOT NULL DEFAULT 0,  -- requests currently held
-    PRIMARY KEY (host, session)
+    decided_at TEXT NOT NULL
 );
 ```
 
-Recording is an upsert on host + session (count incremented,
-`last_seen` bumped); `allowed` marks rows already handled. Only
-connection denials (a refused CONNECT, plaintext request, or transparent
-connection) are recorded; refused DNS lookups are not — see the DNS section
-above. The state directory is bind-mounted
-read-write into the proxy container only — the workspace never sees it,
-so the agent cannot erase or forge its own denial record. Database
-errors are logged and never change the response: a denial is a denial
-with or without the log.
+Both use the default rollback journal, not WAL. With a single writer per
+database there is nothing for WAL to buy, and a read-only reader of a
+rollback-journal database creates no files: it takes a shared lock on the
+database file and opens nothing writable beside it (a WAL reader would open
+the `-shm` file read-write, which a proxy could point at any host file with
+a symlink). `hsh run` creates `monitor.db` with its schema before the proxy
+starts; the proxy creates `proxy.db`, zeroes `holding` when it starts, keeps
+at most 4096 hosts, and never records hosts that are not plain hostnames or
+IP addresses.
 
-The host-side commands work with the database:
+The schema version is `PRAGMA user_version`. `internal/dbschema` checks it
+inside one `BEGIN IMMEDIATE` transaction on every writable open: a file with
+version 0 (new) gets the `CREATE TABLE IF NOT EXISTS` schema and the current
+version; a newer version is refused (`proxy.db has schema version N, newer
+than this hsh reads (version V); update hsh`) and an older one too (`remove
+PATH`). `session.db` and `secrets.db` use the same check (`secrets.db` also
+has migrations). Read-only openers compare `user_version` themselves.
+
+The host-side readers (`hsh proxy denied`, `hsh monitor`, the inline status
+line and review screen) **union** the per-session databases: they walk
+`$XDG_STATE_HOME/hsh/sessions/`, read each session's `proxy/proxy.db`, and
+overlay that session's `monitor.db`. A host with a decision has left the
+queue (approved, or ignored when `ignored` is set); a later denial of the
+same host only bumps its count. Attribution comes from the host, not from
+the proxy: the session id is the directory name and the workspace is the
+session's `workspace` file, so a proxy can only add review items to its own
+session.
+
+`proxy.db` is untrusted input, and SQLite never opens it. A SQLite reader
+opens files by name (the database, and the `-journal` file when it checks
+for an interrupted write), so a proxy could swap in a symlink between a
+check and the open, or a FIFO that blocks the reader. The host instead takes
+a snapshot through one file descriptor:
+
+1. open `proxy/proxy.db` with `O_NOFOLLOW|O_NONBLOCK`, which fails on a
+   symlink and never blocks, and require a regular file;
+2. take SQLite's shared lock on that descriptor (the `fcntl` byte-range
+   protocol SQLite readers use: read-lock the pending byte, read-lock the
+   shared range, release the pending byte), waiting at most 250 ms, so a
+   proxy holding a lock only hides its own session's rows;
+3. if a `-journal` exists with content (checked with `lstat`, never opened)
+   and nobody holds the reserved lock, the last write was interrupted; skip
+   the session until the proxy recovers it;
+4. read at most 8 MiB through the descriptor, release the lock, and load the
+   bytes into an in-memory SQLite database (`sqlite3_deserialize`,
+   `trusted_schema=OFF`, `query_only`).
+
+Only the last path component is the proxy's: `proxy/` is the root of the
+proxy's bind mount (it cannot be renamed or replaced from inside), and the
+session directory above it is mounted read-only. Hard links from outside
+cannot be made either, since `link(2)` does not cross mount points. Rows
+with malformed hosts or targets are dropped (so a proxy cannot paint escape
+sequences into the monitor), and a snapshot that does not load, or has
+another schema version, is skipped. The
+proxy reads `monitor.db` read-only through its read-only session mount.
+
+Only connection denials (a refused CONNECT, plaintext request, or
+transparent connection) are recorded; refused DNS lookups are not — see the
+DNS section above. The workspace never sees either file, so the agent cannot
+erase or forge its own denial record. Recording errors are logged and never
+change the response: a denial is a denial with or without the record.
+
+A session created by an older hsh has a proxy container that mounts the
+whole state directory. `hsh resume` removes and recreates such a container
+when it is stopped; when it is still running, resume warns that the session
+must be exited and resumed to drop the mount.
+
+The host-side commands work with these records:
 
 ```
 hsh proxy denied [--session ID] [--workspace PATH] [--watch]   list the queue
@@ -425,13 +467,13 @@ hsh proxy allow --session ID https://example.com [--watch]    allow one host
 hsh monitor [--session ID] [--workspace PATH] [--all]         command palette (TUI)
 ```
 
-`proxy denied` prints pending rows (`allowed = 0`) as a table (session
+`proxy denied` prints pending hosts (no decision yet) as a table (session
 id, workspace, URL, count, last seen, sorted by count); a
 `--session`/`--workspace` filter narrows the output to bare URLs;
 `--watch` continuously prints new denials. `proxy allow` writes hosts
 into the session's config copy (`network.allow`), prints
-`added https://<host>` (or `already allowed`), and marks the rows
-allowed so they leave the queue — trust on first use: the first attempt
+`added https://<host>` (or `already allowed`), and records the hosts as
+approved in the session's `monitor.db` so they leave the queue — trust on first use: the first attempt
 is denied and recorded, review allows it, running proxies hot-reload
 the config within ~1s. `--all` approves everything pending for the
 session; a URL argument allows a single host (the URL is normalized to
@@ -464,19 +506,21 @@ view of ignored hosts (dimmed, non-selectable), `r` refresh, `?` help,
 
 Secrets are declared in the config as `secrets.<NAME>` with:
 
-- `from`: a reference URL — `env://VAR` (host environment variable,
-  also written as a bare `VAR`), or `hsh://NAME` (the hsh secret store;
-  see below). Unknown schemes fail at config load.
-- `hosts`: hosts the secret may be injected for
+- `from`: a reference URL, `hsh://NAME` (the hsh secret store; see
+  below). Unknown schemes and environment references (`env://VAR`, a bare
+  `VAR`) fail at config load: a config, and in particular an image label
+  anyone can publish, must not be able to read the user's environment.
+- `hosts`: hosts the secret should be injected for, narrowed to the hosts
+  the user approved for the secret in the store (below)
 - `header` (optional): header name; defaults to the secret name with `_`
   replaced by `-` (e.g. `API_KEY` → `Api-Key`)
 - `prefix` (optional): prepended verbatim to the value (e.g. `"Bearer "`)
 
 The flow keeps the secret out of the workspace entirely:
 
-1. `hsh run` resolves the references (`os.Getenv` for `env://`, the
-   secret store for `hsh://`) and writes the values
-   to `secrets.json` in a temporary directory (mode 0600)
+1. `hsh run` resolves the references in the secret store, keeps only the
+   route hosts approved for each secret, and writes the values to
+   `secrets.json` in the session directory (mode 0600)
 2. the temporary directory is bind-mounted read-only into the **proxy
    container only** — the workspace container never sees it
 3. the proxy injects `header: prefix+value` into requests whose host matches
@@ -495,17 +539,25 @@ hand-editing configs or exporting keys into their shell environment:
 - a SQLite database at `$XDG_CONFIG_HOME/hsh/secrets.db` (directory
   `0700`, file `0600`, plaintext values — the same trust level as
   `~/.netrc`; a first-use note warns about it)
-- `secret add NAME` prompts with echo disabled (or `--value-stdin` for
-  scripting); there is deliberately no `--value` flag, since values on
-  the command line leak into shell history and the process list
+- `secret add --host HOST NAME` prompts with echo disabled (or
+  `--value-stdin` for scripting); there is deliberately no `--value` flag,
+  since values on the command line leak into shell history and the process
+  list
+- each static secret records the hosts it may be sent to (the `hosts`
+  column, a JSON array, schema version 3; stores of version 2 migrate with
+  no approved hosts). `secret allow`/`disallow`/`edit` change the list. A
+  config route is injected only for hosts the list covers; any other host
+  is dropped with a warning naming the config source and the `hsh secret
+  allow` command, and an interactive `hsh run` asks first and records the
+  answer (see [config.md](config.md#host-binding)). So neither an image
+  label nor an agent-writable config file decides where a key goes
 - the value is referenced from a config's `secrets.<NAME>` entry with
   `from: "hsh://NAME"`
 - `secret rm` deletes the entry; it never edits the config; `secret ls`
-  prints names and timestamps, never values
+  prints names, timestamps and approved hosts, never values
 - only the host-side `hsh run` process and the `secret` subcommands touch
   the store; the store lives on the host and is never mounted into the
-  sandbox. A missing entry behaves exactly like an unset environment
-  variable: a warning, and the secret is skipped.
+  sandbox. A missing entry is a warning, and the secret is skipped.
 
 The scheme-based `from` makes further backends (OS keyrings, `dotenv`,
 password managers) a scheme-registration addition without changing the
@@ -735,10 +787,10 @@ touched.
 
 During the alpha period config and state schemas can change between
 releases, so `hsh wipe` offers a one-command clean slate: it deletes the
-whole config dir (`$XDG_CONFIG_HOME/hsh`: settings, secrets, oauth
-providers, image shortnames) and the whole state dir
-(`$XDG_STATE_HOME/hsh`: sessions, monitor and metrics databases, crash
-log) after printing both and requiring the user to type `YES` (exact,
+whole config dir (`$XDG_CONFIG_HOME/hsh`: settings, secrets, trusted
+images, oauth providers, image shortnames) and the whole state dir
+(`$XDG_STATE_HOME/hsh`: sessions with their proxy and monitor databases,
+metrics, crash log) after printing both and requiring the user to type `YES` (exact,
 case-sensitive) at a prompt; any other answer removes nothing. It refuses
 while hsh pods exist and points at `hsh rm --all --force` first — wiping
 state under a live sandbox would break the pod — but if the podman check
@@ -823,7 +875,7 @@ sessions per workspace.
   review list `internal/tui/proxywatch`) filtered to the session; the relay drives it directly (key parsing, running its commands,
   drawing its `View()` over every row) instead of starting a second
   program, so no terminal modes change. Opening it pauses the session by
-  not reading the pty. Denial data comes from `monitor.db` and approvals use
+  not reading the pty. Denial data comes from the session's `proxy.db` and approvals use
   the same code as `hsh monitor`. Changing the monitor key in the palette
   returns a `relay.KeyChange` message from its command; the relay switches
   the key it matches on and forwards the message to the palette. A second
@@ -869,7 +921,7 @@ sessions per workspace.
 - On re-entry the workspace entrypoint deletes the stale veth pair left
   in the pod network namespace and creates a fresh one; the proxy's
   listeners keep working across this.
-- Secrets are re-resolved from the host environment on every launch and
+- Secrets are re-resolved from the secret store on every launch and
   pushed to the running proxy via its hot-reloaded `secrets.json`.
 - Two terminals cannot be attached to one session; `hsh resume` refuses
   a session that is attached elsewhere unless given `--take-over`.

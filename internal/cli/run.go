@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -22,6 +23,7 @@ import (
 	"hsh/internal/config"
 	"hsh/internal/forward"
 	"hsh/internal/imageRef"
+	"hsh/internal/imagetrust"
 	"hsh/internal/monitordb"
 	"hsh/internal/netsetup"
 	"hsh/internal/notice"
@@ -36,7 +38,6 @@ type runOptions struct {
 	configPath  string
 	workdir     string
 	sessionID   string
-	monitorDB   string
 	secretDB    string
 	tasksPath   string
 	networkMode string
@@ -45,26 +46,26 @@ type runOptions struct {
 	resume      bool
 	takeOver    bool
 	rm          bool
+	trustImage  bool
 	forwards    stringArray
 	runtime     string
 }
 
 func runCommand() *ff.Command {
 	ro := runOptions{
-		monitorDB: monitordb.DefaultPath(),
-		secretDB:  secretstore.DefaultPath(),
-		pull:      "newer",
+		secretDB: secretstore.DefaultPath(),
+		pull:     "newer",
 	}
 	fs := ff.NewFlagSet("run")
 	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
 	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point)")
-	fs.StringVar(&ro.monitorDB, 0, "monitor-db", monitordb.DefaultPath(), "monitor database")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
 	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
 	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
+	fs.BoolVar(&ro.trustImage, 0, "trust-image", "apply the hsh config built into IMAGE, including its allowlist, network mode, OAuth providers, and mounts, and remember this image")
 	fs.StringVar(&ro.runtime, 0, "runtime", "", "sandbox runtime for a new session: gvisor (default), or container (the plain podman container runtime)")
 	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
@@ -176,6 +177,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	var cfg *config.Config
 	var mounts []config.Mount
 	var workspaceSource string
+	configSource := "the session config"
 
 	if resumeSession {
 		cfg, err = config.Load(sessionConfig)
@@ -217,6 +219,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			if err != nil {
 				return err
 			}
+			configSource = "config file " + absSeed
 		} else {
 			if image == "" {
 				return fmt.Errorf("no image given; try: hsh run IMAGE (a harness image supplies its default config via the org.ifup.hsh label), or pass --config")
@@ -229,6 +232,12 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			if err != nil {
 				return err
 			}
+			if label != "" {
+				if err := applyImageTrust(cfg, image, ro.trustImage); err != nil {
+					return err
+				}
+			}
+			configSource = "the org.ifup.hsh label of " + image
 			infof("hsh: using config from the org.ifup.hsh label of %s\n", image)
 		}
 		if image == "" {
@@ -370,7 +379,11 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			return err
 		}
 		rs, missing := res.Secrets, res.Missing
-		for _, w := range res.Warnings {
+		warnings := append([]string{}, res.Warnings...)
+		for _, u := range res.Unapproved {
+			warnings = append(warnings, unapprovedWarning(u, configSource))
+		}
+		for _, w := range warnings {
 			if !warnedOAuth[w] {
 				warnedOAuth[w] = true
 				fmt.Fprintf(os.Stderr, "hsh: warning: %s\n", w)
@@ -394,6 +407,13 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		infof("hsh: %d secret(s) and %d OAuth login(s) resolved, %d missing\n", len(rs.Secrets), len(rs.OAuthSecrets), len(missing))
 		return nil
+	}
+	if isTerminal(os.Stdin) && isTerminal(os.Stderr) {
+		if store := storeFor(cfg); store != nil {
+			if err := promptSecretHosts(cfg, store, configSource, os.Stdin, os.Stderr); err != nil {
+				return err
+			}
+		}
 	}
 	if err := resolve(cfg); err != nil {
 		return err
@@ -423,13 +443,12 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 
 	proxyName := podName + "-proxy"
 	wsName := podName + "-ws"
-	stateDir := filepath.Dir(ro.monitorDB)
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return err
-	}
 	proxyStateDir := filepath.Join(sessionDir, "proxy")
 	if err := os.MkdirAll(proxyStateDir, 0o700); err != nil {
 		return err
+	}
+	if err := monitordb.InitSession(sessionDir); err != nil {
+		return fmt.Errorf("session monitor database: %w", err)
 	}
 	proxyArgs := []string{
 		"create", "--pod", podName, "--name", proxyName,
@@ -437,7 +456,6 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--entrypoint", "/hsh-proxy",
 		"-v", exe + ":/hsh-proxy:ro",
 		"-v", sessionDir + ":/hsh-session:ro",
-		"-v", stateDir + ":/hsh-state",
 		"-v", proxyStateDir + ":/hsh-proxy-state",
 	}
 	roots := findRootBundle()
@@ -456,10 +474,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--secrets", "/hsh-session/secrets.json",
 		"--ca-cert", "/hsh-session/ca.crt",
 		"--ca-key", "/hsh-session/ca.key",
-		"--monitor-db", "/hsh-state/"+filepath.Base(ro.monitorDB),
+		"--proxy-db", "/hsh-proxy-state/"+monitordb.ProxyDBFile,
+		"--monitor-db", "/hsh-session/"+monitordb.MonitorDBFile,
 		"--oauth-store", "/hsh-proxy-state/oauth-tokens.json",
-		"--session", sessionID,
-		"--workspace", workspaceSource,
 		"--attended", "/hsh-session/attended",
 	)
 	if roots != "" {
@@ -483,6 +500,15 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	reattach := false
 	if resumeSession {
+		if containerExists(proxyName) && proxySeesStateDir(proxyName) {
+			if containerRunning(proxyName) {
+				fmt.Fprintf(os.Stderr, "hsh: warning: session %s's proxy was created by an older hsh and can read every session's state; exit its shell (or pick Exit in hsh monitor) and resume it to recreate the proxy\n", sessionID)
+			} else if out, err := podman("rm", "-f", proxyName); err != nil {
+				return fmt.Errorf("remove the outdated proxy container: %w\n%s", err, out)
+			} else {
+				infof("hsh: recreating session %s's proxy without the shared state mount\n", sessionID)
+			}
+		}
 		if !containerExists(proxyName) {
 			if out, err := podman(proxyArgs...); err != nil {
 				return fmt.Errorf("create proxy container: %w\n%s", err, out)
@@ -610,7 +636,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	var inline *inlineMonitor
 	if detachable {
 		var warn string
-		inline, warn = newInlineMonitor(cfg, sessionID, ro.monitorDB, sessionConfig, interactive)
+		inline, warn = newInlineMonitor(cfg, sessionID, sessionConfig, interactive)
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
@@ -716,6 +742,8 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 func sessionConfigError(sessionID string, err error) error {
 	var ve *config.VersionError
 	switch {
+	case errors.Is(err, config.ErrEnvReference):
+		return fmt.Errorf("session %s: %w; change the reference in %s, or remove the session with: hsh rm %s", sessionID, err, filepath.Join(state.SessionDir(sessionID), "config.json"), sessionID)
 	case errors.As(err, &ve) && ve.Stale():
 		return fmt.Errorf("session %s: %w; remove the session with: hsh rm %s", sessionID, err, sessionID)
 	case errors.As(err, &ve):
@@ -848,6 +876,19 @@ func readWorkspaceFile(sessionDir string) string {
 	return strings.TrimSpace(string(data))
 }
 
+func proxySeesStateDir(name string) bool {
+	out, err := podman("container", "inspect", "--format", `{{range .Mounts}}{{.Destination}}{{"\n"}}{{end}}`, name)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "/hsh-state" {
+			return true
+		}
+	}
+	return false
+}
+
 func podExists(name string) bool {
 	_, err := podman("pod", "exists", name)
 	return err == nil
@@ -867,12 +908,67 @@ func containerRunning(name string) bool {
 }
 
 func podman(args ...string) (string, error) {
-	cmd := exec.Command("podman", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+	return runPodman(exec.Command("podman", args...), args)
+}
+
+func runPodman(cmd *exec.Cmd, args []string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		return stderr.String() + stdout.String(), fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
 	}
-	return string(out), nil
+	if verbose && stderr.Len() > 0 {
+		fmt.Fprintf(os.Stderr, "hsh: podman %s: %s", strings.Join(args, " "), stderr.String())
+	}
+	return stdout.String(), nil
+}
+
+func imageID(image string) (string, error) {
+	out, err := podman("image", "inspect", "--format", "{{.Id}}", image)
+	if err != nil {
+		return "", fmt.Errorf("inspect image %s: %w\n%s", image, err, out)
+	}
+	return strings.TrimPrefix(strings.TrimSpace(out), "sha256:"), nil
+}
+
+func imageTrustExempt(image string) bool {
+	return strings.HasPrefix(image, "localhost/")
+}
+
+func applyImageTrust(cfg *config.Config, image string, trust bool) error {
+	if imageTrustExempt(image) {
+		return nil
+	}
+	id, err := imageID(image)
+	if err != nil {
+		return err
+	}
+	path := imagetrust.Path()
+	if trust {
+		if err := imagetrust.Trust(path, id, image); err != nil {
+			return fmt.Errorf("record the trusted image: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "hsh: trusting the hsh config built into %s (image %s), recorded in %s\n", image, shortID(id), path)
+		return nil
+	}
+	trusted, err := imagetrust.Trusted(path, id)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if trusted {
+		return nil
+	}
+	if dropped := cfg.RestrictUntrustedImage(); len(dropped) > 0 {
+		fmt.Fprintf(os.Stderr, "hsh: warning: the hsh config built into %s (image %s) is not trusted, so hsh ignored its %s. Show it with: podman image inspect --format '{{index .Labels \"org.ifup.hsh\"}}' %s, and trust it with: hsh run --trust-image %s\n", image, shortID(id), strings.Join(dropped, "; "), image, image)
+	}
+	return nil
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func imageLabel(image string) (string, error) {

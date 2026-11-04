@@ -25,12 +25,16 @@ type holdEnv struct {
 	proxy    *Proxy
 	cfgPath  string
 	attended string
-	db       string
+	store    *monitordb.Store
 }
 
 func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	t.Helper()
-	dir := t.TempDir()
+	root := t.TempDir()
+	dir := filepath.Join(root, "sessions", "s1")
+	if err := os.MkdirAll(filepath.Join(dir, "proxy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	cfgPath := filepath.Join(dir, "config.json")
 	writeCfg := func(allow string) {
 		doc := fmt.Sprintf(`{"version": 1, "network": {"mode": %q, "allow": [%s]%s}}`, mode, allow, waitJSON(wait))
@@ -48,7 +52,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 			t.Fatal(err)
 		}
 	}
-	e := &holdEnv{t: t, cfgPath: cfgPath, attended: filepath.Join(dir, "attended"), db: filepath.Join(dir, "monitor.db")}
+	e := &holdEnv{t: t, cfgPath: cfgPath, attended: filepath.Join(dir, "attended"), store: monitordb.NewStore(filepath.Join(root, "sessions"))}
 	if attended {
 		if err := attend.Touch(e.attended); err != nil {
 			t.Fatal(err)
@@ -57,8 +61,8 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	p, err := New(Options{
 		ListenAddr: "127.0.0.1:0", ConfigPath: cfgPath, SecretsPath: filepath.Join(dir, "secrets.json"),
 		CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"),
-		MonitorDB: e.db, OAuthStore: filepath.Join(dir, "tokens.json"),
-		Session: "s1", Workspace: "/ws", AttendedPath: e.attended,
+		ProxyDB: monitordb.ProxyDBPath(dir), MonitorDB: monitordb.MonitorDBPath(dir),
+		OAuthStore: filepath.Join(dir, "proxy", "tokens.json"), AttendedPath: e.attended,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +76,13 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 		t.Fatal(err)
 	}
 	go func() { _ = (&http.Server{Handler: p}).Serve(ln) }()
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() {
+		ln.Close()
+		deadline := time.Now().Add(5 * time.Second)
+		for p.holds.active.Load() > 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 	e.addr, e.proxy = ln.Addr().String(), p
 	return e
 }
@@ -161,12 +171,7 @@ func (e *holdEnv) allow(hosts ...string) {
 
 func (e *holdEnv) ignore(host string) {
 	e.t.Helper()
-	db, err := monitordb.Open(e.db)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	defer db.Close()
-	if err := monitordb.MarkIgnored(db, "s1", []string{host}); err != nil {
+	if err := e.store.MarkIgnored("s1", []string{host}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -371,12 +376,7 @@ func query(addr, name string, qtype uint16, timeout time.Duration) (*dns.Msg, er
 
 func (e *holdEnv) deniedRows() []monitordb.DeniedHost {
 	e.t.Helper()
-	db, err := monitordb.Open(e.db)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := monitordb.All(db, monitordb.Filter{Session: "s1"})
+	rows, err := e.store.All(monitordb.Filter{Session: "s1"})
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -442,12 +442,7 @@ func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
 	req := e.send(connectTo("blocked.test:443"))
 	time.Sleep(500 * time.Millisecond)
 	holding := func() int {
-		db, err := monitordb.Open(e.db)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer db.Close()
-		rows, err := monitordb.All(db, monitordb.Filter{Session: "s1"})
+		rows, err := e.store.All(monitordb.Filter{Session: "s1"})
 		if err != nil || len(rows) != 1 {
 			t.Fatalf("%+v %v", rows, err)
 		}
@@ -465,28 +460,28 @@ func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
 }
 
 func TestProxyStartClearsStaleHoldingCounts(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "monitor.db")
-	db, err := monitordb.Open(dbPath)
+	root := t.TempDir()
+	dir := filepath.Join(root, "s1")
+	if err := os.MkdirAll(filepath.Join(dir, "proxy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := monitordb.OpenRecorder(monitordb.ProxyDBPath(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := monitordb.Record(db, "/ws", "s1", "stale.test", "stale.test:443"); err != nil {
+	if err := rec.Record("stale.test", "stale.test:443"); err != nil {
 		t.Fatal(err)
 	}
-	if err := monitordb.AdjustHolding(db, "s1", "stale.test", 4); err != nil {
+	if err := rec.AdjustHolding("stale.test", 4); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
 	ca, _ := certs.NewCA()
 	os.WriteFile(filepath.Join(dir, "ca.crt"), ca.CertPEM(), 0o600)
 	os.WriteFile(filepath.Join(dir, "ca.key"), ca.KeyPEM(), 0o600)
-	if _, err := New(Options{CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"), MonitorDB: dbPath, Session: "s1"}); err != nil {
+	if _, err := New(Options{CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"), ProxyDB: monitordb.ProxyDBPath(dir)}); err != nil {
 		t.Fatal(err)
 	}
-	db, _ = monitordb.Open(dbPath)
-	defer db.Close()
-	rows, _ := monitordb.Pending(db, monitordb.Filter{Session: "s1"})
+	rows, _ := monitordb.NewStore(root).Pending(monitordb.Filter{Session: "s1"})
 	if len(rows) != 1 || rows[0].Holding != 0 {
 		t.Fatalf("stale counts survived the proxy start: %+v", rows)
 	}

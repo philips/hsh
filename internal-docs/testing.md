@@ -21,8 +21,9 @@ proxy, the monitor database, and the example image:
 - ensures the fixture image exists (builds it with
   `podman build -t hsh-example test/fixtures/` if missing)
 - **step 1**: a curl to a not-yet-allowlisted host (`api.mistral.ai`) is
-  denied with 403 and recorded in a throwaway `monitor.db` (which carries a
-  schema version, with no `denied.db` beside it), attributed
+  denied with 403 and recorded in the session's `proxy/proxy.db` (with a
+  schema version; the session also has its own `monitor.db`, and no shared
+  `monitor.db` is created), attributed
   with the session id and workspace; the session state directory holds
   the config copy and workspace file
 - **step 2**: `hsh proxy allow --all --session ID` adds the denied host to
@@ -49,10 +50,22 @@ proxy, the monitor database, and the example image:
   old subcommand names are gone
 - **step 8**: `hsh run IMAGE` uses the image's `org.ifup.hsh` label
   config (mount, allowlist, and an `hsh://` secret resolved from the
-  store, matching the harness images' labels)
+  store, matching the harness images' labels); a label that routes a stored
+  secret to a host the secret is not approved for gets no injection and a
+  warning naming the label and the `hsh secret allow` command, and after
+  `hsh secret allow` (shown by `secret ls`) the secret is injected; a label
+  with an `env://` secret fails to load; the same image under a
+  non-`localhost/` name is untrusted (its built-in allowlist is dropped, with
+  a warning naming what was dropped and `--trust-image`), `--trust-image`
+  applies it and records the image id, a later run remembers it, and a
+  rebuilt image with a changed config is untrusted again
 - **step 9**: a sandboxed OAuth login (`test/oauthsrv`): the sandbox
   sees only phantom tokens, API calls and refresh flows redeem them at
-  the proxy, and the real tokens stay in the host-side store
+  the proxy, and the real tokens stay in the host-side store; step 9b
+  promotes the login to the host. Afterwards every session's proxy log,
+  OAuth companion log, and the `hsh` outputs of the OAuth steps are
+  searched for the fake providers' real token strings, which must not
+  appear
 - **step 10**: the same OAuth flow inside the `hsh-vibe` image (skipped
   if that image is not built locally)
 - **step 11**: `hsh run IMAGE --tasks` — the image's agent command
@@ -63,7 +76,8 @@ proxy, the monitor database, and the example image:
   names; `--network allowlist` and `--network none` deny it
 - **step 13**: the secret store — `hsh secret add` stores values (0600
   file, 0700 directory), refuses duplicates without `--force`, `secret
-  ls` shows names but never values, an `hsh://` config reference resolves
+  ls` shows names but never values, `secret add` requires `--host`, an
+  `hsh://` config reference resolves
   through the store and is injected (observed in the dummy endpoint's
   request log), and after `secret rm` the entry goes missing: a warning,
   no injection, the request still forwarded, and the config left
@@ -86,6 +100,13 @@ proxy, the monitor database, and the example image:
   disabling during a hold, unattended and stale markers, `none` mode, the
   default being off, the concurrency cap, client disconnects, the `holding`
   counts, and DNS lookups never being held or recorded
+- **step 19b**: proxy isolation — two sessions run at once; `podman exec` into
+  one proxy finds no `/hsh-state`, exactly one `ca.key`, and session files
+  (configs, secrets, `proxy.db`, `monitor.db`)
+  only under its own `/hsh-session` (read-only) and `/hsh-proxy-state`
+  (writable); its mount table holds no path of the other session or the
+  state directory, and the only writable state mounts are its own `proxy/`
+  (and the gVisor `netstack/` socket directory)
 - **step 23**: ssh into a session — `ssh -N -L` through the `hsh
   ssh config` ProxyCommand reaches a node server on the sandbox's loopback;
   a 5 MiB response and eight concurrent connections cross one ssh
@@ -128,8 +149,8 @@ proxy, the monitor database, and the example image:
   re-pickup), busy local ports, dial-failure warnings, and a closing session
 - **step 26**: schema versions — a seed config with no version, a newer one,
   or an unknown field, and an image label with no version or a newer one,
-  are refused with the documented message and create no session; `secrets.db`
-  and `monitor.db` with a newer `user_version` are refused; in a live session
+  are refused with the documented message and create no session; a `secrets.db`
+  with a newer `user_version` is refused; in a live session
   the session config is replaced by a newer-version file, `hsh proxy allow`
   refuses and leaves it unchanged, the running proxy keeps denying a host the
   new file would allow and logs the failed reload, `hsh resume` explains and
@@ -177,25 +198,47 @@ Run it with:
 ```
 
 `internal/proxy/oauth_test.go` covers the OAuth capture over both the
-plain-HTTP and the TLS MITM path as Go unit tests.
-`internal/monitordb` covers the single-table record lifecycle, the schema
-version, and concurrent first opens; `internal/dbschema` covers the
-`user_version` check (new, adopted, newer, older, concurrent) shared by
-`monitor.db`, `session.db`, and `secrets.db`; `internal/secretstore` covers the
+plain-HTTP and the TLS MITM path as Go unit tests;
+`internal/proxy/tokenguard_test.go` covers blocking token-bearing
+responses from other paths on a token host (plain, gzip, transparently
+decompressed, undecodable encodings) while ordinary JSON, error responses,
+and large bodies pass. `internal/relay/notice_test.go` covers the failed
+login notice on the status line (with escape sequences stripped), and
+`internal/cli` the notice text read from `secrets.json`.
+`internal/monitordb` covers the per-session `proxy.db` and `monitor.db`
+(the readers' union across sessions with host-side attribution, ignore and
+approve, holding counts and their reset, the proxy's view of decisions,
+refusing malformed hosts, an untrusted `proxy.db`: escape sequences, a
+symlink, a FIFO in place of the database or its journal not blocking, a
+corrupt file, a newer schema, a lock held by another process not stalling
+readers, a write in progress showing the committed rows, an interrupted
+write hiding the session, and readers creating no files; and concurrent
+decisions); `internal/state` covers reading proxy-written files and
+resolving its marker entries without following symlinks or blocking on
+FIFOs; `internal/dbschema`
+covers the `user_version` check (new, adopted, newer, older, concurrent)
+shared by `proxy.db`, `monitor.db`, `session.db`, and `secrets.db`; `internal/secretstore` covers the
 store CRUD, overwrite semantics, file/directory permissions, and adopting an
-unversioned store with its secrets; `internal/config` covers secret reference
-parsing (`env://`, `hsh://`, bare, unknown schemes), resolution through
-a fake store, the version rules (missing,
+unversioned store with its secrets, the approved hosts (normalized, allow,
+disallow, kept across `--force`, the version 2 migration, and an unversioned
+store getting the column); `internal/config` covers secret reference
+parsing (`env://`, `hsh://`, bare, unknown schemes), environment references
+refused in labels and files, resolution through a fake store, the host
+binding (exact hosts, wildcards, narrowing, a store without approvals
+injecting nothing), host normalization, the version rules (missing,
 newer, older, unknown fields, editors refusing unreadable versions), and a
 schema test (`testdata/schema-v<N>.txt`) that fails when the config fields
 change without a `Version` bump (update it with `go test ./internal/config
 -run TestSchemaMatchesVersion -update-schema`); `internal/proxy` covers a
 reload with a newer config keeping the old policy; `internal/cli`
-covers `secret add`/`rm`/`ls` behavior via `--value-stdin`.
+covers `secret add`/`allow`/`disallow`/`edit`/`rm`/`ls` behavior via
+`--value-stdin` and a scripted `$VISUAL`, and the launch prompt for
+unapproved hosts and its warning text.
 
 Requirements: Go, rootless podman, network access (for `api.mistral.ai` and
 the image build), and port 8899 free on the host. The test is hermetic: it
-uses a temporary config, workspace, and monitor database, and cleans up after
+uses temporary `XDG_STATE_HOME` and `XDG_CONFIG_HOME` directories (state,
+secret store, settings) and a temporary workspace, and cleans up after
 itself. When a step fails, the artifacts are kept in a temp directory (the
 path is printed) for debugging.
 

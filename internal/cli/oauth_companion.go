@@ -16,6 +16,7 @@ import (
 	"hsh/internal/config"
 	"hsh/internal/oauthprov"
 	"hsh/internal/secretstore"
+	"hsh/internal/state"
 )
 
 const (
@@ -70,10 +71,6 @@ func refreshLogin(ctx context.Context, client *http.Client, desc oauthprov.Descr
 		next.Failure = ""
 		return next, nil
 	}
-}
-
-func refreshWantedPath(sessionDir, secret string) string {
-	return filepath.Join(sessionDir, "proxy", "refresh-wanted", url.PathEscape(secret))
 }
 
 type oauthCompanion struct {
@@ -174,8 +171,8 @@ func (c *oauthCompanion) refreshIfNeeded(ctx context.Context, store *secretstore
 		c.logf("login %s: %v", name, err)
 		return
 	}
-	marker := refreshWantedPath(c.sessionDir, name)
-	wanted := fileExists(marker)
+	proxyDir, markerName := filepath.Join(c.sessionDir, "proxy"), url.PathEscape(name)
+	wanted := state.UntrustedEntryExists(proxyDir, "refresh-wanted", markerName)
 	needed := func(cur config.OAuthSecret) bool {
 		if cur.Failure != "" {
 			return false
@@ -196,7 +193,7 @@ func (c *oauthCompanion) refreshIfNeeded(ctx context.Context, store *secretstore
 		c.logf("login %s: refreshed (expires %s)", name, next.ExpiresAt.UTC().Format(time.RFC3339))
 	}
 	if wanted {
-		_ = os.Remove(marker)
+		_ = state.RemoveUntrustedEntry(proxyDir, "refresh-wanted", markerName)
 	}
 }
 

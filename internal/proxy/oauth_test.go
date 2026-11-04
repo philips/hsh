@@ -146,7 +146,7 @@ func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, n
 		SecretsPath: filepath.Join(dir, "secrets.json"),
 		CACertPath:  filepath.Join(dir, "ca.crt"),
 		CAKeyPath:   filepath.Join(dir, "ca.key"),
-		MonitorDB:   "",
+		ProxyDB:     "",
 		OAuthStore:  storePath,
 		NetworkMode: networkMode,
 	}

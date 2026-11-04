@@ -36,8 +36,8 @@ func runWipe(in io.Reader, out io.Writer, pods []podInfo, podsErr error) error {
 	cfgDir := settings.Dir()
 	stateDir := state.Dir()
 	fmt.Fprintln(out, "this will permanently remove:")
-	fmt.Fprintf(out, "  %s (settings, secrets, oauth providers, image shortnames)\n", cfgDir)
-	fmt.Fprintf(out, "  %s (sessions, monitor and metrics databases, crash log)\n", stateDir)
+	fmt.Fprintf(out, "  %s (settings, secrets, trusted images, oauth providers, image shortnames)\n", cfgDir)
+	fmt.Fprintf(out, "  %s (sessions with their proxy and monitor databases, metrics, crash log)\n", stateDir)
 	fmt.Fprint(out, "type YES to wipe: ")
 	answer, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {

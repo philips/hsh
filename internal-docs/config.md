@@ -10,7 +10,10 @@ positional, or the current directory when omitted) and stored as absolute
 paths in the session copy.
 
 Without `--config`, `hsh run IMAGE` uses the image's `org.ifup.hsh` label
-as the config - see [pre-built harness images](images.md).
+as the config - see [pre-built harness images](images.md). That built-in
+config is untrusted until `hsh run --trust-image IMAGE` trusts that image;
+until then its allowlist, network mode, OAuth providers, and mounts are
+ignored ([image trust](images.md#image-trust)).
 
 ```json
 {
@@ -20,7 +23,7 @@ as the config - see [pre-built harness images](images.md).
   "mounts": [".:/workspace"],
   "secrets": {
     "API_KEY": {
-      "from": "env://OPENAI_API_KEY",
+      "from": "hsh://openai-api-key",
       "hosts": ["api.openai.com"],
       "header": "Authorization",
       "prefix": "Bearer "
@@ -88,8 +91,8 @@ The workspace starts in the first mount's target directory
 
 | Field | Required | Description |
 |---|---|---|
-| `from` | yes | secret reference: `env://VAR`, `hsh://NAME`, or a bare `VAR` (treated as `env://VAR`) |
-| `hosts` | yes (static secrets) | hosts the secret is injected for (same matching as `network.allow`); for an OAuth login it defaults to the provider's API hosts and may only narrow them |
+| `from` | yes | secret reference: `hsh://NAME`, an entry of the [hsh secret store](#the-hsh-secret-store) |
+| `hosts` | yes (static secrets) | hosts the secret is injected for (same matching as `network.allow`), narrowed to the hosts approved for the secret in the store ([host binding](#host-binding)); for an OAuth login it defaults to the provider's API hosts and may only narrow them |
 | `header` | no | header to set; defaults to the secret name with `_` -> `-` |
 | `prefix` | no | string prepended to the value, e.g. `"Bearer "` |
 | `seed` | no | for an OAuth login (`hsh://NAME` promoted with `hsh oauth promote`): seed templates from the provider descriptor to write into new sessions ([seeds](oauth.md#seeds)) |
@@ -101,10 +104,15 @@ host-scoped routes and proxy-side injection instead of environment
 injection:
 https://nono.sh/docs/cli/features/credential-injection
 
-If the referenced value is missing (an unset environment variable or an
-absent store entry), hsh prints a warning and the secret is not injected
-(fail-open for availability; the request is still forwarded, just without
-the header). An unknown scheme is a hard error at config load.
+If the referenced store entry is missing, hsh prints a warning and the
+secret is not injected (fail-open for availability; the request is still
+forwarded, just without the header). An unknown scheme is a hard error at
+config load, and so are environment references (`env://VAR` or a bare
+`VAR`): they let any config or image label send any variable of the user's
+environment to any host, so the error names the `hsh secret add` command
+that replaces them. A session config with such a reference (from an older
+hsh) does not load either; `hsh resume` names the file to change and
+`hsh rm`.
 
 Injection happens for every request to a matching host, **replacing** any
 value the workspace sent for that header. Hosts with a secret are
@@ -117,7 +125,7 @@ prefix explicitly, because the default header name (the secret name with
 ```json
 "secrets": {
   "API_KEY": {
-    "from": "env://MISTRAL_API_KEY",
+    "from": "hsh://mistral-api-key",
     "hosts": ["api.mistral.ai"],
     "header": "Authorization",
     "prefix": "Bearer "
@@ -134,11 +142,11 @@ directories where the sandbox can read them.
 
 ### The hsh secret store
 
-Instead of exporting keys into your shell environment, store them once
-in hsh's own secret store and reference them by name:
+Store each key once in hsh's own secret store, together with the hosts it
+may be sent to, and reference it by name:
 
 ```
-hsh secret add mistral-api-key
+hsh secret add --host api.mistral.ai mistral-api-key
 ```
 
 `secret add` prompts for the value with echo disabled (never on the
@@ -148,8 +156,11 @@ reference it from a config's `secrets.<NAME>` entry with
 `from: "hsh://NAME"`.
 
 ```
-hsh secret add NAME [--db PATH] [--force] [--value-stdin]
-hsh secret rm NAME [--db PATH]
+hsh secret add --host HOST [--host HOST]... [--db PATH] [--force] [--value-stdin] NAME
+hsh secret allow [--db PATH] NAME HOST...
+hsh secret disallow [--db PATH] NAME HOST...
+hsh secret edit [--db PATH] NAME
+hsh secret rm [--db PATH] NAME
 hsh secret ls [--db PATH]
 ```
 
@@ -159,9 +170,10 @@ hsh secret ls [--db PATH]
 - the directory is created `0700` and the database `0600`; values are
   stored **unencrypted**, readable only by your user - the same trust
   level as `~/.netrc` or `~/.aws/credentials` (a first-use note says so)
-- `secret ls` prints names and timestamps, never values
+- `secret ls` prints names, timestamps and approved hosts, never values
 - `secret rm` deletes the entry; it never edits the config
-- adding an existing name fails without `--force`
+- adding an existing name fails without `--force`; `--force` replaces the
+  value and keeps the approved hosts unless `--host` is given
 
 A config entry referencing the store:
 
@@ -175,6 +187,36 @@ A config entry referencing the store:
   }
 }
 ```
+
+### Host binding
+
+A config route only says where a secret *should* go. Where it *may* go is
+recorded with the secret, by the user, in the store: `hsh secret add`
+requires at least one `--host` (repeatable or comma-separated; a hostname
+such as `api.example.com`, or `*.example.com` for its subdomains; URLs and
+ports are reduced to the host), `hsh secret allow`/`disallow` add or remove
+hosts, and `hsh secret edit` opens the list in `$VISUAL`/`$EDITOR` (one host
+per line, `#` comments; an invalid list is not saved).
+
+At every resolution (launch, config reload, and the OAuth companion's
+rewrites of `secrets.json`), a static secret is injected only for the route
+hosts its approved hosts cover: an exact name, or a name or narrower
+wildcard under an approved `*.` wildcard. Narrowing is fine; every other
+route host is dropped with a warning that names the source and the fix:
+
+```
+hsh: warning: secret API_KEY (hsh://mistral-api-key) is not sent to evil.example: the org.ifup.hsh label of IMAGE asks for it, but you have not approved hsh://mistral-api-key for that host; allow it with: hsh secret allow mistral-api-key evil.example
+```
+
+The source is the image label or the `--config` file for a new session and
+"the session config" on `hsh resume`. A secret whose route hosts are all
+unapproved is not injected anywhere. When `hsh run` or `hsh resume` runs in a
+terminal, it asks first, once per unapproved host
+(`... asks to send hsh://NAME (as API_KEY) to HOST. Allow? [y/N]`), and
+records a yes in the store; a secret with no approved hosts yet (one stored
+before hosts were recorded) gets a one-line explanation first.
+Non-interactive runs never ask. OAuth logins are not affected: their hosts
+come from the user's provider descriptors.
 
 ## Network policy modes
 
@@ -374,7 +416,9 @@ agent cannot trigger or forge any of it itself
   review` (plus `(M held)` when requests are waiting on you) as the proxy
   records denials for the session, and red while the monitor is open
   (`"status_line": false` removes the reserved row). The line names the
-  configured key
+  configured key. It also turns red with `login NAME failed: log in again,
+  then hsh oauth promote --force PROVIDER NAME` while an OAuth login the
+  session uses is marked failed ([oauth.md](oauth.md#host-held-logins))
 - the monitor key turns the line red and takes over the whole screen with
   the [`hsh monitor`](#the-monitor) command palette, scoped to this session.
   When the session has proxy requests waiting for review it opens straight
@@ -456,9 +500,10 @@ and the config's key is used.
 ## Managing the allowlist
 
 Denied egress attempts are answered with `403 Forbidden` and recorded in the
-monitor database, a SQLite file (`$XDG_STATE_HOME/hsh/monitor.db`, default
-`~/.local/state/hsh/monitor.db`, override with `hsh run --monitor-db PATH`).
-Two subcommands manage it:
+session's own SQLite database (`$XDG_STATE_HOME/hsh/sessions/<id>/proxy/proxy.db`,
+written by that session's proxy). The review commands read every session's
+`proxy.db` and keep the user's decisions in `sessions/<id>/monitor.db`
+(see [architecture.md](architecture.md#denial-records-and-review-decisions)):
 
 ```
 hsh proxy denied [--session ID] [--watch]   # list the review queue
@@ -599,7 +644,7 @@ Minimal dev sandbox with an API key:
   "version": 1,
   "mounts": [".:/workspace"],
   "secrets": {
-    "API_KEY": {"from": "env://OPENAI_API_KEY", "hosts": ["api.openai.com"]}
+    "API_KEY": {"from": "hsh://openai-api-key", "hosts": ["api.openai.com"]}
   },
   "network": {"allow": ["api.openai.com", "registry.npmjs.org", "github.com"]}
 }
