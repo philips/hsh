@@ -6,8 +6,9 @@ directory (`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the
 copy - not the seed - is the live config, hot-reloaded and edited by the
 review commands. The seed file is never modified in place. Relative mount
 sources are resolved against the workspace directory (the `WORKSPACE-DIR`
-positional, or the current directory when omitted) and stored as absolute
-paths in the session copy.
+positional) and stored as absolute paths in the session copy. Without
+`WORKSPACE-DIR` no mounts apply
+([sessions without a workspace](#sessions-without-a-workspace)).
 
 Without `--config`, `hsh run IMAGE` uses the image's `org.ifup.hsh` label
 as the config - see [pre-built harness images](images.md). That built-in
@@ -73,7 +74,7 @@ bump.
 | `version` | required | config schema version, `1` ([versions](#config-versions)) |
 | `image` | `docker.io/library/alpine:latest` | container image for both the proxy and workspace containers |
 | `shell` | `/bin/sh` | shell to exec in the workspace |
-| `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax) |
+| `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax); relative sources resolve against `WORKSPACE-DIR`, and none apply without one ([sessions without a workspace](#sessions-without-a-workspace)) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
 | `network.approval_wait` | `off` | opt-in: how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)) |
@@ -374,7 +375,7 @@ id is the pod name suffix):
 ```
 config.json   the session's config copy - the only writable config
 ca.crt ca.key the session's MITM CA (stable across re-entries)
-workspace     file with the absolute path of the workspace
+workspace     file with the absolute path of the workspace (empty without one)
 ```
 
 - sessions persist when the shell exits: the pod is stopped (infra and
@@ -403,6 +404,27 @@ workspace     file with the absolute path of the workspace
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
   every sandbox; `hsh rm --exited` removes exited sandboxes; `hsh rm
   --garbage` collects session state whose pod is gone
+
+### Sessions without a workspace
+
+`hsh run IMAGE` with no `WORKSPACE-DIR` mounts no host directory. Use
+`hsh run IMAGE .` to mount the current directory. Without a workspace:
+
+- the config's `mounts` are not applied, whether they come from the image
+  label, a trusted image, or `--config`. A list other than the default
+  `.:/workspace` is named in a warning. The session's config copy records
+  `"mounts": []`, so resuming the session doesn't mount anything either
+- the shell starts in `/workspace`, an ordinary directory in the
+  workspace container's filesystem. hsh creates it if the image has none,
+  and strips setuid bits there like everywhere else in the image
+- `/workspace` keeps its contents across detach, exit, and `hsh resume`,
+  because the workspace container is stopped, not removed. gVisor sessions
+  run with `--overlay2=none`, so their writes land in the same container
+  layer. The contents are lost when the session is removed (`hsh rm`,
+  `--rm`) or when resume has to recreate the workspace container
+- the pod has no `hsh.workspace` label and the session's `workspace` file
+  is empty. `hsh ls` shows `-`. `hsh resume` with no argument, `hsh resume
+  DIR`, and `hsh rm DIR` never match these sessions; use the session id
 
 ## Inline proxy review
 

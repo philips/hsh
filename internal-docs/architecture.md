@@ -161,7 +161,7 @@ flowchart LR
     cafiles -.->|"ca.crt only<br/>ro → /hsh-run/ca.crt"| WSC
     noticedir -.->|"ro → /hsh-run/notice"| WSC
     seeddir -.->|"ro → /hsh-run/seed"| WSC
-    wsdir <-.->|"rw → /workspace<br/>(the shared filesystem)"| WSC
+    wsdir <-.->|"rw → /workspace<br/>(only with WORKSPACE-DIR)"| WSC
     pasta ===|"user-mode network uplink"| POD
 
     hshbin ==>|"creates / re-enters pod:<br/>rootless podman, container uid 0 = host user<br/>(subuid map)"| POD
@@ -185,7 +185,10 @@ Reading notes:
   needs it to create new entries — whiteouts and directory copy-up — in
   image-layer directories; without it `dnf`/`rpm` unpacks fail with
   "cpio: symlink failed - Permission denied"), sets NO_NEW_PRIVS, and
-  setuid binaries are stripped from the workspace.
+  setuid and setgid bits are stripped from the container's filesystem.
+  When the workspace directory is a host mount, it is skipped. When
+  there is no workspace (`--private-workspace`), it is image content and
+  gets stripped too.
 - **Filesystem**: dashed edges are bind mounts, thick arrows are pod
   lifecycle control, and `===` is the pasta network uplink (see the
   interface diagram for the full mount set). The session directory is
@@ -851,13 +854,15 @@ failure is a warning, never a failed session.
 
 A **workspace** is the host directory the first mount sources from
 (recorded as the pod label `hsh.workspace`); there may be several
-sessions per workspace.
+sessions per workspace. A session started without `WORKSPACE-DIR` has
+no mounts, no label, and a `/workspace` that lives only in its
+workspace container.
 
 - Every `hsh run` creates a persistent session. The seed config
   (`--config PATH`, or the image's `org.ifup.hsh` label) is copied into
   the session directory with mounts resolved against the workspace
-  directory (the `WORKSPACE-DIR` positional, or the current directory
-  when omitted) to absolute paths; the copy is the live config — watched
+  directory (the `WORKSPACE-DIR` positional; none apply without it) to
+  absolute paths; the copy is the live config — watched
   for hot reload,
   and the only file the review commands edit.
 - When the shell exits the whole pod is stopped (proxy and infra

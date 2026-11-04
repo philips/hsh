@@ -22,26 +22,28 @@ import (
 )
 
 type ParentOptions struct {
-	Shell        string
-	Exec         []string
-	Launch       []string
-	ContextFiles []string
-	Workspace    string
-	Home         string
-	CACert       string
-	ProxyAddr    string
-	InnerExe     string
+	Shell            string
+	Exec             []string
+	Launch           []string
+	ContextFiles     []string
+	Workspace        string
+	PrivateWorkspace bool
+	Home             string
+	CACert           string
+	ProxyAddr        string
+	InnerExe         string
 }
 
 type InnerOptions struct {
-	Shell        string
-	Exec         []string
-	Launch       []string
-	ContextFiles []string
-	Workspace    string
-	Home         string
-	CACert       string
-	ProxyAddr    string
+	Shell            string
+	Exec             []string
+	Launch           []string
+	ContextFiles     []string
+	Workspace        string
+	PrivateWorkspace bool
+	Home             string
+	CACert           string
+	ProxyAddr        string
 }
 
 func RunParent(opts ParentOptions) error {
@@ -70,6 +72,9 @@ func RunParent(opts ParentOptions) error {
 		"--proxy-addr", opts.ProxyAddr,
 		"--workspace", opts.Workspace,
 		"--home", opts.Home,
+	}
+	if opts.PrivateWorkspace {
+		innerArgs = append(innerArgs, "--private-workspace")
 	}
 	if len(opts.Exec) > 0 {
 		execJSON, err := json.Marshal(opts.Exec)
@@ -186,7 +191,14 @@ func enterSession(opts InnerOptions) error {
 		fmt.Fprintf(os.Stderr, "hsh: seeding credential files: %v\n", err)
 	}
 	applyNotice(&opts, notice.Path)
-	stripSetuid(opts.Workspace)
+	if err := os.MkdirAll(opts.Workspace, 0o755); err != nil {
+		return err
+	}
+	if opts.PrivateWorkspace {
+		stripSetuid("")
+	} else {
+		stripSetuid(opts.Workspace)
+	}
 
 	// Its owner is the parent-namespace UID selected by the mapping, which
 	// is 1000 in this example. Access still depends on Linux permission
@@ -386,7 +398,10 @@ func installCA(caPath string) error {
 }
 
 func stripSetuid(skip string) {
-	skipAbs, _ := filepath.Abs(skip)
+	skipAbs := ""
+	if skip != "" {
+		skipAbs, _ = filepath.Abs(skip)
+	}
 	_ = filepath.WalkDir("/", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil

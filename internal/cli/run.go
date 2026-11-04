@@ -58,7 +58,7 @@ func runCommand() *ff.Command {
 	}
 	fs := ff.NewFlagSet("run")
 	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
-	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point)")
+	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point, or "+privateWorkspaceDir+" when there is no workspace)")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
 	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
@@ -114,11 +114,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if err := forward.CheckLocal("127.0.0.1", forwardSpecs); err != nil {
 		return err
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-	workspaceRoot := cwd
+	workspaceRoot := ""
 	if workspaceArg != "" {
 		workspaceRoot, err = filepath.Abs(workspaceArg)
 		if err != nil {
@@ -206,7 +202,6 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			}
 			infof("hsh: image %s\n", image)
 		}
-		mountBase := workspaceRoot
 		if ro.configPath != "" {
 			absSeed, err := filepath.Abs(ro.configPath)
 			if err != nil {
@@ -251,20 +246,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			infof("hsh: image %s\n", image)
 		}
 		cfg.Image = image
-		mounts, err = cfg.ParsedMounts(mountBase)
+		var warning string
+		mounts, workspaceSource, warning, err = sessionMounts(cfg, workspaceRoot, configSource)
 		if err != nil {
 			return err
 		}
-		absMounts := make([]string, 0, len(mounts))
-		for _, m := range mounts {
-			am := m.Source + ":" + m.Target
-			if m.Options != "" {
-				am += ":" + m.Options
-			}
-			absMounts = append(absMounts, am)
+		if workspaceRoot == "" {
+			fmt.Fprintf(os.Stderr, "hsh: no workspace directory given; %s is private to the sandbox (to mount the current directory: hsh run IMAGE .)\n", privateWorkspaceDir)
 		}
-		cfg.Mounts = absMounts
-		workspaceSource = mounts[0].Source
+		if warning != "" {
+			fmt.Fprintf(os.Stderr, "hsh: warning: %s\n", warning)
+		}
 		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 			return err
 		}
@@ -312,7 +304,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 
 	wsDir := ro.workdir
 	if wsDir == "" {
-		wsDir = mounts[0].Target
+		wsDir = privateWorkspaceDir
+		if len(mounts) > 0 {
+			wsDir = mounts[0].Target
+		}
 	}
 	var agentExec []string
 	if tasksPrompt != "" {
@@ -525,11 +520,17 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		reattach = true
 		recordSessionVersion(sessionDir, "resumed")
-		infof("hsh: resuming session %s for workspace %s\n", sessionID, workspaceSource)
+		if workspaceSource != "" {
+			infof("hsh: resuming session %s for workspace %s\n", sessionID, workspaceSource)
+		} else {
+			infof("hsh: resuming session %s\n", sessionID)
+		}
 	} else {
 		infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
-		podCreateArgs := []string{"pod", "create", "--name", podName,
-			"--label", "hsh.workspace=" + workspaceSource}
+		podCreateArgs := []string{"pod", "create", "--name", podName}
+		if workspaceSource != "" {
+			podCreateArgs = append(podCreateArgs, "--label", "hsh.workspace="+workspaceSource)
+		}
 		if gv != nil {
 			podCreateArgs = append(podCreateArgs, "--infra=false", "--share", "")
 		} else if os.Getenv("HSH_NESTED") == "1" {
@@ -609,6 +610,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	)
 	if gv != nil {
 		wsArgs = append(wsArgs, "--netstack")
+	}
+	if len(mounts) == 0 {
+		wsArgs = append(wsArgs, "--private-workspace")
 	}
 	if len(agentExec) > 0 {
 		execJSON, err := json.Marshal(agentExec)
@@ -866,6 +870,38 @@ func ensureCA(sessionDir string, existing bool) (*certs.CA, error) {
 		return nil, err
 	}
 	return ca, nil
+}
+
+const privateWorkspaceDir = "/workspace"
+
+func sessionMounts(cfg *config.Config, workspaceRoot, configSource string) ([]config.Mount, string, string, error) {
+	if workspaceRoot == "" {
+		warning := ""
+		def := config.Default().Mounts
+		if len(cfg.Mounts) > 0 && strings.Join(cfg.Mounts, "\x00") != strings.Join(def, "\x00") {
+			warning = fmt.Sprintf("ignoring mounts (%s) from %s: no workspace directory given", config.ListOf(cfg.Mounts), configSource)
+		}
+		cfg.Mounts = []string{}
+		return nil, "", warning, nil
+	}
+	mounts, err := cfg.ParsedMounts(workspaceRoot)
+	if err != nil {
+		return nil, "", "", err
+	}
+	absMounts := make([]string, 0, len(mounts))
+	for _, m := range mounts {
+		am := m.Source + ":" + m.Target
+		if m.Options != "" {
+			am += ":" + m.Options
+		}
+		absMounts = append(absMounts, am)
+	}
+	cfg.Mounts = absMounts
+	workspaceSource := ""
+	if len(mounts) > 0 {
+		workspaceSource = mounts[0].Source
+	}
+	return mounts, workspaceSource, "", nil
 }
 
 func readWorkspaceFile(sessionDir string) string {

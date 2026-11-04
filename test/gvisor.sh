@@ -79,7 +79,7 @@ echo gvisor-secret-value-77 | "$HSH" secret add --value-stdin --host host.contai
 cd "$TMP/workspace"
 
 echo "== step 1: a gVisor session proxies, injects secrets, and denies"
-"$HSH" run --config "$TMP/config.hsh" --runtime gvisor --pull never >"$TMP/run1.out" 2>&1 <<'CMDS' || true
+"$HSH" run --config "$TMP/config.hsh" --runtime gvisor --pull never localhost/hsh-example:latest . >"$TMP/run1.out" 2>&1 <<'CMDS' || true
 echo "kernel=$(uname -r)"
 echo "proxyenv=$(env | grep -ci _proxy)"
 echo "secretenv=$(env | grep -c gvisor-secret-value)"

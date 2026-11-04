@@ -133,10 +133,12 @@ image's label as its config:
 $ hsh run ghcr.io/ifup/hsh-vibe:latest my-project
 ```
 
-The workspace directory (the `WORKSPACE-DIR` positional, or the current
-directory when omitted) is mounted at `/workspace` (or whatever `mounts`
-the label specifies, resolved against the workspace directory), the
-label's allowlist and secrets are applied, and only the image's
+The workspace directory (the `WORKSPACE-DIR` positional; `.` for the
+current directory) is mounted at `/workspace` (or whatever `mounts`
+the label specifies, resolved against the workspace directory). Without
+`WORKSPACE-DIR` nothing is mounted (see
+[sessions without a workspace](config.md#sessions-without-a-workspace)).
+The label's allowlist and secrets are applied, and only the image's
 declared provider endpoints are reachable. The harness images pin
 `"mode":"allowlist"` in their labels to keep that promise; the
 default mode for configs without one is `https` (TLS to any host —

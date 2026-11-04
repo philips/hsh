@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func listOf(items []string) string {
+func ListOf(items []string) string {
 	const shown = 4
 	if len(items) <= shown {
 		return strings.Join(items, ", ")
@@ -16,7 +16,7 @@ func listOf(items []string) string {
 func (c *Config) RestrictUntrustedImage() []string {
 	var dropped []string
 	if len(c.Network.Allow) > 0 {
-		dropped = append(dropped, "network.allow ("+listOf(c.Network.Allow)+")")
+		dropped = append(dropped, "network.allow ("+ListOf(c.Network.Allow)+")")
 		c.Network.Allow = nil
 	}
 	if mode := c.Network.ModeOrDefault(); mode != "allowlist" {
@@ -24,12 +24,12 @@ func (c *Config) RestrictUntrustedImage() []string {
 		c.Network.Mode = "allowlist"
 	}
 	if len(c.OAuth.Providers) > 0 {
-		dropped = append(dropped, "oauth.providers ("+listOf(c.OAuth.Providers)+")")
+		dropped = append(dropped, "oauth.providers ("+ListOf(c.OAuth.Providers)+")")
 		c.OAuth = OAuth{}
 	}
 	def := Default().Mounts
 	if strings.Join(c.Mounts, "\x00") != strings.Join(def, "\x00") {
-		dropped = append(dropped, "mounts ("+listOf(c.Mounts)+"; using "+strings.Join(def, ", ")+")")
+		dropped = append(dropped, "mounts ("+ListOf(c.Mounts)+"; using "+strings.Join(def, ", ")+")")
 		c.Mounts = def
 	}
 	return dropped

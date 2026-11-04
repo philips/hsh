@@ -15,6 +15,7 @@ func Workspace(args []string) error {
 	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
+	privateWorkspace := fs.Bool("private-workspace", false, "the workspace directory is not a host mount: create it and strip setuid bits inside it too")
 	home := fs.String("home", "/home/hsh", "home directory")
 	innerExe := fs.String("inner-exe", "", "path to the hsh-workspace-inner binary (empty: re-exec self with the workspace-inner subcommand)")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
@@ -43,25 +44,27 @@ func Workspace(args []string) error {
 	}
 	if *netstack {
 		return workspace.RunDirect(workspace.InnerOptions{
-			Shell:        *shell,
-			Exec:         exec,
-			Launch:       launch,
-			ContextFiles: contextFiles,
-			Workspace:    *workspaceDir,
-			Home:         *home,
-			CACert:       *caCert,
+			Shell:            *shell,
+			Exec:             exec,
+			Launch:           launch,
+			ContextFiles:     contextFiles,
+			Workspace:        *workspaceDir,
+			PrivateWorkspace: *privateWorkspace,
+			Home:             *home,
+			CACert:           *caCert,
 		})
 	}
 	return workspace.RunParent(workspace.ParentOptions{
-		Shell:        *shell,
-		Exec:         exec,
-		Launch:       launch,
-		ContextFiles: contextFiles,
-		Workspace:    *workspaceDir,
-		Home:         *home,
-		CACert:       *caCert,
-		ProxyAddr:    *proxyAddr,
-		InnerExe:     *innerExe,
+		Shell:            *shell,
+		Exec:             exec,
+		Launch:           launch,
+		ContextFiles:     contextFiles,
+		Workspace:        *workspaceDir,
+		PrivateWorkspace: *privateWorkspace,
+		Home:             *home,
+		CACert:           *caCert,
+		ProxyAddr:        *proxyAddr,
+		InnerExe:         *innerExe,
 	})
 }
 
@@ -72,6 +75,7 @@ func WorkspaceInner(args []string) error {
 	caCert := fs.String("ca-cert", "/hsh-run/ca.crt", "CA certificate path")
 	proxyAddr := fs.String("proxy-addr", netsetup.ProxyAddr(), "egress proxy address")
 	workspaceDir := fs.String("workspace", "/workspace", "workspace directory")
+	privateWorkspace := fs.Bool("private-workspace", false, "the workspace directory is not a host mount: create it and strip setuid bits inside it too")
 	home := fs.String("home", "/home/hsh", "home directory")
 	launchJSON := fs.String("launch-json", "", "JSON array argv launched from the interactive shell (agent harness)")
 	contextJSON := fs.String("context-files-json", "", "JSON array of instruction files that get the network notice block")
@@ -101,13 +105,14 @@ func WorkspaceInner(args []string) error {
 		}
 	}
 	return workspace.RunInner(workspace.InnerOptions{
-		Shell:        *shell,
-		Exec:         exec,
-		Launch:       launch,
-		ContextFiles: contextFiles,
-		Workspace:    *workspaceDir,
-		Home:         *home,
-		CACert:       *caCert,
-		ProxyAddr:    *proxyAddr,
+		Shell:            *shell,
+		Exec:             exec,
+		Launch:           launch,
+		ContextFiles:     contextFiles,
+		Workspace:        *workspaceDir,
+		PrivateWorkspace: *privateWorkspace,
+		Home:             *home,
+		CACert:           *caCert,
+		ProxyAddr:        *proxyAddr,
 	})
 }

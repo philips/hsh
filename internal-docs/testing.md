@@ -159,6 +159,15 @@ proxy, the monitor database, and the example image:
   container-runtime sessions created before the mount existed) makes `hsh
   forward`, `hsh ssh proxy`, and `hsh oauth callback` fail with the recreate
   message naming `hsh rm`
+- **step 28**: `hsh run IMAGE` with no `WORKSPACE-DIR` prints the
+  private-workspace notice. The shell starts in an empty `/workspace`
+  that is not a mount point, and writes there never reach the host. The
+  session has an empty `workspace` file, `"mounts": []` in its config
+  copy, no pod label, and `-` in `hsh ls`. The contents of `/workspace`
+  survive `hsh resume <id>`. A `--config` with mounts run without
+  `WORKSPACE-DIR` warns that it ignored them and mounts nothing.
+  `internal/cli` has Go tests for the mount decision and for the
+  empty-mounts round trip through the session config
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,

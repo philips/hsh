@@ -148,7 +148,7 @@ for variant in ${VARIANTS:-v0 v1 v2 v3 v4}; do
 		cleanup_pods
 		rm -rf "$XDG_STATE_HOME"
 		log="$OUT/$variant-$i.jsonl"
-		(cd "$WS" && timeout "$TIMEOUT" "$HSHBIN" run --pull=never --config "$OUT/config.hsh" --tasks "$TASKS" >"$log" 2>"$log.err")
+		(cd "$WS" && timeout "$TIMEOUT" "$HSHBIN" run --pull=never --config "$OUT/config.hsh" --tasks "$TASKS" "$IMAGE" . >"$log" 2>"$log.err")
 		echo "exit=$? ($variant run $i)"
 		summarize "$log" "$variant run $i"
 		HSH_NO_UPDATE_CHECK=1 "$HSHBIN" proxy denied 2>/dev/null | tail -n +2 | awk '{ print "   denied:", $3, "count=" $4 }'
