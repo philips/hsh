@@ -70,7 +70,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	if err := p.reload(); err != nil {
 		t.Fatal(err)
 	}
-	go p.watch(100 * time.Millisecond)
+	p.startWatch(100 * time.Millisecond)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

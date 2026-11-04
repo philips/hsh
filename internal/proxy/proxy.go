@@ -120,7 +120,7 @@ func (p *Proxy) Run() error {
 	allowN, secretN := len(p.st.allow), len(p.st.secrets)
 	p.mu.RUnlock()
 	log.Printf("configuration loaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
-	go p.watch(1 * time.Second)
+	p.startWatch(1 * time.Second)
 	if p.opts.NetstackPath != "" {
 		p.resolvers = readResolvers("/etc/resolv.conf")
 		if len(p.resolvers) == 0 {
@@ -181,9 +181,13 @@ func (p *Proxy) reload() error {
 	return nil
 }
 
-func (p *Proxy) watch(interval time.Duration) {
+func (p *Proxy) startWatch(interval time.Duration) {
 	lastCfg, _ := os.ReadFile(p.opts.ConfigPath)
 	lastSec, _ := os.ReadFile(p.opts.SecretsPath)
+	go p.watch(interval, lastCfg, lastSec)
+}
+
+func (p *Proxy) watch(interval time.Duration, lastCfg, lastSec []byte) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for range t.C {
