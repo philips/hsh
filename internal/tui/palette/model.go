@@ -2,10 +2,13 @@ package palette
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +18,7 @@ import (
 	"hsh/internal/monitordb"
 	"hsh/internal/relay"
 	"hsh/internal/settings"
+	"hsh/internal/sshd"
 	"hsh/internal/state"
 	"hsh/internal/tui/proxywatch"
 )
@@ -28,6 +32,7 @@ type Options struct {
 	SettingsPath string
 	MonitorKey   string
 	Sessions     *SessionOps
+	Forwards     *ForwardOps
 	InSession    bool
 }
 
@@ -35,6 +40,23 @@ type SessionOps struct {
 	Attached func(id string) bool
 	Detach   func(id string) (string, error)
 	Exit     func(id string) (string, error)
+}
+
+type Managed struct {
+	ID      string
+	Session string
+	Bind    string
+	Local   int
+	Remote  int
+	PID     int
+	Started time.Time
+}
+
+type ForwardOps struct {
+	List      func() ([]Managed, error)
+	Start     func(session string, remote int) (Managed, error)
+	Stop      func(id string) (string, error)
+	Listening func(session string) ([]sshd.Listener, error)
 }
 
 type view int
@@ -47,14 +69,18 @@ const (
 	viewSessionPick
 	viewConfirmExit
 	viewMonitorKey
+	viewPortPick
+	viewForwardPick
 )
 
 const (
-	cmdReview = "review"
-	cmdAllow  = "allow"
-	cmdKey    = "key"
-	cmdDetach = "detach"
-	cmdExit   = "exit"
+	cmdReview       = "review"
+	cmdAllow        = "allow"
+	cmdKey          = "key"
+	cmdDetach       = "detach"
+	cmdExit         = "exit"
+	cmdForwardStart = "fwd-start"
+	cmdForwardStop  = "fwd-stop"
 )
 
 type sessionOpMsg struct {
@@ -73,24 +99,43 @@ type allowMsg struct {
 
 type keyErrMsg struct{ err error }
 
+type portsMsg struct {
+	session string
+	ports   []sshd.Listener
+	err     error
+}
+
+type forwardStartMsg struct {
+	managed Managed
+	err     error
+}
+
+type forwardStopMsg struct {
+	text string
+	err  error
+}
+
 type Model struct {
-	opts       Options
-	view       view
-	commands   picker
-	sessions   picker
-	keys       picker
-	host       textinput.Model
-	allowEntry string
-	pickFor    string
-	target     string
-	review     proxywatch.Model
-	hasReview  bool
-	reviewOnly bool
-	monitorKey string
-	status     string
-	isError    bool
-	width      int
-	height     int
+	opts           Options
+	view           view
+	commands       picker
+	sessions       picker
+	keys           picker
+	ports          picker
+	forwards       picker
+	host           textinput.Model
+	allowEntry     string
+	forwardSession string
+	pickFor        string
+	target         string
+	review         proxywatch.Model
+	hasReview      bool
+	reviewOnly     bool
+	monitorKey     string
+	status         string
+	isError        bool
+	width          int
+	height         int
 }
 
 func New(o Options) Model {
@@ -104,6 +149,8 @@ func New(o Options) Model {
 		commands:   newPicker("type a command"),
 		sessions:   newPicker("type to find a session"),
 		keys:       newPicker("type to find a key"),
+		ports:      newPicker("type to find a port"),
+		forwards:   newPicker("type to find a forward"),
 		host:       newTextInput("host: ", "example.com, *.example.com, or a URL"),
 		width:      80,
 		height:     24,
@@ -144,6 +191,16 @@ func (m *Model) refreshCommands() {
 		items = append(items,
 			item{id: cmdDetach, text: "Session: detach session", note: allow},
 			item{id: cmdExit, text: "Session: exit session", note: allow},
+		)
+	}
+	if m.opts.Forwards != nil {
+		note := ""
+		if active, err := m.opts.Forwards.List(); err == nil {
+			note = fmt.Sprintf("%d active", len(active))
+		}
+		items = append(items,
+			item{id: cmdForwardStart, text: "Forward: start a forward", note: note},
+			item{id: cmdForwardStop, text: "Forward: stop a forward", note: note},
 		)
 	}
 	m.commands.setItems(items)
@@ -188,6 +245,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case keyErrMsg:
 		m.setStatus("error: "+msg.err.Error(), true)
 		return m, nil
+	case portsMsg:
+		return m.applyPorts(msg), nil
+	case forwardStartMsg:
+		return m.applyForwardStart(msg), nil
+	case forwardStopMsg:
+		return m.applyForwardStop(msg), nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -262,6 +325,34 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.sessions.update(msg)
+	case viewPortPick:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.back()
+			return m, nil
+		case tea.KeyEnter:
+			if it, ok := m.ports.selected(); ok {
+				port, err := strconv.Atoi(it.id)
+				if err != nil {
+					return m, nil
+				}
+				return m, m.startForwardCmd(m.forwardSession, port)
+			}
+			return m, nil
+		}
+		return m, m.ports.update(msg)
+	case viewForwardPick:
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.back()
+			return m, nil
+		case tea.KeyEnter:
+			if it, ok := m.forwards.selected(); ok {
+				return m, m.stopForwardCmd(it.id)
+			}
+			return m, nil
+		}
+		return m, m.forwards.update(msg)
 	case viewConfirmExit:
 		switch msg.Type {
 		case tea.KeyEsc:
@@ -333,6 +424,32 @@ func (m Model) run() (tea.Model, tea.Cmd) {
 		m.keys.reset()
 		m.keys.selectID(keyID(m.monitorKey))
 		m.view = viewMonitorKey
+	case cmdForwardStart:
+		if s := m.opts.Filter.Session; s != "" {
+			return m.listPorts(s)
+		}
+		sessions := listSessions()
+		if len(sessions) == 0 {
+			m.setStatus("no sessions", false)
+			return m, nil
+		}
+		m.pickFor = cmdForwardStart
+		m.sessions.setItems(sessions)
+		m.sessions.reset()
+		m.view = viewSessionPick
+	case cmdForwardStop:
+		active, err := m.opts.Forwards.List()
+		if err != nil {
+			m.setStatus("error: "+err.Error(), true)
+			return m, nil
+		}
+		if len(active) == 0 {
+			m.setStatus("no active forwards", false)
+			return m, nil
+		}
+		m.forwards.setItems(forwardItems(active))
+		m.forwards.reset()
+		m.view = viewForwardPick
 	}
 	return m, nil
 }
@@ -353,6 +470,9 @@ func (m Model) sessionItems(attachedOnly bool) []item {
 }
 
 func (m Model) sessionAction(kind, id string) (tea.Model, tea.Cmd) {
+	if kind == cmdForwardStart {
+		return m.listPorts(id)
+	}
 	m.target = id
 	if kind == cmdExit {
 		m.view = viewConfirmExit
@@ -371,6 +491,108 @@ func (m Model) sessionOpCmd(kind, id string) tea.Cmd {
 		}
 		text, err := op(id)
 		return sessionOpMsg{text: text, quit: quit && err == nil, err: err}
+	}
+}
+
+func (m Model) listPorts(session string) (tea.Model, tea.Cmd) {
+	m.forwardSession = session
+	m.ports.setItems(nil)
+	m.ports.reset()
+	m.setStatus("listing ports…", false)
+	m.view = viewPortPick
+	ops := m.opts.Forwards
+	return m, func() tea.Msg {
+		ports, err := ops.Listening(session)
+		return portsMsg{session: session, ports: ports, err: err}
+	}
+}
+
+func (m Model) applyPorts(msg portsMsg) Model {
+	if m.view != viewPortPick || msg.session != m.forwardSession {
+		return m
+	}
+	if msg.err != nil {
+		m.setStatus("error: "+msg.err.Error(), true)
+		m.back()
+		return m
+	}
+	if len(msg.ports) == 0 {
+		m.setStatus("session "+msg.session+" is not listening on any port", false)
+		m.back()
+		return m
+	}
+	m.setStatus("", false)
+	m.ports.setItems(portItems(msg.ports))
+	m.ports.reset()
+	return m
+}
+
+func portItems(ports []sshd.Listener) []item {
+	var items []item
+	for _, l := range ports {
+		items = append(items, item{id: strconv.Itoa(l.Port), text: strconv.Itoa(l.Port), note: l.Addr})
+	}
+	return items
+}
+
+func (m Model) startForwardCmd(session string, remote int) tea.Cmd {
+	ops := m.opts.Forwards
+	return func() tea.Msg {
+		f, err := ops.Start(session, remote)
+		return forwardStartMsg{managed: f, err: err}
+	}
+}
+
+func (m Model) applyForwardStart(msg forwardStartMsg) Model {
+	if msg.err != nil {
+		m.setStatus("error: "+msg.err.Error(), true)
+		return m
+	}
+	m.setStatus(fmt.Sprintf("forwarding %s -> session %s's port %d", net.JoinHostPort(msg.managed.Bind, strconv.Itoa(msg.managed.Local)), msg.managed.Session, msg.managed.Remote), false)
+	m.back()
+	m.refreshCommands()
+	return m
+}
+
+func (m Model) stopForwardCmd(id string) tea.Cmd {
+	ops := m.opts.Forwards
+	return func() tea.Msg {
+		text, err := ops.Stop(id)
+		return forwardStopMsg{text: text, err: err}
+	}
+}
+
+func (m Model) applyForwardStop(msg forwardStopMsg) Model {
+	if msg.err != nil {
+		m.setStatus("error: "+msg.err.Error(), true)
+		return m
+	}
+	m.setStatus(msg.text, false)
+	m.back()
+	m.refreshCommands()
+	return m
+}
+
+func forwardItems(active []Managed) []item {
+	var items []item
+	for _, f := range active {
+		items = append(items, item{
+			id:   f.ID,
+			text: fmt.Sprintf("%s  %d -> %d", f.Session, f.Local, f.Remote),
+			note: "started " + forwardAge(time.Since(f.Started)),
+		})
+	}
+	return items
+}
+
+func forwardAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 	}
 }
 
@@ -571,8 +793,11 @@ func (m Model) View() string {
 		}
 	case viewSessionPick:
 		heading := "Session: detach which session?"
-		if m.pickFor == cmdExit {
+		switch m.pickFor {
+		case cmdExit:
 			heading = "Session: exit which session?"
+		case cmdForwardStart:
+			heading = "Forward: start a forward in which session?"
 		}
 		sections = []string{
 			titleStyle.Render(heading),
@@ -581,6 +806,24 @@ func (m Model) View() string {
 			"",
 			m.statusView(),
 			helpStyle.Render("  type to filter • ↑/↓ move • enter choose • esc back"),
+		}
+	case viewPortPick:
+		sections = []string{
+			titleStyle.Render("Forward: forward which port of session " + m.forwardSession + "?"),
+			"",
+			m.ports.view(listRows),
+			"",
+			m.statusView(),
+			helpStyle.Render("  type to filter • ↑/↓ move • enter forward • esc back"),
+		}
+	case viewForwardPick:
+		sections = []string{
+			titleStyle.Render("Forward: stop which forward?"),
+			"",
+			m.forwards.view(listRows),
+			"",
+			m.statusView(),
+			helpStyle.Render("  type to filter • ↑/↓ move • enter stop • esc back"),
 		}
 	case viewConfirmExit:
 		sections = []string{

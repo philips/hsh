@@ -481,26 +481,44 @@ its hostname). `--watch` keeps approving new denials as they appear.
 
 `monitor` is the interactive counterpart (bubbletea/bubbles TUI,
 requires a terminal, runs full-screen in the alternate screen buffer):
-a multi-select table of pending denials — SESSION, WORKSPACE, URL,
+a fuzzy command palette over the records above. It opens on the
+review screen when denials are pending — SESSION, WORKSPACE, URL,
 COUNT, LAST SEEN, in that order — most recently requested first,
-refreshed live every 2s. `--session`/`--workspace` scope the view (the
-title shows the active scope) and the columns fill the terminal
-width. Keys: `space` select the cursor row, `a`/`n` select/clear all,
-`enter` approve the selected hosts (added to the session's
-`network.allow`, marked allowed), `i` ignore them (marked handled
-without allowing), `t` toggle a view of ignored rows (marked
-"(ignored)", not selectable), `/` filter the table live while typing
-(matches session ids, workspaces, and hosts; `tab` completes the input
-against sessions, workspaces, and hostnames — unique matches fill in,
-ambiguous ones extend to the common prefix and list the candidates in
-the status line; `enter` keeps the filter, `esc` clears it), `r`
-refresh, `↑/↓/j/k` navigate, `q` quit. Keys: `space` select,
-`a`/`n` select/clear all (ignoring any active filter), `/` filter,
-`enter` approve the selected hosts (added to the session's
-`network.allow`, marked allowed), `i` ignore them (marked handled
-without allowing: they leave the review list permanently), `t` toggle a
-view of ignored hosts (dimmed, non-selectable), `r` refresh, `?` help,
-`q`/`esc`/`ctrl+c` quit.
+refreshed live every 2s; `space`/`a`/`n` select, `enter` approve (added
+to the session's `network.allow`, marked allowed; running proxies
+hot-reload within ~1s), `i` ignore, `t` toggle ignored rows, `w` hold,
+`/` filter (with `tab` completion), `r` refresh, `q`/`esc`/`ctrl+c`
+quit. Otherwise it opens on the command list: review denied requests,
+add an allowlist item (a host, `*.domain`, or URL; a session picker
+when the monitor is unscoped), change the monitor key, detach or exit
+a session, and start or stop a managed forward (below).
+`--session`/`--workspace` scope the view and preselect that session
+where a command needs one. The same palette opens inline on the
+monitor key (ctrl-space by default) inside an attached session.
+
+### Managed forwards
+
+The palette's `Forward: start a forward` runs the same forwarder as
+`hsh forward`, detached, so it outlives the TUI: the monitor re-execs
+itself as `hsh forward --managed --session ID --bind 127.0.0.1
+LOCAL:REMOTE` in a new session, with stdout/stderr in a log file, and
+records the child in a registry: one directory per forward under
+`$XDG_STATE_HOME/hsh/forwards/<session>-<local>/` holding `meta.json`
+(id, session, bind, local, remote, pid, started) and the child's `log`.
+The id is `<session>-<local>`, so there is one managed forward per
+session and local port — starting the same one again reports "already
+forwarding". The registry needs no lock: the `--managed` child removes
+its directory on any exit (the session's connection closed, SIGTERM,
+an error), and every registry read prunes entries whose pid is dead.
+The local port (always the remote port; `--bind` and custom local ports
+stay on the `hsh forward` CLI) is checked before the child starts — a
+port in use is an error pointing at `hsh forward <other>:<port>`,
+which also catches collisions with `hsh run --forward`. A session that
+is down fails the start with the usual "no running workspace container"
+error. `Forward: stop a forward` lists the active entries
+(`session  local -> remote  started <age>`), SIGTERMs the picked
+child, and removes its entry. `hsh wipe` removes the registry with the
+rest of the state directory.
 
 ## Secret injection
 
@@ -722,7 +740,9 @@ hsh oauth callback URL
   `hsh run` process while it is attached (the local ports are checked before
   the session is created); after a detach, `hsh forward` takes over. The flag
   has no config or image-label equivalent, so an image cannot open listeners
-  on the user's machine.
+  on the user's machine. The monitor's palette starts the same forwarder
+  detached as a managed forward (see
+  [Managed forwards](#managed-forwards)).
 
 A forwarded port exposes the agent's code to the user's browser, and a page at
 `localhost:8000` can probe other localhost ports in that browser, as with any

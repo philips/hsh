@@ -33,7 +33,7 @@ func monitorCommand() *ff.Command {
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
-		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps()}
+		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps(), Forwards: monitorForwardOps()}
 		store := monitordb.DefaultStore()
 		var err error
 		if opts.Pending, err = store.Pending(filter); err != nil {

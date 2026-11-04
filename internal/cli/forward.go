@@ -56,12 +56,13 @@ func isLoopbackBind(bind string) bool {
 
 func forwardCommand() *ff.Command {
 	var session, bind string
-	var list bool
+	var list, managed bool
 	return newCommand("forward", "hsh forward [FLAGS] [PORT | LOCAL:PORT]...",
 		"make servers listening inside a session reachable on this machine's loopback", func(fs *ff.FlagSet) {
 			fs.StringVar(&session, 0, "session", "", "the session to reach (default: the current workspace's only session)")
 			fs.StringVar(&bind, 0, "bind", "127.0.0.1", "local address to listen on")
 			fs.BoolVar(&list, 0, "list", "list the ports the session is listening on and exit")
+			fs.BoolVar(&managed, 0, "managed", "run detached as a managed forward started by the monitor (removes its registry entry on exit)")
 		}, func(ctx context.Context, args []string) error {
 			specs, err := forward.ParseSpecs(args)
 			if err != nil {
@@ -73,6 +74,12 @@ func forwardCommand() *ff.Command {
 			sessionID, err := resolveSession(session, "hsh forward --session <id>")
 			if err != nil {
 				return err
+			}
+			if managed {
+				if len(specs) != 1 {
+					return fmt.Errorf("--managed forwards exactly one LOCAL:PORT")
+				}
+				defer removeManagedForward(sessionID, specs[0].Local)
 			}
 			client, err := connectSession(sessionID)
 			if err != nil {

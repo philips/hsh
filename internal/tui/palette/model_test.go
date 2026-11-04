@@ -1,11 +1,14 @@
 package palette
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -14,6 +17,7 @@ import (
 	"hsh/internal/monitordb/monitordbtest"
 	"hsh/internal/relay"
 	"hsh/internal/settings"
+	"hsh/internal/sshd"
 	"hsh/internal/state"
 )
 
@@ -461,5 +465,226 @@ func TestSessionOperationErrorsAreShown(t *testing.T) {
 	m = updated.(Model)
 	if isQuit(quit) || !strings.Contains(m.View(), "error: permission denied") {
 		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+type fakeForwards struct {
+	active    []Managed
+	ports     []sshd.Listener
+	started   []string
+	stopped   []string
+	listErr   error
+	startErr  error
+	stopErr   error
+	listenErr error
+}
+
+func (f *fakeForwards) ops() *ForwardOps {
+	return &ForwardOps{
+		List: func() ([]Managed, error) { return f.active, f.listErr },
+		Start: func(session string, remote int) (Managed, error) {
+			if f.startErr != nil {
+				return Managed{}, f.startErr
+			}
+			f.started = append(f.started, fmt.Sprintf("%s:%d", session, remote))
+			return Managed{ID: fmt.Sprintf("%s-%d", session, remote), Session: session, Bind: "127.0.0.1", Local: remote, Remote: remote, PID: 42}, nil
+		},
+		Stop: func(id string) (string, error) {
+			if f.stopErr != nil {
+				return "", f.stopErr
+			}
+			f.stopped = append(f.stopped, id)
+			return "stopped forwarding " + id, nil
+		},
+		Listening: func(string) ([]sshd.Listener, error) { return f.ports, f.listenErr },
+	}
+}
+
+func (e *env) forwardModel(t *testing.T, session string, f *fakeForwards) Model {
+	t.Helper()
+	m := New(Options{DB: e.db, Filter: monitordb.Filter{Session: session}, SettingsPath: e.settings, Forwards: f.ops()})
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	return updated.(Model)
+}
+
+func fwdCmd(t *testing.T, m Model, query string) (Model, tea.Cmd) {
+	t.Helper()
+	m, _ = press(t, m, typed(query))
+	it, ok := m.commands.selected()
+	if !ok || !strings.HasPrefix(it.text, "Forward: ") {
+		t.Fatalf("%q selected %q", query, it.text)
+	}
+	return press(t, m, enter)
+}
+
+func TestForwardCommandsNeedForwardOps(t *testing.T) {
+	e := newEnv(t)
+	if strings.Contains(e.model(t, "").View(), "Forward:") {
+		t.Fatal("forward commands listed without forward operations")
+	}
+	m := e.forwardModel(t, "s1", &fakeForwards{})
+	view := m.View()
+	for _, want := range []string{"Forward: start a forward", "Forward: stop a forward", "0 active"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in\n%s", want, view)
+		}
+	}
+}
+
+func TestStartForwardPicksAPort(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{ports: []sshd.Listener{{Port: 8000, Addr: "127.0.0.1:8000"}}}
+	m := e.forwardModel(t, "s1", f)
+	m, cmd := fwdCmd(t, m, "start a forward")
+	if m.view != viewPortPick || !strings.Contains(m.View(), "listing ports…") {
+		t.Fatalf("no port picker:\n%s", m.View())
+	}
+	m = run(t, m, cmd)
+	if m.view != viewPortPick || !strings.Contains(m.View(), "8000") || strings.Contains(m.View(), "listing ports…") {
+		t.Fatalf("the ports did not arrive:\n%s", m.View())
+	}
+	m, cmd = press(t, m, enter)
+	m = run(t, m, cmd)
+	if strings.Join(f.started, ",") != "s1:8000" {
+		t.Fatalf("started %v", f.started)
+	}
+	if m.view != viewCommands || !strings.Contains(m.View(), "forwarding 127.0.0.1:8000 -> session s1's port 8000") {
+		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+}
+
+func TestStartForwardPicksASessionFirst(t *testing.T) {
+	e := newEnv(t)
+	e.session(t, "s1", "/ws")
+	f := &fakeForwards{ports: []sshd.Listener{{Port: 8000, Addr: "127.0.0.1:8000"}}}
+	m := e.forwardModel(t, "", f)
+	m, cmd := fwdCmd(t, m, "start a forward")
+	if cmd != nil || m.view != viewSessionPick || !strings.Contains(m.View(), "Forward: start a forward in which session?") {
+		t.Fatalf("no session picker:\n%s", m.View())
+	}
+	m, cmd = press(t, m, enter)
+	m = run(t, m, cmd)
+	if m.view != viewPortPick || !strings.Contains(m.View(), "8000") {
+		t.Fatalf("no port picker after the session:\n%s", m.View())
+	}
+	m, cmd = press(t, m, enter)
+	m = run(t, m, cmd)
+	if strings.Join(f.started, ",") != "s1:8000" {
+		t.Fatalf("started %v", f.started)
+	}
+}
+
+func TestStartForwardWithNoSessions(t *testing.T) {
+	e := newEnv(t)
+	m := e.forwardModel(t, "", &fakeForwards{})
+	m, cmd := fwdCmd(t, m, "start a forward")
+	if cmd != nil || m.view != viewCommands || !strings.Contains(m.View(), "no sessions") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestStartForwardShowsListingErrors(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{listenErr: errors.New("session s1 has no running workspace container; start it with: hsh resume s1")}
+	m := e.forwardModel(t, "s1", f)
+	m, cmd := fwdCmd(t, m, "start a forward")
+	m = run(t, m, cmd)
+	if m.view != viewCommands || !strings.Contains(m.View(), "error: session s1 has no running workspace container") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestStartForwardWithNothingListening(t *testing.T) {
+	e := newEnv(t)
+	m := e.forwardModel(t, "s1", &fakeForwards{})
+	m, cmd := fwdCmd(t, m, "start a forward")
+	m = run(t, m, cmd)
+	if m.view != viewCommands || !strings.Contains(m.View(), "session s1 is not listening on any port") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestStartForwardErrorStaysInThePortPicker(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{ports: []sshd.Listener{{Port: 8000, Addr: "127.0.0.1:8000"}}, startErr: errors.New("local port 8000 is already in use; hsh forward <other>:8000")}
+	m := e.forwardModel(t, "s1", f)
+	m, cmd := fwdCmd(t, m, "start a forward")
+	m = run(t, m, cmd)
+	m, cmd = press(t, m, enter)
+	m = run(t, m, cmd)
+	if m.view != viewPortPick || !strings.Contains(m.View(), "error: local port 8000 is already in use") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestStopForwardStopsThePickedForward(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{active: []Managed{{ID: "s1-8000", Session: "s1", Bind: "127.0.0.1", Local: 8000, Remote: 8000, PID: 42, Started: time.Now().Add(-5 * time.Minute)}}}
+	m := e.forwardModel(t, "", f)
+	if !strings.Contains(m.View(), "1 active") {
+		t.Fatalf("the command note does not count the active forwards:\n%s", m.View())
+	}
+	m, cmd := fwdCmd(t, m, "stop a forward")
+	if cmd != nil || m.view != viewForwardPick {
+		t.Fatalf("no forward picker:\n%s", m.View())
+	}
+	view := m.View()
+	if !strings.Contains(view, "s1  8000 -> 8000") || !strings.Contains(view, "started 5m") {
+		t.Fatalf("picker:\n%s", view)
+	}
+	m, cmd = press(t, m, enter)
+	m = run(t, m, cmd)
+	if strings.Join(f.stopped, ",") != "s1-8000" {
+		t.Fatalf("stopped %v", f.stopped)
+	}
+	if m.view != viewCommands || !strings.Contains(m.View(), "stopped forwarding s1-8000") {
+		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+}
+
+func TestStopForwardWithNoActiveForwards(t *testing.T) {
+	e := newEnv(t)
+	m := e.forwardModel(t, "", &fakeForwards{})
+	m, cmd := fwdCmd(t, m, "stop a forward")
+	if cmd != nil || m.view != viewCommands || !strings.Contains(m.View(), "no active forwards") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestStopForwardErrorStaysInThePicker(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{active: []Managed{{ID: "s1-8000", Session: "s1", Bind: "127.0.0.1", Local: 8000, Remote: 8000, PID: 42, Started: time.Now()}}, stopErr: errors.New("no active forward s1-8000")}
+	m := e.forwardModel(t, "", f)
+	m, _ = fwdCmd(t, m, "stop a forward")
+	m, cmd := press(t, m, enter)
+	m = run(t, m, cmd)
+	if m.view != viewForwardPick || !strings.Contains(m.View(), "error: no active forward s1-8000") {
+		t.Fatalf("view:\n%s", m.View())
+	}
+}
+
+func TestForwardPickersEscBack(t *testing.T) {
+	e := newEnv(t)
+	f := &fakeForwards{
+		ports:  []sshd.Listener{{Port: 8000, Addr: "127.0.0.1:8000"}},
+		active: []Managed{{ID: "s1-8000", Session: "s1", Bind: "127.0.0.1", Local: 8000, Remote: 8000, PID: 42, Started: time.Now()}},
+	}
+	m := e.forwardModel(t, "s1", f)
+	m, cmd := fwdCmd(t, m, "start a forward")
+	m = run(t, m, cmd)
+	if m.view != viewPortPick {
+		t.Fatalf("view = %v", m.view)
+	}
+	m, cmd = press(t, m, esc)
+	if isQuit(cmd) || m.view != viewCommands {
+		t.Fatal("esc in the port picker did not go back")
+	}
+	m, _ = fwdCmd(t, m, "stop a forward")
+	if m.view != viewForwardPick {
+		t.Fatalf("view = %v", m.view)
+	}
+	m, cmd = press(t, m, esc)
+	if isQuit(cmd) || m.view != viewCommands {
+		t.Fatal("esc in the forward picker did not go back")
 	}
 }

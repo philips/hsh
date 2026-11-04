@@ -136,7 +136,7 @@ func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	return palette.New(palette.Options{
 		DB: db, Filter: filter, Pending: pending, Ignored: ignored,
 		SettingsPath: settings.Path(), MonitorKey: name,
-		Sessions: inSessionOps(), InSession: true,
+		Sessions: inSessionOps(), Forwards: monitorForwardOps(), InSession: true,
 	})
 }
 
