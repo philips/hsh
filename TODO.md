@@ -66,48 +66,6 @@ hsh resume .
 
 `hsh resume` would restore from a checkpoint image in the session directory instead of starting the container. Obstacles: the embedded runsc payload drops `checkpointgofer`, `podman container checkpoint` expects CRIU-style runtime flags, and the proxy's netstack socket is recreated on each start so a restored sandbox must reconnect.
 
-## networking modes
-
-rename https mode to tls_passthrough
-
-we need a separate mode to record headers, bodies, etc too for auditing in the case of hacks.
-
-https://github.com/agent-substrate/substrate/blob/75a061c290952b432de1131397bdb9a222a33e3e/docs/guides/egress-trust-bundle.md?plain=1#L22
-
-## create policy config files
-
-It would be good to create and maintain "policy" files for popular services like sr.ht, gitlab, github, etc. 
-
-Policies could be managed with the `hsh policy` subcommand like
-
-```
-hsh policy add github.com https://gist.githubusercontent.com/philips/2f755b38577e41acbb94a75b153a9fb4/raw/f4e064e86c7e189311fbdbefd9fa5c0447e2161e/gistfile1.txt
-```
-
-An example policy might be Go access
-
-```
-"go.dev",
-"dl.google.com",
-"proxy.golang.org",
-"storage.googleapis.com"
-```
-
-Which would add a file to `~/.config/hsh/policy/network/github.com.json`
-
-Then a user could do something like `hsh policy list` and `hsh session apply-policy <session-id> <policy-id>`. Policies could also be referenced from config.json files.
-
-Coupled with this we should probably 
-
-Longerterm it would be awesome to get services to publish those policy files themselves. 
-
-## Add a "report" network policy
-
-Users may want to monitor what their agent is doing for awhile. Add a report table to session.db.
-
-## Add a "report to network policy" command
-
-It should be easy for a user to do something like `hsh proxy report | hsh proxy add` or `hsh proxy report | hsh policy add my-project`.
 
 ## Toggle report/allowlist mode
 

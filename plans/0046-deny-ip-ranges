@@ -1,0 +1,13 @@
+# Certain IP ranges should never be contacted
+
+It is possible someone could get cute with hostnames. So, reject packets
+destined for the IPv4 link-local range 169.254.0.0/16 or the IPv6 link-local
+range fe80::/10. Localhost traffic remains inside the sandbox. 
+
+Also, block fd00:ec2::254, and fd20:ce::254 for cloud metadata.
+
+Prior art:
+- https://ate.dev/docs/guides/network-egress/
+- https://github.com/paradigmxyz/iron-proxy#what-iron-proxy-does
+
+
