@@ -1,13 +1,10 @@
 package sessiondb
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite"
 
 	"hsh/internal/dbschema"
 	"hsh/internal/version"
@@ -29,7 +26,7 @@ func Append(sessionDir, kind string) error {
 		return err
 	}
 	path := filepath.Join(sessionDir, "session.db")
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	db, err := dbschema.Open(path)
 	if err != nil {
 		return err
 	}

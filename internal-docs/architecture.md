@@ -409,6 +409,13 @@ than this hsh reads (version V); update hsh`) and an older one too (`remove
 PATH`). `session.db` and `secrets.db` use the same check (`secrets.db` also
 has migrations). Read-only openers compare `user_version` themselves.
 
+`session.db`, `secrets.db` and `metrics.db` use WAL; `internal/dbschema`
+`Open` sets it. WAL mode lives in the database file header, so it is set
+once per open with a retry, not through the per-connection DSN: converting
+a database into WAL mode needs an exclusive lock and ignores the busy
+timeout, so connections racing to convert a new database would otherwise
+fail with `SQLITE_BUSY`.
+
 The host-side readers (`hsh proxy denied`, `hsh monitor`, the inline status
 line and review screen) **union** the per-session databases: they walk
 `$XDG_STATE_HOME/hsh/sessions/`, read each session's `proxy/proxy.db`, and

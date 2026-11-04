@@ -14,7 +14,7 @@ const testSchema = `CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT
 
 func open(t *testing.T, path string) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	db, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestConcurrentFirstOpens(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+			db, err := Open(path)
 			if err != nil {
 				errs <- err
 				return

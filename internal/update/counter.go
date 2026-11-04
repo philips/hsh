@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"hsh/internal/dbschema"
 )
 
 const counterSchema = `
@@ -53,7 +53,7 @@ func openCounter(path string) (*sql.DB, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	db, err := dbschema.Open(path)
 	if err != nil {
 		return nil, err
 	}
