@@ -1007,7 +1007,21 @@ outer terminal's capability variables when they are set (`TERM_PROGRAM`,
 `FORCE_HYPERLINK`), so harnesses detect hyperlink and color support as
 they would outside. Inside, `TERM` is `xterm`; when the outer `TERM` names
 a hyperlink-capable terminal (ghostty, kitty, alacritty, wezterm, foot,
-contour) and `FORCE_HYPERLINK` is unset, it is set to `1`. The workspace home directory is
+contour) or tmux and `FORCE_HYPERLINK` is unset, it is set to `1`. Under
+tmux `TERM_PROGRAM` is `tmux`, so the `TERM` check is what carries the
+signal there. tmux then forwards OSC 8 to the outer terminal only when its
+client has the hyperlink feature; no terminfo entry commonly advertises it
+(detection wants the unofficial `Hls` capability), so a user under tmux
+needs `set -as terminal-features '<client-term>:hyperlinks'` in tmux.conf,
+and without it tmux drops OSC 8 and the link degrades to plain text.
+A tmux with `mouse on` takes clicks before the outer terminal can open
+the link (ghostty forwards them to the app and suppresses its hover UI);
+the link still renders, and Cmd+Shift+click opens it (verified on macOS
+ghostty) or mouse reporting must be off.
+OSC 8
+sequences pass through the relay unchanged (the hint and scroll-region
+filters forward every other escape sequence), so clickable links survive the
+status line and the monitor attach. The workspace home directory is
 `/home/hsh`; the fixture image sets `HOME` to the same value and
 installs Pi there.
 

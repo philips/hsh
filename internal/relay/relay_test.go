@@ -427,6 +427,22 @@ func TestInBandHintTriggersAPollAndIsStripped(t *testing.T) {
 	}
 }
 
+func TestOSC8HyperlinksPassThroughUnchanged(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run(`printf '\033]8;;https://example.com/login\033\\click here\033]8;;\033\\\n'`)
+	h.waitFor("the OSC 8 hyperlink to reach the user terminal unmodified", func() bool {
+		return strings.Contains(h.user.rawText(), "\x1b]8;;https://example.com/login\x1b\\click here\x1b]8;;\x1b\\\r\n")
+	})
+}
+
+func TestALongSoftWrappedURLPassesThroughWithoutHardLineBreaks(t *testing.T) {
+	h := newHarness(t, true, time.Hour)
+	h.run(`printf 'https://example.com/%0200d\n' 0`)
+	h.waitFor("the whole URL to reach the user terminal on one line", func() bool {
+		return strings.Contains(h.user.rawText(), "https://example.com/"+strings.Repeat("0", 200)+"\r\n")
+	})
+}
+
 func TestKittyEncodedKeyOpensTheOverlay(t *testing.T) {
 	h := newHarness(t, true, time.Hour)
 	h.run("echo hi")

@@ -137,8 +137,15 @@ There is a fork of gVisor that support macOS:
 - https://github.com/google/gvisor/issues/1270#issuecomment-4369433538
 
 
-## Clickable links from harnesses inside the sandbox
+## Document the terminal requirements for clickable links in Documentation/sessions.md
 
-Outside hsh, `claude auth login` and `codex login` print a clickable login link; inside hsh they did not (seen with both Claude Code and Codex). Interactive sessions now forward the outer terminal's capability variables (`TERM_PROGRAM`, `VTE_VERSION`, `WT_SESSION`, `LC_TERMINAL`, `FORCE_HYPERLINK`, ...) and set `FORCE_HYPERLINK=1` when the outer `TERM` names a hyperlink-capable terminal, since the workspace's `TERM` is `xterm` (Claude Code's detection reads exactly these). Remaining: confirm on a real terminal over SSH that the links are clickable. If they still are not, check that `internal/relay` and libghostty-vt pass OSC 8 sequences through unchanged (including across the status-line repaint) and do not turn a soft-wrapped long URL into hard line breaks.
+Interactive sessions set `FORCE_HYPERLINK=1` when the outer `TERM` names a hyperlink-capable terminal or tmux, but links only render clickable if the whole terminal stack forwards OSC 8 and the click reaches the outer terminal. Document in `Documentation/sessions.md` (user-facing, so keep it practical, with the quick `printf` check):
 
-Quick checks inside a session: `printf '\e]8;;https://example.com\e\\link\e]8;;\e\\\n'` (is `link` clickable?) and `printf 'https://example.com/%0200d\n' 0` (is the whole wrapped URL one link?). Compare with `hsh run` with `"monitor": {"enabled": false}`, which attaches the container without the relay.
+- Directly in a hyperlink-capable terminal (ghostty, kitty, ...): nothing to do; Cmd/Ctrl+click the link.
+- Under tmux: tmux drops OSC 8 unless its client has the `hyperlinks` feature, which no terminfo entry advertises — add `set -as terminal-features '<client-term>:hyperlinks'` to `~/.tmux.conf` (e.g. `xterm-256color`), detach and reattach. With `set -g mouse on`, tmux captures clicks; Cmd+Shift+click (on macOS ghostty) opens the link without giving up tmux mouse mode, verified working.
+- Over transports that re-encode the terminal (mosh): OSC 8 is stripped and the link degrades to plain text; plain URLs stay clickable where the outer terminal auto-detects them (ghostty does).
+- A dropped OSC 8 always degrades to the link's plain text, so nothing above can break output.
+
+## Fix the monitordb concurrent-open flake
+
+`TestConcurrentFirstOpensShareOneSchema` (internal/monitordb/version_test.go) fails intermittently, roughly every third run and often in the full suite, with `SQLITE_BUSY` when ten goroutines open the same database file concurrently. The schema initialization in `Open` needs a busy timeout or a retry, not just the test.

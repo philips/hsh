@@ -15,7 +15,7 @@ var terminalCapabilityVars = []string{
 	"FORCE_HYPERLINK",
 }
 
-var hyperlinkTerms = []string{"ghostty", "kitty", "alacritty", "wezterm", "foot", "contour"}
+var hyperlinkTerms = []string{"ghostty", "kitty", "alacritty", "wezterm", "foot", "contour", "tmux"}
 
 func terminalEnvArgs(getenv func(string) string) []string {
 	var args []string
