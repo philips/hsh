@@ -33,9 +33,9 @@ func proxyReportCommand() *ff.Command {
 			fs.StringVar(&session, 0, "session", "", "the session (default: this workspace's attached or only session)")
 			fs.StringVar(&format, 0, "format", "text", "text, policy (a draft policy of the allowed hosts), or json (with --wait)")
 			fs.BoolVar(&wait, 0, "wait", "block until the log has new entries, print them, and exit")
-			fs.Int64Var(&since, 0, "since", -1, "with --wait: entries after this id (default: entries added after the command starts)")
+			fs.Int64Var(&since, 0, "since", -1, "with --wait: entries after this id; -1 means entries added after the command starts")
 			fs.BoolVar(&denied, 0, "denied", "with --wait: only denied entries")
-			fs.DurationVar(&timeout, 0, "timeout", 0, "with --wait: give up after this long with exit status 2 (default: wait until interrupted)")
+			fs.DurationVar(&timeout, 0, "timeout", 0, "with --wait: give up after this long with exit status 2; 0 waits until interrupted")
 		}, func(ctx context.Context, args []string) error {
 			if len(args) > 0 {
 				return errors.New("proxy report takes no positional arguments")
