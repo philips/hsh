@@ -7,6 +7,7 @@ forwards the port to try the server from the host.
 <!-- tape:output demo/out/webserver.webm -->
 <!-- tape:require hsh -->
 <!-- tape:set Shell "bash" -->
+<!-- tape:set Theme { "background": "#ffffff", "foreground": "#000000", "cursor": "#000000", "selection": "#b3d7ff", "black": "#000000", "red": "#c91b00", "green": "#00a600", "yellow": "#999900", "blue": "#0225c7", "magenta": "#ca30c7", "cyan": "#00a6a6", "white": "#777777", "brightBlack": "#555555", "brightRed": "#ff4b3e", "brightGreen": "#00d900", "brightYellow": "#e6e600", "brightBlue": "#4c7bff", "brightMagenta": "#ff57ff", "brightCyan": "#00e6e6", "brightWhite": "#000000" } -->
 <!-- tape:set FontSize 22 -->
 <!-- tape:set Width 1280 -->
 <!-- tape:set Height 720 -->

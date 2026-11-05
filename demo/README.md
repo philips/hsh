@@ -135,6 +135,23 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 | `<!-- tape:raw Ctrl+L -->` | passthrough | emit any raw VHS line |
 | `<!-- tape:say ... -->` | nothing | voiceover-only note, ignored by VHS |
 
+## Light terminal (white background)
+
+VHS defaults to a dark theme. Set a light one with a `tape:set Theme`
+directive. Either a built-in theme:
+
+```
+<!-- tape:set Theme "Catppuccin Latte" -->
+```
+
+(run `vhs themes` to list them; other light options: `Github`, `Solarized
+Light`, `One Light`), or an inline JSON palette on one line for an exact
+white-background / black-text look (see `tape-example.md`):
+
+```
+<!-- tape:set Theme { "background": "#ffffff", "foreground": "#000000", ... } -->
+```
+
 ## Regions
 
 If a file contains any `<!-- tape START -->` markers, only content between
