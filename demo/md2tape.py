@@ -27,6 +27,31 @@ def esc(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def shq(s):
+    return "'" + s.replace("'", "'\\\"'\\\"'") + "'"
+
+
+def split_wait(args):
+    toks = args.split()
+    timeout = "60s"
+    cmd = []
+    for t in toks:
+        if t.startswith("timeout="):
+            timeout = t.split("=", 1)[1]
+        else:
+            cmd.append(t)
+    return " ".join(cmd), timeout
+
+
+def wait_exec(args, kv):
+    cmd, timeout = split_wait(args)
+    if not cmd:
+        return None
+    tries = max(1, int(parse_ms(timeout, 60000) / 500))
+    loop = f'i=0; until {cmd} >/dev/null 2>&1; do i=$((i+1)); [ "$i" -ge {tries} ] && exit 1; sleep 0.5; done'
+    return f"Exec sh -c {shq(loop)}"
+
+
 def parse_ms(s, default=60.0):
     s = str(s).strip().lower()
     try:
@@ -116,6 +141,10 @@ def convert(text, human=False):
                 emit("Hide")
             elif cmd == "show":
                 emit("Show")
+            elif cmd == "wait":
+                line_out = wait_exec(m.group("args"), kv)
+                if line_out:
+                    emit(line_out)
             elif cmd == "raw":
                 emit(m.group("args").strip())
             elif cmd == "say":
@@ -183,8 +212,15 @@ def extract_script(text):
             continue
         m = DIRECTIVE.search(line)
         if m and active:
-            if m.group("cmd").lower() == "run":
+            c = m.group("cmd").lower()
+            if c == "run":
                 want_block = True
+            elif c == "wait":
+                wcmd, timeout = split_wait(m.group("args"))
+                if wcmd:
+                    tries = max(1, int(parse_ms(timeout, 60000) / 500))
+                    out.append(f'i=0; until {wcmd} >/dev/null 2>&1; do i=$((i+1)); [ "$i" -ge {tries} ] && exit 1; sleep 0.5; done')
+                    out.append("")
             i += 1
             continue
         if active and want_block and FENCE.match(line):

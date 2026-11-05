@@ -139,6 +139,22 @@ gives you three views at once:
 
 Also useful: `vhs validate <tape>` catches syntax errors before any render.
 
+## Waiting on events instead of sleeping
+
+`Sleep` guesses how long something takes; `tape:wait` advances when it actually
+happens. VHS's `Exec` runs a command outside the recorded terminal and blocks
+the tape until it exits, so `tape:wait` polls your event every 0.5s:
+
+```
+<!-- tape:wait timeout=120s sqlite3 ~/.local/state/hsh/monitor.db "select 1 from events where kind='egress-approval'" -->
+```
+
+The tape pauses until the query returns a row (exit 0), then continues;
+`timeout=` (anywhere in the directive, default 60s) fails the run instead of
+hanging forever. Any shell predicate works: `curl -sf localhost:8080`,
+`hsh exec my-session test -f /app/built`, `grep -q pattern file`, etc. The
+`--script` debug output includes the same wait loop, so live repro matches.
+
 
 ## Markup
 
@@ -156,7 +172,7 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 | `<!-- tape:run noenter -->` | type without pressing Enter | for interactive prompts |
 | `<!-- tape:type Thanks! -->` | `Type "Thanks!"` | literal text, no Enter |
 | `<!-- tape:key Ctrl+C -->` | `Ctrl+C` | any key: `Enter`, `Tab`, `Ctrl+L`, ... |
-| `<!-- tape:sleep 3s -->` | `Sleep 3s` | |
+| `<!-- tape:wait <shell cmd> -->` | `Exec sh -c 'until <cmd>; do sleep 0.5; done'` | block until cmd exits 0 (e.g. a sqlite row appearing); `timeout=` (default 60s) caps it |
 | `<!-- tape:monitor -->` | `Sleep 1s` + `Ctrl+Space` + `Sleep 1s` | opens the hsh monitor; tune with `sleep=`/`after=` (or `none`) |
 | `<!-- tape:hide -->` / `<!-- tape:show -->` | `Hide` / `Show` | run setup off-camera |
 | `<!-- tape:raw Ctrl+L -->` | passthrough | emit any raw VHS line |
