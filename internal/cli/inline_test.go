@@ -69,12 +69,12 @@ func TestSessionDenialsCountAndMonitorOverlay(t *testing.T) {
 		t.Fatal("approving returned no command")
 	}
 	model, _ = model.Update(cmd())
-	cfg, err := config.Load(cfgPath)
+	rules, err := monitordb.DefaultStore().Rules("s1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Network.Allow; len(got) != 2 || got[1] != "a.example" && got[1] != "b.example" {
-		t.Fatalf("the approval did not reach the session config: %v", got)
+	if len(rules) != 1 || rules[0].Access != monitordb.AccessAllow || rules[0].Pattern != "a.example" && rules[0].Pattern != "b.example" {
+		t.Fatalf("the approval did not reach the session rules: %+v", rules)
 	}
 	if n, _, _ := src.Count(); n != 1 {
 		t.Fatalf("count after approving one host: %d", n)
@@ -96,7 +96,7 @@ func TestPastingIntoTheMonitorFilterDoesNotTriggerCommands(t *testing.T) {
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text), Paste: true}
 	}
 
-	model, cmd := model.Update(paste("qaiio"))
+	model, cmd := model.Update(paste("qadio"))
 	if cmd != nil {
 		if _, quit := cmd().(tea.QuitMsg); quit {
 			t.Fatal("pasted text outside the filter quit the monitor")

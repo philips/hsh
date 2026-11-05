@@ -26,11 +26,12 @@ func proxyCommand() *ff.Command {
 	cmd = &ff.Command{
 		Name:      "proxy",
 		Usage:     "hsh proxy SUBCOMMAND",
-		ShortHelp: "review and manage the egress proxy's denial records",
+		ShortHelp: "review the egress proxy's denial records and decide hosts",
 		Flags:     ff.NewFlagSet("proxy"),
 		Subcommands: []*ff.Command{
 			proxyDeniedCommand(),
 			proxyAllowCommand(),
+			proxyDenyCommand(),
 		},
 	}
 	cmd.Exec = groupExec(&cmd)
@@ -49,64 +50,83 @@ func sessionConfigPath(session string) (string, error) {
 	return p, nil
 }
 
-func applyAllow(db *monitordb.Store, session, cfgPath string, hosts []string) (added, already []string, err error) {
-	existing := map[string]bool{}
+func uniqueSorted(values []string) []string {
 	seen := map[string]bool{}
-	var unique []string
-	for _, h := range hosts {
-		if !seen[h] {
-			seen[h] = true
-			unique = append(unique, h)
+	var out []string
+	for _, v := range values {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
 		}
 	}
-	sort.Strings(unique)
-	cfg, err := config.Load(cfgPath)
+	sort.Strings(out)
+	return out
+}
+
+func applyAllow(db *monitordb.Store, session string, hosts []string) (added, already []string, stillDenied map[string]string, err error) {
+	unique := uniqueSorted(hosts)
+	rules, err := db.Rules(session)
 	if err != nil {
-		return nil, nil, err
-	}
-	for _, h := range cfg.Network.Allow {
-		existing[h] = true
+		return nil, nil, nil, err
 	}
 	for _, h := range unique {
-		if existing[h] {
+		if monitordb.Evaluate(rules, h).Access == monitordb.AccessAllow {
 			already = append(already, h)
 		} else {
 			added = append(added, h)
 		}
 	}
-	if len(added) > 0 {
-		if _, err := config.AddAllowedHosts(cfgPath, added); err != nil {
-			return nil, nil, err
+	if err := db.Allow(session, added); err != nil {
+		return nil, nil, nil, err
+	}
+	if rules, err = db.Rules(session); err != nil {
+		return nil, nil, nil, err
+	}
+	stillDenied = map[string]string{}
+	for _, h := range added {
+		if m := monitordb.Evaluate(rules, h); m.Access == monitordb.AccessDeny {
+			stillDenied[h] = m.Rule.DeniedBy()
 		}
 	}
-	return added, already, db.MarkAllowed(session, unique)
+	return added, already, stillDenied, nil
 }
 
-func allowHosts(db *monitordb.Store, session, cfgPath string, hosts []string) error {
-	added, already, err := applyAllow(db, session, cfgPath, hosts)
+func allowHosts(db *monitordb.Store, session string, hosts []string) error {
+	added, already, stillDenied, err := applyAllow(db, session, hosts)
 	for _, h := range already {
 		fmt.Printf("already allowed %s\n", hostURL(h))
 	}
 	for _, h := range added {
+		if by, ok := stillDenied[h]; ok {
+			fmt.Printf("added %s, but it stays %s\n", hostURL(h), by)
+			continue
+		}
 		fmt.Printf("added %s\n", hostURL(h))
 	}
 	return err
 }
 
 func proxyDeniedCommand() *ff.Command {
-	var watch bool
+	var watch, all bool
 	var filter monitordb.Filter
 	return newCommand("denied", "hsh proxy denied [FLAGS]", "list hosts denied by the egress proxy", func(fs *ff.FlagSet) {
 		fs.BoolVar(&watch, 0, "watch", "continuously output new denied requests")
+		fs.BoolVar(&all, 0, "all", "also list hosts already decided or quieted, with their state")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
 		if len(args) > 0 {
 			return fmt.Errorf("proxy denied takes no positional arguments")
 		}
+		if all && watch {
+			return errors.New("proxy denied takes either --all or --watch, not both")
+		}
 		if err := resolveFilterSession(&filter); err != nil {
 			return err
 		}
 		db := monitordb.DefaultStore()
+		if all {
+			return printAllDenied(db, filter)
+		}
 		printRows := func(rows []monitordb.DeniedHost) {
 			if filter.Session != "" || filter.Workspace != "" {
 				for _, r := range rows {
@@ -166,16 +186,77 @@ func proxyDeniedCommand() *ff.Command {
 	})
 }
 
+func stateLabel(r monitordb.DeniedHost) string {
+	if r.Denied() {
+		return r.DeniedBy
+	}
+	return r.State
+}
+
+func printAllDenied(db *monitordb.Store, filter monitordb.Filter) error {
+	rows, err := db.All(filter)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		fmt.Println("no denied hosts recorded")
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	if filter.Session != "" || filter.Workspace != "" {
+		fmt.Fprintln(w, "URL\tSTATE\tCOUNT\tLAST SEEN")
+		for _, r := range rows {
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", hostURL(r.Host), stateLabel(r), r.Count, r.LastSeen)
+		}
+		return w.Flush()
+	}
+	fmt.Fprintln(w, "SESSION ID\tWORKSPACE\tURL\tSTATE\tCOUNT\tLAST SEEN")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", r.Session, r.Workspace, hostURL(r.Host), stateLabel(r), r.Count, r.LastSeen)
+	}
+	return w.Flush()
+}
+
+func proxyDenyCommand() *ff.Command {
+	var session string
+	return newCommand("deny", "hsh proxy deny [FLAGS] URL|PATTERN", "deny a host (or *.domain) for a session, in every network mode", func(fs *ff.FlagSet) {
+		fs.StringVar(&session, 0, "session", "", "the session the host is denied in")
+	}, func(ctx context.Context, args []string) error {
+		if session == "" {
+			return errors.New("proxy deny requires --session: which session should the host be denied in?")
+		}
+		if len(args) != 1 {
+			return errors.New("proxy deny takes a single URL, host, or *.domain")
+		}
+		session, err := resolveSessionRef(session)
+		if err != nil {
+			return err
+		}
+		if _, err := sessionConfigPath(session); err != nil {
+			return err
+		}
+		pattern, err := config.HostPattern(args[0])
+		if err != nil {
+			return err
+		}
+		if err := monitordb.DefaultStore().Deny(session, []string{pattern}); err != nil {
+			return err
+		}
+		fmt.Printf("denied %s\n", pattern)
+		return nil
+	})
+}
+
 func proxyAllowCommand() *ff.Command {
 	var session string
 	var all, watch bool
-	return newCommand("allow", "hsh proxy allow [FLAGS] [--all | URL]", "allow a session's denied hosts in its config (TOFU)", func(fs *ff.FlagSet) {
-		fs.StringVar(&session, 0, "session", "", "the session whose config the hosts are allowed in")
+	return newCommand("allow", "hsh proxy allow [FLAGS] [--all | URL]", "allow a session's denied hosts (TOFU)", func(fs *ff.FlagSet) {
+		fs.StringVar(&session, 0, "session", "", "the session the hosts are allowed in")
 		fs.BoolVar(&all, 0, "all", "allow every host currently denied for the session")
 		fs.BoolVar(&watch, 0, "watch", "continuously approve new denied requests")
 	}, func(ctx context.Context, args []string) error {
 		if session == "" {
-			return errors.New("proxy allow requires --session: which session's config should the hosts be allowed in?")
+			return errors.New("proxy allow requires --session: which session should the hosts be allowed in?")
 		}
 		session, err := resolveSessionRef(session)
 		if err != nil {
@@ -187,8 +268,7 @@ func proxyAllowCommand() *ff.Command {
 		if !all && len(args) != 1 {
 			return errors.New("proxy allow takes a single URL (or --all)")
 		}
-		cfgPath, err := sessionConfigPath(session)
-		if err != nil {
+		if _, err := sessionConfigPath(session); err != nil {
 			return err
 		}
 		db := monitordb.DefaultStore()
@@ -200,7 +280,7 @@ func proxyAllowCommand() *ff.Command {
 			if host == "" {
 				return fmt.Errorf("could not extract a host from %q", args[0])
 			}
-			if err := allowHosts(db, session, cfgPath, []string{host}); err != nil {
+			if err := allowHosts(db, session, []string{host}); err != nil {
 				return err
 			}
 			if !watch {
@@ -228,7 +308,7 @@ func proxyAllowCommand() *ff.Command {
 				}
 			}
 			if len(fresh) > 0 {
-				return allowHosts(db, session, cfgPath, fresh)
+				return allowHosts(db, session, fresh)
 			}
 			return nil
 		}

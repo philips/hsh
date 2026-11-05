@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"hsh/internal/attend"
+	"hsh/internal/monitordb"
 )
 
 const holdPoll = 250 * time.Millisecond
@@ -16,6 +17,9 @@ const holdPoll = 250 * time.Millisecond
 var denialMessage = "hsh: egress to %s is blocked on purpose by the sandbox policy; this is not an outage.\n" +
 	"The user has been notified and can approve it with `hsh monitor`.\n" +
 	"Tell the user which host you need and why. Do not try other tools, mirrors, proxies, or DNS tricks.\n"
+
+var ruleDenialMessage = "hsh: egress to %s is denied by the user's policy for this session.\n" +
+	"Do not ask for it again or try other tools, mirrors, proxies, or DNS tricks.\n"
 
 var maxHolds int64 = 64
 
@@ -55,19 +59,32 @@ func (p *Proxy) recordDenial(host, target string) {
 	}
 }
 
-func (p *Proxy) ignoredByUser(host string) bool {
-	if p.decisions == nil {
-		return false
-	}
-	return p.decisions.Lookup(host).Ignored
+func (p *Proxy) ruleDenial(host string) (monitordb.Rule, bool) {
+	m := p.match(host)
+	return m.Rule, m.Access == monitordb.AccessDeny
 }
 
-func (p *Proxy) awaitApproval(ctx context.Context, host, target, kind string, allowed func() bool, maxWait time.Duration) bool {
+func (p *Proxy) admit(ctx context.Context, host, target, kind string, allowed func() bool) bool {
+	if allowed() {
+		return true
+	}
 	p.recordDenial(host, target)
-	if p.ignoredByUser(host) {
-		log.Printf("%s %s: denied (ignored by the user)", kind, host)
+	m := p.match(host)
+	switch {
+	case m.Access == monitordb.AccessDeny:
+		log.Printf("%s %s: denied (%s)", kind, host, m.Rule.DeniedBy())
+		return false
+	case m.Log == monitordb.LogRecord:
+		log.Printf("%s %s: denied (not allowed by the session's rules; recorded, not queued for review)", kind, host)
+		return false
+	case !p.holdsEnabled():
+		log.Printf("%s %s: denied (not allowed by the session's rules)", kind, host)
 		return false
 	}
+	return p.awaitApproval(ctx, host, kind, allowed, p.approvalWait())
+}
+
+func (p *Proxy) awaitApproval(ctx context.Context, host, kind string, allowed func() bool, maxWait time.Duration) bool {
 	if !p.acquireHold() {
 		log.Printf("%s %s: denied (too many held requests)", kind, host)
 		return false
@@ -95,8 +112,8 @@ func (p *Proxy) awaitApproval(ctx context.Context, host, target, kind string, al
 				log.Printf("%s %s: approved while held", kind, host)
 				return true
 			}
-			if p.ignoredByUser(host) {
-				log.Printf("%s %s: denied while held (ignored by the user)", kind, host)
+			if r, denied := p.ruleDenial(host); denied {
+				log.Printf("%s %s: denied while held (%s)", kind, host, r.DeniedBy())
 				return false
 			}
 			if !p.holdsEnabled() {
@@ -108,26 +125,20 @@ func (p *Proxy) awaitApproval(ctx context.Context, host, target, kind string, al
 }
 
 func (p *Proxy) gate(w http.ResponseWriter, ctx context.Context, host, target, kind string, allowed func() bool) bool {
-	if allowed() {
-		return true
-	}
-	if !p.holdsEnabled() {
-		p.deny(w, host, target)
-		return false
-	}
-	if p.awaitApproval(ctx, host, target, kind, allowed, p.approvalWait()) {
+	if p.admit(ctx, host, target, kind, allowed) {
 		return true
 	}
 	p.writeDeny(w, host)
 	return false
 }
 
-func (p *Proxy) deny(w http.ResponseWriter, host, target string) {
-	log.Printf("denied %s (not in network.allow)", host)
-	p.recordDenial(host, target)
-	p.writeDeny(w, host)
+func (p *Proxy) denialText(host string) string {
+	if _, denied := p.ruleDenial(host); denied {
+		return fmt.Sprintf(ruleDenialMessage, host)
+	}
+	return fmt.Sprintf(denialMessage, host)
 }
 
 func (p *Proxy) writeDeny(w http.ResponseWriter, host string) {
-	http.Error(w, fmt.Sprintf(denialMessage, host), http.StatusForbidden)
+	http.Error(w, p.denialText(host), http.StatusForbidden)
 }

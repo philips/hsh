@@ -336,15 +336,7 @@ func (p *Proxy) handleTransparentTCP(c net.Conn, dstIP, dstPort string) {
 }
 
 func (p *Proxy) transparentAllowed(host, target, kind string, allowed func() bool) bool {
-	if allowed() {
-		return true
-	}
-	if !p.holdsEnabled() {
-		log.Printf("denied %s (not in network.allow)", host)
-		p.recordDenial(host, target)
-		return false
-	}
-	return p.awaitApproval(context.Background(), host, target, kind, allowed, p.approvalWait())
+	return p.admit(context.Background(), host, target, kind, allowed)
 }
 
 func (p *Proxy) transparentTLS(c net.Conn, sni, dstIP, dstPort string) {
@@ -390,11 +382,11 @@ func (p *Proxy) denyTLS(c net.Conn, host string) {
 	if _, err := http.ReadRequest(bufio.NewReader(tc)); err != nil {
 		return
 	}
-	writeDenyResponse(tc, host)
+	p.writeDenyResponse(tc, host)
 }
 
-func writeDenyResponse(w io.Writer, host string) {
-	body := fmt.Sprintf(denialMessage, host)
+func (p *Proxy) writeDenyResponse(w io.Writer, host string) {
+	body := p.denialText(host)
 	fmt.Fprintf(w, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
 }
 
@@ -415,7 +407,7 @@ func (p *Proxy) transparentHTTP(c net.Conn, br *bufio.Reader, dstIP, dstPort str
 		target = net.JoinHostPort(host, dstPort)
 	}
 	if !p.transparentAllowed(host, target, req.Method, func() bool { return p.plaintextAllowed(host) }) {
-		writeDenyResponse(c, host)
+		p.writeDenyResponse(c, host)
 		return
 	}
 	p.serveRequests(c, br, req, "http", target, p.secretsFor(host))

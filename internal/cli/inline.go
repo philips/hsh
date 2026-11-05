@@ -129,13 +129,13 @@ func (s *sessionDenials) Overlay(cols, rows int) tea.Model {
 	if err != nil {
 		return errorModel{err: err}
 	}
-	ignored, err := db.Ignored(filter)
+	denied, err := db.Denied(filter)
 	if err != nil {
 		return errorModel{err: err}
 	}
 	name, _ := effectiveMonitorKey(s.configKey)
 	return palette.New(palette.Options{
-		DB: db, Filter: filter, Pending: pending, Ignored: ignored,
+		DB: db, Filter: filter, Pending: pending, Denied: denied,
 		SettingsPath: settings.Path(), MonitorKey: name,
 		Sessions: inSessionOps(), Forwards: monitorForwardOps(), InSession: true,
 	})

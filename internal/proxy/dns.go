@@ -71,7 +71,7 @@ func (p *Proxy) serveDNS(w dns.ResponseWriter, r *dns.Msg, upstream []string) {
 		return
 	}
 	if mode == "allowlist" && !p.allowListed(name) {
-		log.Printf("dns: refused %s (not in network.allow)", name)
+		log.Printf("dns: refused %s (not allowed by the session's rules)", name)
 		m := new(dns.Msg)
 		m.SetRcode(r, dns.RcodeRefused)
 		_ = w.WriteMsg(m)

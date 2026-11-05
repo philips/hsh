@@ -19,14 +19,14 @@ import (
 )
 
 type Model struct {
-	db          *monitordb.Store
-	filter      monitordb.Filter
-	showIgnored bool
-	status      string
+	db         *monitordb.Store
+	filter     monitordb.Filter
+	showDenied bool
+	status     string
 
 	table       table.Model
 	pendingRows []monitordb.DeniedHost
-	ignoredRows []monitordb.DeniedHost
+	deniedRows  []monitordb.DeniedHost
 	rows        []monitordb.DeniedHost
 	selected    map[string]bool
 	holds       map[string]string
@@ -77,19 +77,19 @@ func defaultColumns(width int) []table.Column {
 	}
 }
 
-func New(db *monitordb.Store, filter monitordb.Filter, pending, ignored []monitordb.DeniedHost, showIgnored bool) Model {
+func New(db *monitordb.Store, filter monitordb.Filter, pending, denied []monitordb.DeniedHost, showDenied bool) Model {
 	m := Model{
 		db:          db,
 		filter:      filter,
-		showIgnored: showIgnored,
+		showDenied:  showDenied,
 		pendingRows: pending,
-		ignoredRows: ignored,
+		deniedRows:  denied,
 		selected:    map[string]bool{},
 		holds:       map[string]string{},
 		width:       80,
 		height:      24,
 	}
-	m.holds = loadHolds(filter, pending, ignored)
+	m.holds = loadHolds(filter, pending, denied)
 	m.filterInput = textinput.New()
 	m.filterInput.Prompt = "/"
 	m.rows = m.visibleRows()
@@ -131,8 +131,8 @@ func (m Model) allRows() []monitordb.DeniedHost {
 		}
 		return rows[a].Host < rows[b].Host
 	})
-	if m.showIgnored {
-		rows = append(rows, m.ignoredRows...)
+	if m.showDenied {
+		rows = append(rows, m.deniedRows...)
 	}
 	return rows
 }
@@ -149,8 +149,8 @@ func (m Model) tableRows(rows []monitordb.DeniedHost) []table.Row {
 			ws = "-"
 		}
 		url := hostURL(h.Host)
-		if h.Ignored {
-			url += "  (ignored)"
+		if h.Denied() {
+			url += "  (" + h.DeniedBy + ")"
 		}
 		out = append(out, table.Row{sel, h.Session, ws, url, fmt.Sprint(h.Count), h.LastSeen})
 	}
@@ -355,12 +355,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, keys.Approve):
 			return m.approve()
-		case key.Matches(msg, keys.Ignore):
-			return m.ignore()
+		case key.Matches(msg, keys.Deny):
+			return m.deny()
 		case key.Matches(msg, keys.ToggleHold):
 			return m.toggleHold()
-		case key.Matches(msg, keys.ToggleIgnored):
-			m.showIgnored = !m.showIgnored
+		case key.Matches(msg, keys.ToggleDenied):
+			m.showDenied = !m.showDenied
 			m.rebuildRows(false)
 			return m, nil
 		}
@@ -373,7 +373,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) selectedRows() []monitordb.DeniedHost {
 	var out []monitordb.DeniedHost
 	for _, h := range m.rows {
-		if !h.Ignored && m.selected[rowKey(h)] {
+		if h.Pending() && m.selected[rowKey(h)] {
 			out = append(out, h)
 		}
 	}
@@ -386,8 +386,8 @@ func (m Model) toggleSelect() (tea.Model, tea.Cmd) {
 		m.status = "no rows to select"
 		return m, nil
 	}
-	if h.Ignored {
-		m.status = "ignored rows cannot be selected"
+	if !h.Pending() {
+		m.status = "denied rows cannot be selected; press enter to approve one"
 		return m, nil
 	}
 	k := rowKey(h)
@@ -404,13 +404,23 @@ func (m Model) targetRows() []monitordb.DeniedHost {
 	if rows := m.selectedRows(); len(rows) > 0 {
 		return rows
 	}
-	if h, ok := m.cursorRow(); ok && !h.Ignored {
+	if h, ok := m.cursorRow(); ok && h.Pending() {
 		return []monitordb.DeniedHost{h}
 	}
 	return nil
 }
 
 func (m Model) approve() (tea.Model, tea.Cmd) {
+	if len(m.selectedRows()) == 0 {
+		if h, ok := m.cursorRow(); ok && h.Denied() {
+			if h.DeniedByPolicy() {
+				policy := strings.TrimPrefix(h.Source, "policy:")
+				m.status = fmt.Sprintf("%s; hsh policy unapply %s to undo", h.DeniedBy, policy)
+				return m, nil
+			}
+			return m, m.actionCmd(actionApprove, []monitordb.DeniedHost{h})
+		}
+	}
 	rows := m.targetRows()
 	if len(rows) == 0 {
 		m.status = "nothing to approve"
@@ -419,13 +429,19 @@ func (m Model) approve() (tea.Model, tea.Cmd) {
 	return m, m.actionCmd(actionApprove, rows)
 }
 
-func (m Model) ignore() (tea.Model, tea.Cmd) {
+func (m Model) deny() (tea.Model, tea.Cmd) {
+	if len(m.selectedRows()) == 0 {
+		if h, ok := m.cursorRow(); ok && h.Denied() {
+			m.status = h.Host + " is already " + h.DeniedBy
+			return m, nil
+		}
+	}
 	rows := m.targetRows()
 	if len(rows) == 0 {
-		m.status = "nothing to ignore"
+		m.status = "nothing to deny"
 		return m, nil
 	}
-	return m, m.actionCmd(actionIgnore, rows)
+	return m, m.actionCmd(actionDeny, rows)
 }
 
 func (m Model) actionCmd(kind action, rows []monitordb.DeniedHost) tea.Cmd {
@@ -438,17 +454,12 @@ func (m Model) actionCmd(kind action, rows []monitordb.DeniedHost) tea.Cmd {
 		for session, hosts := range bySession {
 			switch kind {
 			case actionApprove:
-				if session != "" {
-					if _, err := config.AddAllowedHosts(state.SessionDir(session)+"/config.json", hosts); err != nil {
-						return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
-					}
+				if err := db.Allow(session, hosts); err != nil {
+					return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
 				}
-				if err := db.MarkAllowed(session, hosts); err != nil {
-					return actionMsg{kind: kind, err: err}
-				}
-			case actionIgnore:
-				if err := db.MarkIgnored(session, hosts); err != nil {
-					return actionMsg{kind: kind, err: err}
+			case actionDeny:
+				if err := db.Deny(session, hosts); err != nil {
+					return actionMsg{kind: kind, err: fmt.Errorf("session %s: %w", session, err)}
 				}
 			}
 		}
@@ -462,7 +473,7 @@ func (m Model) applyRefresh(msg refreshMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.pendingRows = msg.pending
-	m.ignoredRows = msg.ignored
+	m.deniedRows = msg.denied
 	m.holds = msg.holds
 	m.rebuildRows(true)
 	return m, nil
@@ -481,23 +492,34 @@ func (m Model) applyAction(msg actionMsg) (tea.Model, tea.Cmd) {
 	var kept []monitordb.DeniedHost
 	for _, h := range m.pendingRows {
 		if handled[rowKey(h)] {
-			if msg.kind == actionIgnore {
-				h.Allowed = true
-				h.Ignored = true
-				h.AllowedAt = time.Now().UTC().Format(time.RFC3339)
-				m.ignoredRows = append(m.ignoredRows, h)
+			if msg.kind == actionDeny {
+				h.State = monitordb.StateDenied
+				h.Source = monitordb.SourceUser
+				h.DeniedBy = "denied by you"
+				h.DecidedAt = time.Now().UTC().Format(time.RFC3339)
+				h.Holding = 0
+				m.deniedRows = append(m.deniedRows, h)
 			}
 			continue
 		}
 		kept = append(kept, h)
 	}
 	m.pendingRows = kept
+	if msg.kind == actionApprove {
+		var still []monitordb.DeniedHost
+		for _, h := range m.deniedRows {
+			if !handled[rowKey(h)] {
+				still = append(still, h)
+			}
+		}
+		m.deniedRows = still
+	}
 	m.rebuildRows(true)
 	switch msg.kind {
 	case actionApprove:
 		m.status = fmt.Sprintf("approved %d host(s) — proxies reload within ~1s", len(msg.rows))
-	case actionIgnore:
-		m.status = fmt.Sprintf("ignored %d host(s) — press t to review ignored hosts", len(msg.rows))
+	case actionDeny:
+		m.status = fmt.Sprintf("denied %d host(s) — press t to show denied hosts", len(msg.rows))
 	}
 	return m, nil
 }
@@ -510,11 +532,11 @@ func (m Model) refreshCmd() tea.Cmd {
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		ignored, err := db.Ignored(filter)
+		denied, err := db.Denied(filter)
 		if err != nil {
 			return refreshMsg{err: err}
 		}
-		return refreshMsg{pending: pending, ignored: ignored, holds: loadHolds(filter, pending, ignored)}
+		return refreshMsg{pending: pending, denied: denied, holds: loadHolds(filter, pending, denied)}
 	}
 }
 
@@ -603,9 +625,9 @@ func (m Model) holdTitle() string {
 	return summary + " (session " + session + ")"
 }
 
-func title(showIgnored bool) string {
-	if showIgnored {
-		return "denied hosts — pending and ignored"
+func title(showDenied bool) string {
+	if showDenied {
+		return "denied hosts — pending and denied"
 	}
 	return "denied hosts awaiting review"
 }
@@ -631,10 +653,10 @@ func (m Model) SetEscHelp(text string) Model {
 
 func (m Model) View() string {
 	total := len(m.pendingRows)
-	if m.showIgnored {
-		total += len(m.ignoredRows)
+	if m.showDenied {
+		total += len(m.deniedRows)
 	}
-	heading := style.Title.Render(title(m.showIgnored))
+	heading := style.Title.Render(title(m.showDenied))
 	if notes := m.headingNotes(); notes != "" {
 		heading += style.Note.Render("  " + notes)
 	}
@@ -669,7 +691,7 @@ func (m Model) View() string {
 		if esc == "" {
 			esc = "q quit"
 		}
-		sections = append(sections, style.Help.Render("  enter approve • i ignore • space select • a/n all/none • t ignored • w hold • / filter • "+esc))
+		sections = append(sections, style.Help.Render("  enter approve • d deny • space select • a/n all/none • t denied • w hold • / filter • "+esc))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }

@@ -20,7 +20,7 @@ func monitorCommand() *ff.Command {
 	var all bool
 	var filter monitordb.Filter
 	return newCommand("monitor", "hsh monitor [FLAGS]", "command palette: review denied hosts, add allowlist entries, change settings (TUI)", func(fs *ff.FlagSet) {
-		fs.BoolVar(&all, 0, "all", "show ignored hosts")
+		fs.BoolVar(&all, 0, "all", "show denied hosts")
 		sessionFilterFlags(fs, &filter)
 	}, func(ctx context.Context, args []string) error {
 		if len(args) > 0 {
@@ -36,14 +36,14 @@ func monitorCommand() *ff.Command {
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}
-		opts := palette.Options{Filter: filter, ShowIgnored: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps(), Forwards: monitorForwardOps()}
+		opts := palette.Options{Filter: filter, ShowDenied: all, SettingsPath: settings.Path(), MonitorKey: key, Sessions: monitorSessionOps(), Forwards: monitorForwardOps()}
 		store := monitordb.DefaultStore()
 		var err error
 		if opts.Pending, err = store.Pending(filter); err != nil {
 			return err
 		}
 		if all {
-			if opts.Ignored, err = store.Ignored(filter); err != nil {
+			if opts.Denied, err = store.Denied(filter); err != nil {
 				return err
 			}
 		}

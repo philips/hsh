@@ -59,13 +59,24 @@ func TestReloadKeepsThePolicyWhenTheConfigVersionIsNewer(t *testing.T) {
 		return strings.Contains(logs.String(), "configuration reload failed") && strings.Contains(logs.String(), "newer than this hsh reads")
 	})
 	if !e.proxy.allowListed("a.example") {
-		t.Fatal("a failed reload dropped the allowlist")
-	}
-	if e.proxy.allowListed("b.example") {
-		t.Fatal("a config this proxy cannot read was partly applied")
+		t.Fatal("a failed reload dropped the session rules")
 	}
 	if got := e.proxy.mode(); got != "allowlist" {
 		t.Fatalf("a failed reload changed the network mode to %q", got)
+	}
+}
+
+func TestTheProxyDoesNotReadTheSessionConfigAllowlist(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "", false)
+	body := `{"version": 1, "network": {"mode": "allowlist", "allow": ["late.example"]}}`
+	if err := os.WriteFile(e.cfgPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.proxy.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if e.proxy.allowListed("late.example") {
+		t.Fatal("network.allow in config.json was applied after session creation")
 	}
 }
 

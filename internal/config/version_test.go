@@ -115,7 +115,6 @@ func TestEditorsRefuseUnreadableVersions(t *testing.T) {
 		"missing": "{\n  \"network\": {\"allow\": [\"a.example\"]}\n}\n",
 	} {
 		editors := map[string]func(path string) error{
-			"AddAllowedHosts": func(p string) error { _, err := AddAllowedHosts(p, []string{"b.example"}); return err },
 			"SetApprovalWait": func(p string) error { return SetApprovalWait(p, "30s") },
 		}
 		for ename, edit := range editors {
@@ -143,11 +142,11 @@ func TestEditorsKeepUnknownFieldsOfAReadableVersion(t *testing.T) {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AddAllowedHosts(path, []string{"b.example"}); err != nil {
+	if err := SetApprovalWait(path, "45s"); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(path)
-	if !strings.Contains(string(after), `"extra"`) || !strings.Contains(string(after), "b.example") || !strings.Contains(string(after), `"version": 1`) {
+	if !strings.Contains(string(after), `"extra"`) || !strings.Contains(string(after), "a.example") || !strings.Contains(string(after), "45s") || !strings.Contains(string(after), `"version": 1`) {
 		t.Fatalf("edit dropped fields: %s", after)
 	}
 }

@@ -73,8 +73,8 @@ Mark each pass, fail, or n/a, and describe any failure.
 13. Paste text (several lines) at the shell prompt: it arrives as pasted text
     and does not run until you press Enter (bracketed paste still works
     after you have opened and closed the review screen).
-14. With the review screen open, paste text containing `q`, `a`, and `i`:
-    nothing is approved, ignored, or closed. Press `/` first and paste:
+14. With the review screen open, paste text containing `q`, `a`, and `d`:
+    nothing is approved, denied, or closed. Press `/` first and paste:
     the text lands in the filter.
 15. With a program in the session that enables mouse reporting (`vim` with
     `:set mouse=a`, or `htop`): click and scroll in it, then open the review

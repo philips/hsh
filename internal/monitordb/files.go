@@ -17,7 +17,7 @@ const (
 	ProxyDBFile      = "proxy.db"
 	MonitorDBFile    = "monitor.db"
 	ProxySchemaV     = 1
-	MonitorSchemaV   = 1
+	MonitorSchemaV   = 2
 	MaxHosts         = 4096
 	untrustedTimeout = 250
 )
@@ -34,10 +34,13 @@ CREATE TABLE IF NOT EXISTS denied (
 `
 
 const monitorSchema = `
-CREATE TABLE IF NOT EXISTS decisions (
-	host       TEXT PRIMARY KEY,
-	ignored    INTEGER NOT NULL DEFAULT 0,
-	decided_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS rules (
+	pattern    TEXT NOT NULL,
+	source     TEXT NOT NULL,
+	access     TEXT,
+	log        TEXT,
+	decided_at TEXT NOT NULL,
+	PRIMARY KEY (pattern, source)
 );
 `
 
@@ -54,12 +57,6 @@ func ProxyDBPath(sessionDir string) string {
 
 func MonitorDBPath(sessionDir string) string {
 	return filepath.Join(sessionDir, MonitorDBFile)
-}
-
-type Decision struct {
-	Found   bool
-	Allowed bool
-	Ignored bool
 }
 
 func openWritable(path, name string, version int, schema string) (*sql.DB, error) {

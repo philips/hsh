@@ -26,9 +26,9 @@ import (
 type Options struct {
 	DB           *monitordb.Store
 	Filter       monitordb.Filter
-	ShowIgnored  bool
+	ShowDenied   bool
 	Pending      []monitordb.DeniedHost
-	Ignored      []monitordb.DeniedHost
+	Denied       []monitordb.DeniedHost
 	SettingsPath string
 	MonitorKey   string
 	Sessions     *SessionOps
@@ -76,6 +76,7 @@ const (
 const (
 	cmdReview       = "review"
 	cmdAllow        = "allow"
+	cmdDeny         = "deny"
 	cmdKey          = "key"
 	cmdDetach       = "detach"
 	cmdExit         = "exit"
@@ -90,11 +91,13 @@ type sessionOpMsg struct {
 }
 
 type allowMsg struct {
-	session string
-	entry   string
-	added   bool
-	cleared int
-	err     error
+	session     string
+	entry       string
+	access      string
+	already     bool
+	cleared     int
+	stillDenied string
+	err         error
 }
 
 type keyErrMsg struct{ err error }
@@ -125,6 +128,7 @@ type Model struct {
 	forwards       picker
 	host           textinput.Model
 	allowEntry     string
+	entryAccess    string
 	forwardSession string
 	pickFor        string
 	target         string
@@ -156,7 +160,7 @@ func New(o Options) Model {
 		height:     24,
 	}
 	if o.DB != nil {
-		m.review = proxywatch.New(o.DB, o.Filter, o.Pending, o.Ignored, o.ShowIgnored)
+		m.review = proxywatch.New(o.DB, o.Filter, o.Pending, o.Denied, o.ShowDenied)
 		m.hasReview = true
 	}
 	m.refreshCommands()
@@ -185,6 +189,7 @@ func (m *Model) refreshCommands() {
 	items := []item{
 		{id: cmdReview, text: "Proxy: review denied requests", note: review},
 		{id: cmdAllow, text: "Proxy: add new allowlist item", note: allow},
+		{id: cmdDeny, text: "Proxy: add new deny item", note: allow},
 		{id: cmdKey, text: "Global Settings: change monitor key", note: "current: " + m.monitorKey},
 	}
 	if m.opts.Sessions != nil {
@@ -308,7 +313,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyEnter:
 			if it, ok := m.sessions.selected(); ok {
-				return m, m.allowCmd(it.id, m.allowEntry)
+				return m, m.ruleCmd(it.id, m.allowEntry, m.entryAccess)
 			}
 			return m, nil
 		}
@@ -399,8 +404,12 @@ func (m Model) run() (tea.Model, tea.Cmd) {
 		m.view = viewReview
 		m.reviewOnly = false
 		m.review = m.review.SetEscHelp("esc back to commands")
-	case cmdAllow:
+	case cmdAllow, cmdDeny:
 		m.host.SetValue("")
+		m.entryAccess = monitordb.AccessAllow
+		if it.id == cmdDeny {
+			m.entryAccess = monitordb.AccessDeny
+		}
 		m.view = viewAllowHost
 	case cmdDetach, cmdExit:
 		if s := m.opts.Filter.Session; s != "" {
@@ -631,30 +640,8 @@ func (m Model) saveKeyCmd(name string) tea.Cmd {
 	}
 }
 
-func AllowEntry(input string) (string, error) {
-	v := strings.ToLower(strings.TrimSpace(input))
-	if v == "" {
-		return "", fmt.Errorf("type a host, *.domain, or URL")
-	}
-	wildcard := strings.HasPrefix(v, "*.")
-	host := v
-	if wildcard {
-		host = v[2:]
-	} else {
-		host = config.HostFromRef(v)
-	}
-	host = strings.TrimSuffix(host, ".")
-	if host == "" || strings.ContainsAny(host, " \t*/@?#") || strings.HasPrefix(host, ".") || strings.Contains(host, "..") {
-		return "", fmt.Errorf("%q is not a host, *.domain, or URL", input)
-	}
-	if wildcard {
-		return "*." + host, nil
-	}
-	return host, nil
-}
-
 func (m Model) submitEntry() (tea.Model, tea.Cmd) {
-	entry, err := AllowEntry(m.host.Value())
+	entry, err := config.HostPattern(m.host.Value())
 	if err != nil {
 		m.setStatus(err.Error(), true)
 		return m, nil
@@ -662,7 +649,7 @@ func (m Model) submitEntry() (tea.Model, tea.Cmd) {
 	m.setStatus("", false)
 	m.allowEntry = entry
 	if s := m.opts.Filter.Session; s != "" {
-		return m, m.allowCmd(s, entry)
+		return m, m.ruleCmd(s, entry, m.entryAccess)
 	}
 	sessions := listSessions()
 	if len(sessions) == 0 {
@@ -715,34 +702,47 @@ func listSessions() []item {
 	return items
 }
 
-func (m Model) allowCmd(session, entry string) tea.Cmd {
+func (m Model) ruleCmd(session, entry, access string) tea.Cmd {
 	db := m.opts.DB
+	if db == nil {
+		db = monitordb.DefaultStore()
+	}
 	return func() tea.Msg {
-		path := filepath.Join(state.SessionDir(session), "config.json")
-		added, err := config.AddAllowedHosts(path, []string{entry})
+		msg := allowMsg{session: session, entry: entry, access: access}
+		rules, err := db.Rules(session)
 		if err != nil {
 			return allowMsg{err: fmt.Errorf("session %s: %w", session, err)}
 		}
-		cleared := 0
-		if db != nil {
-			pending, err := db.Pending(monitordb.Filter{Session: session})
-			if err != nil {
+		for _, r := range rules {
+			if r.Pattern == entry && r.Access == access {
+				msg.already = true
+			}
+		}
+		pending, err := db.Pending(monitordb.Filter{Session: session})
+		if err != nil {
+			return allowMsg{err: err}
+		}
+		for _, h := range pending {
+			if config.HostMatches([]string{entry}, h.Host) {
+				msg.cleared++
+			}
+		}
+		write := db.Allow
+		if access == monitordb.AccessDeny {
+			write = db.Deny
+		}
+		if err := write(session, []string{entry}); err != nil {
+			return allowMsg{err: fmt.Errorf("session %s: %w", session, err)}
+		}
+		if access == monitordb.AccessAllow && !strings.HasPrefix(entry, "*.") {
+			if rules, err = db.Rules(session); err != nil {
 				return allowMsg{err: err}
 			}
-			var hosts []string
-			for _, h := range pending {
-				if config.HostMatches([]string{entry}, h.Host) {
-					hosts = append(hosts, h.Host)
-				}
+			if r := monitordb.Evaluate(rules, entry); r.Access == monitordb.AccessDeny {
+				msg.stillDenied = r.Rule.DeniedBy()
 			}
-			if len(hosts) > 0 {
-				if err := db.MarkAllowed(session, hosts); err != nil {
-					return allowMsg{err: err}
-				}
-			}
-			cleared = len(hosts)
 		}
-		return allowMsg{session: session, entry: entry, added: len(added) > 0, cleared: cleared}
+		return msg
 	}
 }
 
@@ -751,16 +751,44 @@ func (m Model) applyAllow(msg allowMsg) Model {
 		m.setStatus("error: "+msg.err.Error(), true)
 		return m
 	}
-	text := fmt.Sprintf("%s is already in session %s's allowlist", msg.entry, msg.session)
-	if msg.added {
+	var text string
+	switch {
+	case msg.access == monitordb.AccessDeny && msg.already:
+		text = fmt.Sprintf("%s is already denied in session %s", msg.entry, msg.session)
+	case msg.access == monitordb.AccessDeny:
+		text = fmt.Sprintf("denied %s in session %s — the proxy reloads within ~1s", msg.entry, msg.session)
+	case msg.already:
+		text = fmt.Sprintf("%s is already in session %s's allowlist", msg.entry, msg.session)
+	default:
 		text = fmt.Sprintf("added %s to session %s's allowlist — the proxy reloads within ~1s", msg.entry, msg.session)
 	}
 	if msg.cleared > 0 {
-		text += fmt.Sprintf("; %d pending host(s) approved", msg.cleared)
+		verb := "approved"
+		if msg.access == monitordb.AccessDeny {
+			verb = "denied"
+		}
+		text += fmt.Sprintf("; %d pending host(s) %s", msg.cleared, verb)
+	}
+	if msg.stillDenied != "" {
+		text += "; it stays " + msg.stillDenied
 	}
 	m.setStatus(text, false)
 	m.back()
 	return m
+}
+
+func (m Model) entryHeading() string {
+	if m.entryAccess == monitordb.AccessDeny {
+		return "Proxy: add new deny item"
+	}
+	return "Proxy: add new allowlist item"
+}
+
+func (m Model) sessionHeading() string {
+	if m.entryAccess == monitordb.AccessDeny {
+		return "Proxy: deny " + m.allowEntry + " in which session?"
+	}
+	return "Proxy: add " + m.allowEntry + " to which session?"
 }
 
 func (m Model) statusView() string {
@@ -788,7 +816,7 @@ func (m Model) View() string {
 		return m.review.View()
 	case viewAllowHost:
 		sections = []string{
-			m.heading("Proxy: add new allowlist item"),
+			m.heading(m.entryHeading()),
 			"",
 			m.host.View(),
 			"",
@@ -798,7 +826,7 @@ func (m Model) View() string {
 		}
 	case viewAllowSession:
 		sections = []string{
-			titleStyle.Render("Proxy: add " + m.allowEntry + " to which session?"),
+			titleStyle.Render(m.sessionHeading()),
 			"",
 			m.sessions.view(listRows),
 			"",

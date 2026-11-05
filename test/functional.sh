@@ -181,7 +181,7 @@ echo "$DENIED" | grep -q "$DB_SESSION" || fail "denial row is not attributed to 
 echo "$DENIED" | grep -q "$TMP/workspace" || fail "denial row is not attributed to the workspace"
 pass "denial recorded with session + workspace attribution"
 
-echo "== step 2: proxy allow adds the denied host to the session's config (TOFU)"
+echo "== step 2: proxy allow adds the denied host to the session's rules (TOFU)"
 FILTERED="$("$HSH" proxy denied --session "$DB_SESSION")"
 echo "$FILTERED" | grep -qx "https://api.mistral.ai" || fail "session-filtered denied list must show bare URLs: $FILTERED"
 if echo "$FILTERED" | grep -q "$DB_SESSION"; then fail "session-filtered denied list must not repeat the session column"; fi
@@ -190,11 +190,17 @@ OUT="$("$HSH" proxy allow --all --session "$DB_SESSION")"
 echo "$OUT"
 echo "$OUT" | grep -q "added https://api.mistral.ai" || fail "proxy allow did not report adding api.mistral.ai"
 SESSION_CONFIG="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/config.json"
-grep -q '"api.mistral.ai"' "$SESSION_CONFIG" || fail "the session's config copy was not updated"
+MONITOR_DB="$XDG_STATE_HOME/hsh/sessions/$DB_SESSION/monitor.db"
+session_rules() {
+	python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(' '.join(f'{s}:{p}={a}' for p,s,a in c.execute('SELECT pattern, source, access FROM rules ORDER BY rowid')))" "$MONITOR_DB"
+}
+RULES="$(session_rules)"
+[ "$RULES" = "config:host.containers.internal=allow user:api.mistral.ai=allow" ] || fail "the session rules are not the copied allowlist plus the approval: $RULES"
+[ "$(python3 -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))['network']['allow']))" "$SESSION_CONFIG")" = "host.containers.internal" ] || fail "an approval edited the session's config copy"
 if sed -n '/"allow"/,/]$/p' "$TMP/config.hsh" | grep -q 'api.mistral.ai'; then
 	fail "the seed config file must never be modified in place"
 fi
-pass "api.mistral.ai added to the session's config copy (seed config untouched)"
+pass "api.mistral.ai allowed in the session's rules (config copy and seed config untouched)"
 
 echo "== step 3: sandbox session — allowed endpoint, workspace mount, pi through the proxy"
 "$HSH" resume "$DB_SESSION" >"$TMP/session2.out" 2>&1 <<'CMDS' || true
@@ -298,6 +304,45 @@ if "$HSH" proxy denied --dns >/dev/null 2>&1; then
 	fail "the --dns flag must be gone with the separate table"
 fi
 pass "the --dns flag is gone"
+
+echo "== step 3b: a user deny blocks a host in every mode; approving it again undoes the deny"
+OUT="$("$HSH" proxy deny --session "$DB_SESSION" https://api.mistral.ai/v1)"
+[ "$OUT" = "denied api.mistral.ai" ] || fail "proxy deny did not confirm: $OUT"
+"$HSH" proxy deny --session "$DB_SESSION" '*.Deny-Wild.example' >/dev/null || fail "proxy deny refused a wildcard"
+RULES="$(session_rules)"
+[ "$RULES" = "config:host.containers.internal=allow user:api.mistral.ai=deny user:*.deny-wild.example=deny" ] || fail "the denies did not replace the approval and add the wildcard: $RULES"
+"$HSH" proxy denied --all --session "$DB_SESSION" | grep -Eq '^https://api\.mistral\.ai +denied by you' || fail "proxy denied --all does not show the deny: $("$HSH" proxy denied --all --session "$DB_SESSION")"
+"$HSH" proxy denied --session "$DB_SESSION" | grep -q "api.mistral.ai" && fail "a denied host is still pending review"
+python3 - "$SESSION_CONFIG" https <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["network"]["mode"] = sys.argv[2]
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+"$HSH" resume "$DB_SESSION" >"$TMP/deny1.out" 2>&1 <<'CMDS' || true
+echo "--- tls:"
+curl -sS -o /dev/null -w 'code=%{http_code}\n' --max-time 8 https://api.mistral.ai 2>&1
+echo "--- plaintext:"
+curl -sS --max-time 8 http://api.mistral.ai/ 2>&1
+CMDS
+sed -n '/^--- tls:/,/^--- plaintext:/p' "$TMP/deny1.out" | grep -Eq "response 403|code=403" || fail "a denied host reached port 443 in https mode: $(cat "$TMP/deny1.out")"
+grep -q "denied by the user's policy for this session" "$TMP/deny1.out" || fail "the denial does not say the user decided: $(cat "$TMP/deny1.out")"
+grep -q "Do not ask for it again" "$TMP/deny1.out" || fail "the denial does not tell the agent to stop asking: $(cat "$TMP/deny1.out")"
+pass "a user deny blocks TLS on 443 in https mode, with a message that says the user decided"
+OUT="$("$HSH" proxy allow --session "$DB_SESSION" https://api.mistral.ai)"
+[ "$OUT" = "added https://api.mistral.ai" ] || fail "proxy allow on a denied host: $OUT"
+python3 - "$SESSION_CONFIG" allowlist <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["network"]["mode"] = sys.argv[2]
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+"$HSH" resume "$DB_SESSION" >"$TMP/deny2.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
+echo "curl-rc=$?"
+CMDS
+grep -q '^curl-rc=0$' "$TMP/deny2.out" || fail "approving a denied host did not undo the deny: $(cat "$TMP/deny2.out")"
+pass "approving a host denied by you allows it again"
 
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
@@ -1932,10 +1977,6 @@ done
 VER_CFG="$XDG_STATE_HOME/hsh/sessions/$VER_SESSION/config.json"
 grep -Eq 'before:.*(response 403|code=403)' "$TMP/ver-live.out" || fail "example.com was not denied before the edit: $(cat "$TMP/ver-live.out")"
 printf '%s\n' '{ "version": 99, "network": { "mode": "allowlist", "allow": ["example.com", "host.containers.internal"] } }' >"$VER_CFG"
-cp "$VER_CFG" "$TMP/ver-cfg.saved"
-"$HSH" proxy allow --session "$VER_SESSION" https://other.example >"$TMP/ver.out" 2>&1 && fail "proxy allow edited a config from a newer hsh"
-grep -q "config version 99 is newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "proxy allow did not explain: $(cat "$TMP/ver.out")"
-cmp -s "$VER_CFG" "$TMP/ver-cfg.saved" || fail "a refused proxy allow modified the config"
 touch "$VER_WS/edited"
 wait "$VER_PID" || true
 grep -Eq 'after:.*(response 403|code=403)' "$TMP/ver-live.out" || fail "the running proxy stopped enforcing after an unreadable reload: $(cat "$TMP/ver-live.out")"

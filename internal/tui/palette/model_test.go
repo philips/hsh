@@ -46,7 +46,23 @@ func (e *env) session(t *testing.T, id, workspace string) string {
 	if err := os.WriteFile(filepath.Join(dir, "workspace"), []byte(workspace+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := monitordb.InitSession(dir, []string{"keep.example"}); err != nil {
+		t.Fatal(err)
+	}
 	return path
+}
+
+func (e *env) rules(t *testing.T, id string) string {
+	t.Helper()
+	rules, err := e.db.Rules(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range rules {
+		out = append(out, r.Source+":"+r.Pattern+"="+r.Access)
+	}
+	return strings.Join(out, ",")
 }
 
 func (e *env) model(t *testing.T, session string) Model {
@@ -189,7 +205,7 @@ func TestTypingFiltersTheCommandsFuzzily(t *testing.T) {
 func TestChangeMonitorKey(t *testing.T) {
 	e := newEnv(t)
 	m := e.model(t, "")
-	m, _ = press(t, m, down, down, enter)
+	m, _ = press(t, m, down, down, down, enter)
 	if m.view != viewMonitorKey {
 		t.Fatalf("view = %v", m.view)
 	}
@@ -222,7 +238,7 @@ func TestChangeMonitorKeyReportsAnUnreadableSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := e.model(t, "")
-	m, cmd := press(t, m, down, down, enter, down, enter)
+	m, cmd := press(t, m, down, down, down, enter, down, enter)
 	m = run(t, m, cmd)
 	if m.view != viewMonitorKey || !strings.Contains(m.View(), "bogus") {
 		t.Fatalf("the error is not shown:\n%s", m.View())
@@ -241,19 +257,49 @@ func TestAddAllowlistItemInTheSession(t *testing.T) {
 	}
 	m, cmd := press(t, m, typed("*.Example.com"), enter)
 	m = run(t, m, cmd)
+	if got := e.rules(t, "s1"); got != "config:keep.example=allow,user:*.example.com=allow" {
+		t.Fatalf("rules = %s", got)
+	}
 	cfg, err := config.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(cfg.Network.Allow, ",") != "keep.example,*.example.com" {
-		t.Fatalf("allow = %v", cfg.Network.Allow)
+	if strings.Join(cfg.Network.Allow, ",") != "keep.example" {
+		t.Fatalf("the session config was edited: %v", cfg.Network.Allow)
 	}
 	pending, _ := e.db.Pending(monitordb.Filter{Session: "s1"})
 	if len(pending) != 1 || pending[0].Host != "other.test" {
 		t.Fatalf("the wildcard did not approve the matching pending host: %+v", pending)
 	}
-	if m.view != viewCommands || !strings.Contains(m.View(), "added *.example.com to session s1") {
+	if m.view != viewCommands || !strings.Contains(m.View(), "added *.example.com to session s1") || !strings.Contains(m.View(), "1 pending host(s) approved") {
 		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+}
+
+func TestAddDenyItemInTheSession(t *testing.T) {
+	e := newEnv(t)
+	e.session(t, "s1", "/ws")
+	m := e.model(t, "s1")
+	_ = monitordbtest.Seed(state.SessionDir("s1"), monitordb.DeniedHost{Host: "gist.example.com", Target: "gist.example.com:443"})
+	m, _ = press(t, m, down, down, enter)
+	if m.view != viewAllowHost || !strings.Contains(m.View(), "Proxy: add new deny item") {
+		t.Fatalf("view = %v\n%s", m.view, m.View())
+	}
+	m, cmd := press(t, m, typed("*.example.com"), enter)
+	m = run(t, m, cmd)
+	if got := e.rules(t, "s1"); got != "config:keep.example=allow,user:*.example.com=deny" {
+		t.Fatalf("rules = %s", got)
+	}
+	if pending, _ := e.db.Pending(monitordb.Filter{Session: "s1"}); len(pending) != 0 {
+		t.Fatalf("the deny did not take the matching host out of the queue: %+v", pending)
+	}
+	if !strings.Contains(m.View(), "denied *.example.com in session s1") || !strings.Contains(m.View(), "1 pending host(s) denied") {
+		t.Fatalf("no confirmation:\n%s", m.View())
+	}
+	m, cmd = press(t, m, down, enter, typed("api.example.com"), enter)
+	m = run(t, m, cmd)
+	if !strings.Contains(m.View(), "it stays denied by you") {
+		t.Fatalf("allowing a denied host did not say it stays denied:\n%s", m.View())
 	}
 }
 
@@ -273,9 +319,12 @@ func TestAddAllowlistItemPicksASession(t *testing.T) {
 	}
 	m, cmd := press(t, m, typed("two"), enter)
 	m = run(t, m, cmd)
-	cfg, _ := config.Load(path)
-	if strings.Join(cfg.Network.Allow, ",") != "keep.example,docs.example.org" {
-		t.Fatalf("allow = %v", cfg.Network.Allow)
+	_ = path
+	if got := e.rules(t, "bbb"); got != "config:keep.example=allow,user:docs.example.org=allow" {
+		t.Fatalf("rules = %s", got)
+	}
+	if got := e.rules(t, "aaa"); got != "config:keep.example=allow" {
+		t.Fatalf("another session changed: %s", got)
 	}
 	m, cmd = press(t, m, down, enter, typed("docs.example.org"), enter, typed("two"), enter)
 	m = run(t, m, cmd)
@@ -296,22 +345,6 @@ func TestAddAllowlistItemRejectsJunk(t *testing.T) {
 		m2, cmd := press(t, m2, enter)
 		if cmd != nil || m2.view != viewAllowHost || !m2.isError {
 			t.Errorf("%q was accepted", bad)
-		}
-	}
-}
-
-func TestAllowEntry(t *testing.T) {
-	cases := map[string]string{
-		"example.com":                "example.com",
-		"  Example.COM. ":            "example.com",
-		"*.example.com":              "*.example.com",
-		"https://api.x.io:8443/v1?q": "api.x.io",
-		"api.x.io:8443":              "api.x.io",
-		"api.x.io/path":              "api.x.io",
-	}
-	for in, want := range cases {
-		if got, err := AllowEntry(in); err != nil || got != want {
-			t.Errorf("%q: got %q %v want %q", in, got, err, want)
 		}
 	}
 }

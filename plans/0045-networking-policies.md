@@ -1,6 +1,6 @@
 # Network policies
 
-> **Status:** draft. 
+> **Status:** draft. Phase 1 implemented.
 
 ## Goal
 
@@ -134,6 +134,8 @@ rules(
   and uses no rules, so it falls back to the mode default. In `https` mode
   that means 443 still goes through and every allowlisted plaintext host is
   denied.
+- The standalone proxy (`hsh-proxy` without `--monitor-db`) has no rules
+  table; it uses the config's `network.allow` as `config` allow rules.
 
 ## Session creation
 
@@ -162,6 +164,9 @@ new allowlist item" does for allows. In this phase patterns are today's
 removed. `hsh settings edit --session` still edits `config.json` for
 `approval_wait` and `suspend_delay`; the proxy still hot-reloads `config.json`
 for the mode, secrets and holds, but no longer reads `network.allow` from it.
+
+`hsh proxy denied --all` lists every recorded host with its state (`pending`,
+`allowed`, `denied by you`, `quiet`).
 
 ## Review queue
 

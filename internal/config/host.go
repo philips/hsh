@@ -76,3 +76,25 @@ func HostCovered(approved []string, host string) bool {
 	}
 	return false
 }
+
+func HostPattern(input string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(input))
+	if v == "" {
+		return "", fmt.Errorf("type a host, *.domain, or URL")
+	}
+	wildcard := strings.HasPrefix(v, "*.")
+	host := v
+	if wildcard {
+		host = v[2:]
+	} else {
+		host = HostFromRef(v)
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "" || strings.ContainsAny(host, " \t*/@?#") || strings.HasPrefix(host, ".") || strings.Contains(host, "..") {
+		return "", fmt.Errorf("%q is not a host, *.domain, or URL", input)
+	}
+	if wildcard {
+		return "*." + host, nil
+	}
+	return host, nil
+}

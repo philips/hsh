@@ -58,7 +58,7 @@ flowchart TB
                 cafiles[("ca.crt / ca.key<br/>MITM CA (0600)")]
                 wsfile[("workspace<br/>absolute path")]
                 secretsjson[("secrets.json<br/>resolved keys + OAuth providers,<br/>scrubbed when idle")]
-                decisions[("monitor.db<br/>approve/ignore decisions,<br/>written by the host")]
+                decisions[("monitor.db<br/>session rules (allow/deny),<br/>written by the host")]
                 proxydir[("proxy/proxy.db + oauth-tokens.json<br/>denials, OAuth captures (0700/0600),<br/>written by this session's proxy")]
                 oauthph[("oauth-phantoms.json + seed/<br/>per-session login phantoms,<br/>seeded credential files")]
             end
@@ -193,7 +193,7 @@ Reading notes:
   lifecycle control, and `===` is the pasta network uplink (see the
   interface diagram for the full mount set). The session directory is
   mounted read-only into the proxy only (config copy, resolved secrets,
-  CA, review decisions); the proxy's only writable host path is the
+  CA, session rules); the proxy's only writable host path is the
   session's own `proxy/` directory. No proxy sees the state directory or
   another session's directory, so a compromised proxy cannot read other
   sessions' secrets, CA keys or captured tokens, or edit their configs.
@@ -274,18 +274,25 @@ reach. The workspace shell gets `http_proxy`/`https_proxy`/`all_proxy`
 (plus uppercase variants) pointing at it, and `no_proxy` for loopback and
 the veth addresses.
 
-Every request is checked against `network.allow`:
+Every request is checked against the session's rules (below) and the
+network mode: a host a `deny` rule matches is denied in every mode,
+otherwise a host an `allow` rule matches is allowed, otherwise the mode
+decides (`https` allows TLS on 443). One evaluator in `internal/proxy`
+(`match`, used by `connectAllowed`, `plaintextAllowed`, `allowListed`, and
+the netstack paths) applies it.
 
 - **Denied**: the proxy records the host in the monitor database and answers
   `403 Forbidden`, as other agent sandboxes do. For `CONNECT` this surfaces
   in curl as `CONNECT tunnel failed, response 403`. The body is written for
-  an agent: the block is on purpose and not an outage, the user has been
-  notified (`hsh monitor`), and the agent should tell the user which host it
-  needs and why rather than try other tools, mirrors, proxies, or DNS tricks.
-  Most clients never show the body for a denied `CONNECT`, so the same
-  instructions also reach the agent's system prompt through the
-  [network notice](config.md#network-notice). Optionally the proxy holds
-  the request first (below).
+  an agent. For a denial the mode decides: the block is on purpose and not
+  an outage, the user has been notified (`hsh monitor`), and the agent
+  should tell the user which host it needs and why rather than try other
+  tools, mirrors, proxies, or DNS tricks. For a denial a `deny` rule
+  decides: the user's policy denies the host, and the agent should not ask
+  for it again or look for workarounds. Most clients never show the body
+  for a denied `CONNECT`, so the same instructions also reach the agent's
+  system prompt through the [network notice](config.md#network-notice).
+  Optionally the proxy holds a mode denial first (below).
 - **Allowed, no secret configured for the host**: the proxy tunnels the
   connection (`CONNECT` → `200 Connection Established`, then a raw TCP
   splice). TLS is end-to-end between the workspace and the upstream; any
@@ -306,7 +313,7 @@ tokens. The 403 body and the network notice therefore tell it to stop and
 ask. hsh can also **hold** a request the policy would deny until the user decides.
 Holding is on by default (`30s`) and resolves session over global over
 builtin: `network.approval_wait` in the session config (for example `"30s"`;
-at most `5m`; `off`/`0s` disables), then the global `approval_wait` setting
+at most `5m`; `off`/`0s` disables), then the global `network_proxy_approval_wait` setting
 in `~/.config/hsh/settings.json`, then the builtin default:
 
 - The denial is recorded first, so the host shows up in `hsh monitor` and
@@ -315,11 +322,10 @@ in `~/.config/hsh/settings.json`, then the builtin default:
   first; the status line says `(N held)`; the proxy zeroes
   its session's counts when it starts).
 - The proxy then polls every 250 ms. It lets the request through as soon
-  as the host is allowed (an approval rewrites the session config and the
-  proxy's one-second reload picks it up), fails it with the normal 403 as
-  soon as the user *ignores* the host (the decision lands in the session's
-  `monitor.db`, which the proxy reads as `/hsh-session/monitor.db`;
-  hosts already ignored are not held at all), and otherwise fails it when the wait
+  as an allow rule matches the host, fails it with a 403 as soon as a deny
+  rule does (both land in the session's `monitor.db`, which the proxy reads
+  as `/hsh-session/monitor.db` and rereads at most every 200 ms; hosts
+  already denied by a rule are not held at all), and otherwise fails it when the wait
   runs out, when holding is switched off by a reload, when nobody is watching
   any more, or when the client goes away. At most 64 requests are held at
   once; beyond that requests are denied immediately.
@@ -335,8 +341,7 @@ in `~/.config/hsh/settings.json`, then the builtin default:
   sessions they cover. Without it requests are denied at once. A proxy
   started without `--attended` never holds.
 - Holding does not widen policy: allow decisions still come only from the
-  allowlist in the session config, and a hold ends in the same denial as
-  without holding.
+  session's rules, and a hold ends in the same denial as without holding.
 - Per session: `hsh settings edit --session ID` rewrites
   `network.approval_wait` in the session config, and `w` in `hsh monitor`
   (and the inline review screen, which is the same model) toggles it for the
@@ -346,7 +351,8 @@ in `~/.config/hsh/settings.json`, then the builtin default:
 
 The workspace's `/etc/resolv.conf` points at the proxy (`10.77.0.1`), where
 a DNS forwarder (UDP and TCP 53) runs alongside the HTTP proxy. Query names
-are matched against `network.allow` with the same rules as HTTP: allowed
+are matched against the session's rules with the same evaluation as HTTP
+(in `allowlist` mode; `https` mode resolves every name): allowed
 names are forwarded to the pod's upstream resolvers (from the proxy
 container's `/etc/resolv.conf`), everything else gets `REFUSED`.
 
@@ -365,7 +371,7 @@ so review items come only from connection attempts (a refused CONNECT,
 plaintext request, or transparent connection). Approving a host makes both
 the lookup and the connection work.
 
-### Denial records and review decisions
+### Denial records and session rules
 
 What the monitor shows is kept per session, in two SQLite databases
 (modernc.org/sqlite, pure Go, so the `CGO_ENABLED=0` static build is
@@ -375,7 +381,7 @@ session's proxy or the host trusts it:
 | Database | Written by | Proxy sees it as | Content |
 |---|---|---|---|
 | `sessions/<id>/proxy/proxy.db` | the session's proxy | `/hsh-proxy-state/proxy.db` (rw) | the `denied` table |
-| `sessions/<id>/monitor.db` | the host (`hsh proxy allow`, `hsh monitor`, the inline review) | `/hsh-session/monitor.db` (ro) | the `decisions` table |
+| `sessions/<id>/monitor.db` | the host (`hsh run`, `hsh proxy allow`/`deny`, `hsh monitor`, the inline review) | `/hsh-session/monitor.db` (ro) | the `rules` table |
 
 ```sql
 CREATE TABLE IF NOT EXISTS denied (       -- proxy.db
@@ -386,12 +392,28 @@ CREATE TABLE IF NOT EXISTS denied (       -- proxy.db
     last_seen  TEXT NOT NULL,
     holding    INTEGER NOT NULL DEFAULT 0   -- requests currently held
 );
-CREATE TABLE IF NOT EXISTS decisions (    -- monitor.db
-    host       TEXT PRIMARY KEY,
-    ignored    INTEGER NOT NULL DEFAULT 0,
-    decided_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS rules (        -- monitor.db, schema version 2
+    pattern    TEXT NOT NULL,               -- example.com or *.example.com
+    source     TEXT NOT NULL,               -- config | user
+    access     TEXT,                        -- allow | deny | NULL
+    log        TEXT,                        -- record | review | NULL
+    decided_at TEXT NOT NULL,
+    PRIMARY KEY (pattern, source)
 );
 ```
+
+`hsh run` creates `monitor.db` when it creates the session and inserts one
+`config` allow rule per `network.allow` entry of the session's config copy;
+`hsh resume` inserts nothing (the file exists), so the proxy never reads
+`network.allow` from the config copy. `user` rules are the decisions made in
+the monitor, the inline review, and `hsh proxy allow`/`deny`: one row per
+pattern, so the latest decision replaces the previous one. Evaluation
+(`monitordb.Evaluate`): any matching `deny` wins, then any matching `allow`,
+otherwise the mode decides; a matching `log: record` rule quiets a denial
+(recorded, not queued or held). A proxy started without `--monitor-db` (the
+standalone `hsh-proxy`) uses the config's `network.allow` as its allow rules.
+A proxy that cannot read the rules table (missing, other schema version)
+logs it once and falls back to the mode's defaults.
 
 Both use the default rollback journal, not WAL. With a single writer per
 database there is nothing for WAL to buy, and a read-only reader of a
@@ -421,9 +443,11 @@ fail with `SQLITE_BUSY`.
 The host-side readers (`hsh proxy denied`, `hsh monitor`, the inline status
 line and review screen) **union** the per-session databases: they walk
 `$XDG_STATE_HOME/hsh/sessions/`, read each session's `proxy/proxy.db`, and
-overlay that session's `monitor.db`. A host with a decision has left the
-queue (approved, or ignored when `ignored` is set); a later denial of the
-same host only bumps its count. Attribution comes from the host, not from
+evaluate that session's rules against each recorded host. A host is
+pending (in the queue) when no access rule matches it, allowed or denied
+when one does (a denied row names its source, `denied by you`), and quiet
+when only a `log: record` rule matches; a later denial of a decided host
+only bumps its count. Attribution comes from the host, not from
 the proxy: the session id is the directory name and the workspace is the
 session's `workspace` file, so a proxy can only add review items to its own
 session.
@@ -471,35 +495,41 @@ The host-side commands work with these records:
 
 ```
 hsh proxy denied [--session ID] [--workspace PATH] [--watch]   list the queue
+hsh proxy denied [--session ID] [--workspace PATH] --all       every recorded host, with its state
 hsh proxy allow --all --session ID [--watch]                   allow every pending host
 hsh proxy allow --session ID https://example.com [--watch]    allow one host
+hsh proxy deny --session ID https://example.com|*.domain       deny a host
 hsh monitor [--session ID] [--workspace PATH] [--all]         command palette (TUI)
 ```
 
 `proxy denied` prints pending hosts (no decision yet) as a table (session
 id, workspace, URL, count, last seen, sorted by count); a
 `--session`/`--workspace` filter narrows the output to bare URLs;
-`--watch` continuously prints new denials. `proxy allow` writes hosts
-into the session's config copy (`network.allow`), prints
-`added https://<host>` (or `already allowed`), and records the hosts as
-approved in the session's `monitor.db` so they leave the queue — trust on first use: the first attempt
-is denied and recorded, review allows it, running proxies hot-reload
-the config within ~1s. `--all` approves everything pending for the
-session; a URL argument allows a single host (the URL is normalized to
-its hostname). `--watch` keeps approving new denials as they appear.
+`--watch` continuously prints new denials; `--all` lists every recorded
+host with a STATE column. `proxy allow` writes `user` allow rules into the
+session's `monitor.db`, prints `added https://<host>` (or `already allowed`,
+or `added ..., but it stays denied by ...` when a deny rule still matches),
+and the hosts leave the queue — trust on first use: the first attempt is
+denied and recorded, review allows it, running proxies pick the rule up
+within a second. `--all` approves everything pending for the session; a URL
+argument allows a single host (the URL is normalized to its hostname).
+`--watch` keeps approving new denials as they appear. `proxy deny` writes a
+`user` deny rule for a host or `*.domain` (a URL is reduced to its host),
+replacing an earlier approval of the same pattern.
 
 `monitor` is the interactive counterpart (bubbletea/bubbles TUI,
 requires a terminal, runs full-screen in the alternate screen buffer):
 a fuzzy command palette over the records above. It opens on the
 review screen when denials are pending — SESSION, WORKSPACE, URL,
 COUNT, LAST SEEN, in that order — most recently requested first,
-refreshed live every 2s; `space`/`a`/`n` select, `enter` approve (added
-to the session's `network.allow`, marked allowed; running proxies
-hot-reload within ~1s), `i` ignore, `t` toggle ignored rows, `w` hold,
-`/` filter (with `tab` completion), `r` refresh, `q`/`esc`/`ctrl+c`
-quit. Otherwise it opens on the command list: review denied requests,
-add an allowlist item (a host, `*.domain`, or URL; a session picker
-when the monitor is unscoped), change the monitor key, detach or exit
+refreshed live every 2s; `space`/`a`/`n` select, `enter` approve (a
+`user` allow rule; running proxies pick it up within a second), `d` deny
+(a `user` deny rule), `t` toggle the denied rows (`(denied by you)`; enter
+on one approves it again), `w` hold, `/` filter (with `tab` completion),
+`r` refresh, `q`/`esc`/`ctrl+c` quit. Otherwise it opens on the command
+list: review denied requests, add an allowlist or deny item (a host,
+`*.domain`, or URL; a session picker when the monitor is unscoped), change
+the monitor key, detach or exit
 a session, and start or stop a managed forward (below).
 `--session`/`--workspace` scope the view and preselect that session
 where a command needs one. The same palette opens inline on the
@@ -628,8 +658,10 @@ under 128 bytes), and a header-at-a-time write pattern trips that check.
 The proxy polls the config file and the resolved-secrets file once per
 second and swaps its in-memory state when either changes. `hsh run`
 likewise watches the config file and rewrites `secrets.json` when it
-changes, so `network.allow` and secret values/hosts update without
-restarting the sandbox. Both files are reached through **directory**
+changes, so the network mode, holding, and secret values/hosts update
+without restarting the sandbox. The session's allow and deny rules live in
+`monitor.db` and are reread separately (at most every 200 ms); the config
+copy's `network.allow` is only read when the session is created. Both files are reached through **directory**
 bind mounts so that replacing the file (editors and `sed -i` rename files)
 is picked up.
 
@@ -1061,8 +1093,8 @@ The default network policy is `https`: any host may be reached over
 TLS on port 443, and DNS resolves every name. That trades destination
 control for out-of-the-box usability; the `allowlist` mode (`--network
 allowlist` or `network.mode` in the config, used by the pre-built
-harness images) restores deny-by-default — only `network.allow` hosts
-on any port, DNS gated by the same list (refused lookups are logged, not
+harness images) restores deny-by-default — only hosts the session's allow
+rules match (seeded from `network.allow`), on any port, DNS gated by the same rules (refused lookups are logged, not
 reviewable), connection denials recorded for review.
 `none` disables egress entirely. In `https` mode a compromised agent
 can exfiltrate data to any TLS endpoint; use `allowlist` for untrusted

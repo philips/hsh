@@ -110,10 +110,13 @@ def type_line(fd, line, marker):
     expect(fd, marker, since=start)
 
 
-def read_session_config(sid):
-    import json
-    with open(os.path.join(state, "sessions", sid, "config.json")) as f:
-        return json.load(f)
+def allowed_patterns(sid):
+    import sqlite3
+    db = sqlite3.connect(os.path.join(state, "sessions", sid, "monitor.db"))
+    try:
+        return [p for (p,) in db.execute("SELECT pattern FROM rules WHERE access = 'allow' AND source = 'user'")]
+    finally:
+        db.close()
 
 
 def disable_holding(session):
@@ -158,13 +161,13 @@ os.write(fd, b" ")
 time.sleep(0.3)
 os.write(fd, b"\r")
 expect(fd, "approved 1 host", 10, since=mark)
-cfg = read_session_config(sid)
-if "blocked.example.test" not in cfg["network"]["allow"]:
-    fail("approving did not add the host to the session config: %s" % cfg["network"])
+rules = allowed_patterns(sid)
+if "blocked.example.test" not in rules:
+    fail("approving did not add an allow rule for the host: %s" % rules)
 os.write(fd, b"q")
 expect(fd, "late-3-42", 10, since=mark)
 expect(fd, "nothing to review", 10, since=mark)
-print("PASS: selecting with space and approving with enter adds the host to the session config, as in hsh monitor; closing with q delivers the held output and the line goes quiet")
+print("PASS: selecting with space and approving with enter allows the host in the session's rules, as in hsh monitor; closing with q delivers the held output and the line goes quiet")
 
 type_line(fd, "echo after-dialog-$((6*7))", "after-dialog-42")
 mark = len(transcript)
@@ -177,13 +180,13 @@ os.write(fd, b"\r")
 expect(fd, "host:", 10, since=mark)
 os.write(fd, b"https://palette.example.test/x\r")
 expect(fd, "added palette.example.test to session %s" % sid, 10, since=mark)
-cfg = read_session_config(sid)
-if "palette.example.test" not in cfg["network"]["allow"]:
-    fail("the palette did not add the entry to the session config: %s" % cfg["network"])
+rules = allowed_patterns(sid)
+if "palette.example.test" not in rules:
+    fail("the palette did not add an allow rule for the entry: %s" % rules)
 os.write(fd, b"\x1b")
 time.sleep(0.3)
 type_line(fd, "echo after-palette-$((6*7))", "after-palette-42")
-print("PASS: with nothing to review Ctrl+Space opens the command palette; adding an allowlist entry there updates the session config")
+print("PASS: with nothing to review Ctrl+Space opens the command palette; adding an allowlist entry there adds a session rule")
 
 mark = len(transcript)
 os.write(fd, b"\x00")

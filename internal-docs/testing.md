@@ -26,14 +26,21 @@ proxy, the monitor database, and the example image:
   `monitor.db` is created), attributed
   with the session id and workspace; the session state directory holds
   the config copy and workspace file
-- **step 2**: `hsh proxy allow --all --session ID` adds the denied host to
-  the session's config copy (trust on first use; the seed config is
-  never modified)
+- **step 2**: `hsh proxy allow --all --session ID` adds a `user` allow rule
+  for the denied host to the session's `monitor.db`, next to the `config`
+  rule copied from `network.allow` at creation (trust on first use; neither
+  the session's config copy nor the seed config is modified)
 - **step 3**: resuming that session, the endpoint is allowed (real
   upstream response through the intercepting proxy), the workspace mount
   works, and `echo hi | pi` returns `hello world` from the dummy endpoint
   that pi is configured against (`~/.pi/agent/models.json` +
   `~/.pi/agent/settings.json` inside the sandbox)
+- **step 3b**: `hsh proxy deny` on that host (a URL reduced to its host) and
+  on a `*.domain` pattern replaces the approval and adds the wildcard; `hsh
+  proxy denied --all` shows `denied by you` and the host leaves the queue;
+  with the session switched to `https` mode a TLS request to the denied host
+  on 443 gets a 403 whose body says the user decided and not to ask again;
+  `hsh proxy allow` approves it again and the request succeeds
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 403
@@ -101,7 +108,9 @@ proxy, the monitor database, and the example image:
   someone is watching; setting `network.approval_wait` in the session config
   to `4s` (or `off`) changes it live and an unapproved request is held about
   4 s, then denied. The proxy unit tests
-  (`hold_test.go`) cover release by approval, release by ignore, timeout,
+  (`hold_test.go`) cover release by approval, release by a deny, hosts
+  already denied (or quieted by a `log: record` rule) not being held, a deny
+  blocking 443 in `https` mode and beating an allow, the two 403 texts, timeout,
   disabling during a hold, unattended and stale markers, `none` mode, the
   default being off, the concurrency cap, client disconnects, the `holding`
   counts, and DNS lookups never being held or recorded
@@ -156,9 +165,8 @@ proxy, the monitor database, and the example image:
   or an unknown field, and an image label with no version or a newer one,
   are refused with the documented message and create no session; a `secrets.db`
   with a newer `user_version` is refused; in a live session
-  the session config is replaced by a newer-version file, `hsh proxy allow`
-  refuses and leaves it unchanged, the running proxy keeps denying a host the
-  new file would allow and logs the failed reload, `hsh resume` explains and
+  the session config is replaced by a newer-version file, the running proxy
+  keeps denying a host the new file would allow and logs the failed reload, `hsh resume` explains and
   names `hsh rm`, and `hsh rm` still removes the session
 - **step 27**: a pod whose workspace container has no `/hsh-sshd` mount (as
   container-runtime sessions created before the mount existed) makes `hsh
@@ -176,9 +184,9 @@ proxy, the monitor database, and the example image:
 - **step 18** (`test/inline.py`): through the relay, the status line is
   drawn, a proxy denial raises the notification, Ctrl+Space takes over the
   screen with the `hsh monitor` view and pauses the session's output,
-  space+enter adds the host to the session config, `q` closes and delivers
-  the held output, with nothing pending Ctrl+Space opens the command palette
-  and its "add new allowlist item" command updates the session config, its
+  space+enter adds an allow rule for the host to the session's rules, `q`
+  closes and delivers the held output, with nothing pending Ctrl+Space opens
+  the command palette and its "add new allowlist item" command adds a rule, its
   "detach session" command detaches (the session keeps running), "exit
   session" asks first and then stops the session and scrubs secrets, and `monitor.enabled=false` attaches directly. `internal/relay` has Go tests for the pause/restore
   equivalence (the user's terminal, a second emulator fed only the
@@ -187,7 +195,7 @@ proxy, the monitor database, and the example image:
   full-screen overlay driven by a fake bubbletea model (keys, commands,
   size, close and restore), the in-band hint, kitty-encoded keys, and
   resize; `internal/cli` checks that the overlay is the real monitor model
-  scoped to the session and that approving reaches the session config; they
+  scoped to the session and that approving reaches the session's rules; they
   skip without `GOEXPERIMENT=simd`
 - **agent-to-monitor isolation** (`test/security.py` plus
   `internal/relay/security_test.go` and the fuzz targets in
@@ -220,8 +228,12 @@ and large bodies pass. `internal/relay/notice_test.go` covers the failed
 login notice on the status line (with escape sequences stripped), and
 `internal/cli` the notice text read from `secrets.json`.
 `internal/monitordb` covers the per-session `proxy.db` and `monitor.db`
-(the readers' union across sessions with host-side attribution, ignore and
-approve, holding counts and their reset, the proxy's view of decisions,
+(the readers' union across sessions with host-side attribution, deny and
+approve with the latest user decision winning, `InitSession` copying the
+allowlist once, rule evaluation (deny beats allow, a policy deny reported
+over a user deny, the quieter `log` wins), quiet hosts leaving the queue,
+a version 1 `monitor.db` being refused, holding counts and their reset, the
+proxy's view of the rules (a missing database logged once, recovery),
 refusing malformed hosts, an untrusted `proxy.db`: escape sequences, a
 symlink, a FIFO in place of the database or its journal not blocking, a
 corrupt file, a newer schema, a lock held by another process not stalling

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"hsh/internal/certs"
 )
 
 func writeModeConfig(t *testing.T, dir, mode string) string {
@@ -86,4 +88,32 @@ func TestNetworkModeNone(t *testing.T) {
 func TestNetworkModeOverride(t *testing.T) {
 	addr := startModeProxy(t, "allowlist", "https")
 	assertNotDenied(t, addr, connect443, "CONNECT to 443 with the https override of an allowlist config")
+}
+
+func TestWithoutASessionDatabaseTheConfigAllowlistApplies(t *testing.T) {
+	dir := t.TempDir()
+	cfg := `{"version": 1, "network": {"mode": "allowlist", "allow": ["*.evil.test"]}}`
+	configPath := filepath.Join(dir, "config.hsh")
+	if err := os.WriteFile(configPath, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets.json"), []byte(`{"secrets":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ca, err := certs.NewCA()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "ca.crt"), ca.CertPEM(), 0o600)
+	os.WriteFile(filepath.Join(dir, "ca.key"), ca.KeyPEM(), 0o600)
+	p, err := New(Options{ConfigPath: configPath, SecretsPath: filepath.Join(dir, "secrets.json"), CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.reload(); err != nil {
+		t.Fatal(err)
+	}
+	if !p.allowListed("api.evil.test") || p.allowListed("evil.test") {
+		t.Fatal("a standalone proxy does not use the config's network.allow")
+	}
 }

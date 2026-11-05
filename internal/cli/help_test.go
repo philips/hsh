@@ -44,6 +44,7 @@ func TestHelpEverywhere(t *testing.T) {
 		{"ssh", "proxy", "--help"},
 		{"ssh", "config", "-h"},
 		{"proxy", "allow", "--help"},
+		{"proxy", "deny", "--help"},
 		{"secret", "add", "-h"},
 		{"ls", "--help"},
 		{"update", "--help"},

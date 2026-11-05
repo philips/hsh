@@ -3,8 +3,10 @@
 hsh reads a JSON config file when `hsh run --config PATH` is given. The
 config file is a seed: every run copies it into the session's state
 directory (`$XDG_STATE_HOME/hsh/sessions/<session>/config.json`) and the
-copy - not the seed - is the live config, hot-reloaded and edited by the
-review commands. The seed file is never modified in place. Relative mount
+copy - not the seed - is the live config, hot-reloaded by the proxy. Its
+`network.allow` is copied into the session's [rules](#session-rules) when the
+session is created; approvals and denials go to the rules, not to the config
+copy. The seed file is never modified in place. Relative mount
 sources are resolved against the workspace directory (the `WORKSPACE-DIR`
 positional) and stored as absolute paths in the session copy. Without
 `WORKSPACE-DIR` no mounts apply
@@ -80,7 +82,7 @@ bump.
 | `network.approval_wait` | *(unset)* | how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)). Unset means the global `network_proxy_approval_wait` setting, then the builtin default `30s` |
 | `network.suspend_delay` | *(unset)* | how long a hold must last before the sandbox is suspended to wait out the approval (for example `"2s"`, at most `1m`); `off` never suspends. Unset means the global `network_proxy_approval_suspend_delay` setting, then the builtin default `3s` |
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
-| `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
+| `network.allow` | `[]` | egress allowlist, copied into the session's [rules](#session-rules) when the session is created (later edits of the session's config copy do not change it); in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | `oauth.providers`: OAuth provider descriptors to load by name; `oauth.api_hosts`: optional per-provider subset of their API hosts ([sandboxed OAuth logins](oauth.md)) |
 | `detach_keys` | none | ignored; accepted so existing configs keep loading (no key detaches a session; use `hsh detach`) |
 | `monitor` | `{"enabled": true, "status_line": true, "key": "ctrl-space"}` | inline proxy review in interactive sessions ([below](#inline-proxy-review)); `enabled: false` attaches the container directly |
@@ -227,12 +229,42 @@ come from the user's provider descriptors.
 - `https` (default) - any host may be reached over TLS on port 443
   (tunneled blind; interception stays limited to hosts with configured
   secrets or OAuth endpoints). Plaintext HTTP and non-443 ports are
-  denied unless the host is in `network.allow`. DNS resolves every
+  denied unless an allow rule matches the host. DNS resolves every
   name.
-- `allowlist` - only hosts in `network.allow`, any port; DNS is gated
-  by the same list (a refused lookup is logged, not queued for review).
+- `allowlist` - only hosts an allow rule matches, any port; DNS is gated
+  by the same rules (a refused lookup is logged, not queued for review).
   The pre-built harness images use this mode.
-- `none` - no egress; DNS is refused.
+- `none` - no egress; DNS is refused; rules are not consulted.
+
+A deny rule wins in every mode: a denied host is refused even for TLS on
+port 443 in `https` mode.
+
+## Session rules
+
+Each session's decisions are rules in its `monitor.db`, written by the host
+and read by the proxy (it rereads them within ~0.2 s). A rule has a host
+pattern (`example.com` or `*.example.com`), a source, and an access:
+
+| source | written by |
+| --- | --- |
+| `config` | session creation, one `allow` rule per `network.allow` entry |
+| `user` | the monitor, the inline review screen, `hsh proxy allow` and `hsh proxy deny`; one rule per pattern, the latest decision replaces the earlier one |
+
+- A host any `deny` rule matches is denied; otherwise a host any `allow`
+  rule matches is allowed; otherwise the network mode decides.
+- A denial the mode decides is queued for review and can be held. A denial
+  a `deny` rule decides is recorded but not queued or held, and its 403 says
+  the user decided and the agent should not ask again.
+- Resuming a session copies nothing: the rules outlive later edits of the
+  config copy's `network.allow`.
+- A proxy that cannot read the rules logs it and uses no rules, so only the
+  mode's defaults apply.
+- The standalone proxy (`hsh-proxy` without `--monitor-db`) uses the config's
+  `network.allow` as its allow rules.
+
+`hsh proxy deny --session ID URL|PATTERN` denies a host, or every host under
+`*.domain`. Approving it again (`hsh proxy allow`, or enter on the row in the
+monitor's denied view) replaces the deny.
 
 `hsh run --network MODE` overrides the mode from the command line.
 In `https` mode a compromised agent can exfiltrate data to any TLS
@@ -287,7 +319,7 @@ setting or the builtin default; set `network.approval_wait` per session to
 change it — for example `"45s"`, at most `5m`, `off` to fail at once). A request the
 policy would deny (a CONNECT, or a plaintext HTTP request) is *held* for
 that long while you decide: if you approve the host in time the request just
-succeeds, if you ignore the host it fails at once, and if nobody decides it
+succeeds, if you deny the host it fails at once, and if nobody decides it
 fails with the same 403.
 
 - It only holds while someone can approve: an inline-review relay is
@@ -295,7 +327,7 @@ fails with the same 403.
   session. Otherwise denials are immediate.
 - It does not apply in `none` mode, and in `https` mode only to what is
   denied (plaintext HTTP and non-443 ports).
-- DNS lookups are never held.
+- DNS lookups are never held, and neither are hosts a deny rule matches.
 - Clients with short connect timeouts (Node's fetch gives up after 10 s) will
   see a timeout before a long wait ends.
 - Turn it on in the seed config, an image label, or the session's
@@ -314,11 +346,13 @@ fails with the same 403.
 
 ## Hot reload
 
-`network.allow` and everything under `secrets` are reloaded automatically
-when the config file changes (the proxy polls once per second) - for a
-running session that file is its config copy in the state directory, so
-`hsh proxy allow` approvals apply to a live session within ~1s. `image`,
-`shell`, and `mounts` require restarting the sandbox.
+`network.mode`, `network.approval_wait`, `network.suspend_delay`, and
+everything under `secrets` are reloaded automatically when the config file
+changes (the proxy polls once per second) - for a running session that file
+is its config copy in the state directory. The session's
+[rules](#session-rules) are reread separately, so approvals and denials
+apply to a live session within a second. `image`, `shell`, and `mounts`
+require restarting the sandbox.
 
 ## Image shortnames
 
@@ -375,6 +409,7 @@ id is the pod name suffix):
 
 ```
 config.json   the session's config copy - the only writable config
+monitor.db    the session's rules (approvals and denials)
 ca.crt ca.key the session's MITM CA (stable across re-entries)
 workspace     file with the absolute path of the workspace (empty without one)
 ```
@@ -401,7 +436,7 @@ workspace     file with the absolute path of the workspace (empty without one)
   there are several (`hsh resume <id>` picks one; an id prefix or the full
   pod name also works; a directory argument selects that workspace)
 - sessions do not share approved proxy configuration on purpose: one
-  session's allowlist is that session's policy
+  session's rules are that session's policy
 - `hsh rm` removes a session and its state; `hsh rm --all -f` sweeps
   every sandbox; `hsh rm --exited` removes exited sandboxes; `hsh rm
   --garbage` collects session state whose pod is gone
@@ -473,18 +508,21 @@ closes. The commands:
 
 - **Proxy: review denied requests** — the review list: up/down move, enter
   approves the selected hosts, or the host under the cursor when none are
-  selected (adding them to the session config's `network.allow`), `i`
-  ignores the same way, space selects, `a`/`n` select all or none, `t`
-  toggles ignored hosts, `w` toggles holding, `/` filters, `r` refreshes,
-  `q` closes the monitor. Esc goes back to the palette, except when the
-  monitor opened straight into the list: then Esc closes it, so approving
-  a request is enter then Esc
+  selected (an allow [rule](#session-rules)), `d` denies the same way (a
+  deny rule), space selects, `a`/`n` select all or none, `t` toggles the
+  denied hosts (marked `(denied by you)`; enter on one approves it again),
+  `w` toggles holding, `/` filters, `r` refreshes, `q` closes the monitor.
+  Esc goes back to the palette, except when the monitor opened straight
+  into the list: then Esc closes it, so approving a request is enter then
+  Esc. `hsh monitor --all` opens with the denied hosts shown
 - **Proxy: add new allowlist item** — type `example.com`, `*.example.com`,
-  or a URL (reduced to its host) and press Enter. It is added to the
-  session config's `network.allow` and any pending denials it matches are
-  approved. Inside a session (or with `hsh monitor --session ID`) it goes
-  to that session; otherwise a fuzzy session picker (id and workspace)
-  asks which one
+  or a URL (reduced to its host) and press Enter. It becomes an allow rule
+  and any pending denials it matches are approved; if a deny rule still
+  matches the host, the status line says it stays denied. Inside a session
+  (or with `hsh monitor --session ID`) it goes to that session; otherwise a
+  fuzzy session picker (id and workspace) asks which one
+- **Proxy: add new deny item** — the same, as a deny rule; pending denials
+  it matches leave the review list
 - **Global Settings: change monitor key** — pick any valid key
   (`ctrl-space`, `ctrl-a`..`ctrl-z` except Backspace, Tab, and Enter,
   `ctrl-\`, `ctrl-^`, `ctrl-_`). It is saved in the global settings file
@@ -535,23 +573,26 @@ and the builtin defaults are used.
 Denied egress attempts are answered with `403 Forbidden` and recorded in the
 session's own SQLite database (`$XDG_STATE_HOME/hsh/sessions/<id>/proxy/proxy.db`,
 written by that session's proxy). The review commands read every session's
-`proxy.db` and keep the user's decisions in `sessions/<id>/monitor.db`
-(see [architecture.md](architecture.md#denial-records-and-review-decisions)):
+`proxy.db` and keep the user's decisions as rules in `sessions/<id>/monitor.db`
+(see [architecture.md](architecture.md#denial-records-and-session-rules)):
 
 ```
 hsh proxy denied [--session ID] [--watch]   # list the review queue
+hsh proxy denied [--session ID] --all       # every recorded host and its state
 hsh proxy allow --all --session ID          # allow a session's pending hosts
 hsh proxy allow --session ID https://h      # allow one host
+hsh proxy deny --session ID https://h       # deny one host (or *.domain)
 hsh monitor                                 # command palette (TUI)
 ```
 
-`hsh proxy allow` rewrites the session's config copy as canonical JSON (keys
-sorted, 2-space indent); only `network.allow` changes.
+`hsh proxy denied --all` shows each host's state: `pending`, `allowed`,
+or `denied by you`. `hsh proxy allow` on a host a deny rule still
+matches says it stays denied.
 
-`network.allow` also gates DNS: the workspace resolves names through a
-forwarder in the proxy that refuses any name not on the allowlist. A
-refused lookup is only logged: it is not recorded in the review queue, so a
-host becomes reviewable when something connects to it.
+The allow rules also gate DNS in `allowlist` mode: the workspace resolves
+names through a forwarder in the proxy that refuses any name no allow rule
+matches. A refused lookup is only logged: it is not recorded in the review
+queue, so a host becomes reviewable when something connects to it.
 
 ## Tools that self-download
 

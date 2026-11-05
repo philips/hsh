@@ -40,7 +40,7 @@ type Options struct {
 }
 
 type state struct {
-	allow        []string
+	configRules  []monitordb.Rule
 	approvalWait time.Duration
 	mode         string
 	secrets      []config.ResolvedSecret
@@ -55,7 +55,7 @@ type Proxy struct {
 	roots     *x509.CertPool
 	transport *http.Transport
 	denials   *monitordb.Recorder
-	decisions *monitordb.Decisions
+	rules     *monitordb.RuleReader
 	store     *tokenStore
 	holds     holdState
 
@@ -106,11 +106,11 @@ func New(opts Options) (*Proxy, error) {
 			return nil, fmt.Errorf("open the denial record: %w", err)
 		}
 	}
-	var decisions *monitordb.Decisions
+	var rules *monitordb.RuleReader
 	if opts.MonitorDB != "" {
-		decisions = monitordb.NewDecisions(opts.MonitorDB)
+		rules = monitordb.NewRuleReader(opts.MonitorDB, log.Printf)
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, denials: rec, decisions: decisions, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, denials: rec, rules: rules, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -118,10 +118,9 @@ func (p *Proxy) Run() error {
 		return fmt.Errorf("load configuration: %w", err)
 	}
 	p.mu.RLock()
-	mode := p.st.mode
-	allowN, secretN := len(p.st.allow), len(p.st.secrets)
+	mode, secretN := p.st.mode, len(p.st.secrets)
 	p.mu.RUnlock()
-	log.Printf("configuration loaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
+	log.Printf("configuration loaded: network mode %s, %d session rule(s), %d secret(s)", mode, len(p.sessionRules()), secretN)
 	p.startWatch(1 * time.Second)
 	if p.opts.NetstackPath != "" {
 		p.resolvers = readResolvers("/etc/resolv.conf")
@@ -167,8 +166,12 @@ func (p *Proxy) reload() error {
 	if err := json.Unmarshal(data, &rs); err != nil {
 		return err
 	}
+	var configRules []monitordb.Rule
+	for _, h := range cfg.Network.Allow {
+		configRules = append(configRules, monitordb.Rule{Pattern: h, Source: monitordb.SourceConfig, Access: monitordb.AccessAllow})
+	}
 	p.mu.Lock()
-	p.st.allow = cfg.Network.Allow
+	p.st.configRules = configRules
 	p.st.approvalWait = p.opts.ApprovalWaitDefault
 	if cfg.Network.ApprovalWait != "" {
 		p.st.approvalWait = cfg.Network.ApprovalWaitDuration()
@@ -209,9 +212,9 @@ func (p *Proxy) watch(interval time.Duration, lastCfg, lastSec []byte) {
 			log.Printf("configuration reload failed: %v", err)
 		} else {
 			p.mu.RLock()
-			mode, allowN, secretN := p.st.mode, len(p.st.allow), len(p.st.secrets)
+			mode, secretN := p.st.mode, len(p.st.secrets)
 			p.mu.RUnlock()
-			log.Printf("configuration reloaded: network mode %s, %d allowlist entries, %d secret(s)", mode, allowN, secretN)
+			log.Printf("configuration reloaded: network mode %s, %d secret(s)", mode, secretN)
 		}
 	}
 }
@@ -222,10 +225,21 @@ func (p *Proxy) mode() string {
 	return p.st.mode
 }
 
+func (p *Proxy) sessionRules() []monitordb.Rule {
+	if p.rules == nil {
+		p.mu.RLock()
+		defer p.mu.RUnlock()
+		return p.st.configRules
+	}
+	return p.rules.Rules()
+}
+
+func (p *Proxy) match(host string) monitordb.Match {
+	return monitordb.Evaluate(p.sessionRules(), host)
+}
+
 func (p *Proxy) allowListed(host string) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return HostMatches(p.st.allow, host)
+	return p.match(host).Access == monitordb.AccessAllow
 }
 
 func (p *Proxy) plaintextAllowed(host string) bool {
@@ -237,7 +251,8 @@ func (p *Proxy) connectAllowed(host, port string) bool {
 	case "none":
 		return false
 	case "https":
-		return port == "443" || p.allowListed(host)
+		m := p.match(host)
+		return m.Access == monitordb.AccessAllow || (port == "443" && m.Access != monitordb.AccessDeny)
 	default:
 		return p.allowListed(host)
 	}

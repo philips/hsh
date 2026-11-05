@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -53,6 +54,9 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := monitordb.InitSession(dir, nil); err != nil {
+		t.Fatal(err)
 	}
 	e := &holdEnv{t: t, cfgPath: cfgPath, attended: filepath.Join(dir, "attended"), store: monitordb.NewStore(filepath.Join(root, "sessions"))}
 	if attended {
@@ -167,14 +171,14 @@ func connectTo(addr string) string {
 
 func (e *holdEnv) allow(hosts ...string) {
 	e.t.Helper()
-	if _, err := config.AddAllowedHosts(e.cfgPath, hosts); err != nil {
+	if err := e.store.Allow("s1", hosts); err != nil {
 		e.t.Fatal(err)
 	}
 }
 
-func (e *holdEnv) ignore(host string) {
+func (e *holdEnv) deny(host string) {
 	e.t.Helper()
-	if err := e.store.MarkIgnored("s1", []string{host}); err != nil {
+	if err := e.store.Deny("s1", []string{host}); err != nil {
 		e.t.Fatal(err)
 	}
 }
@@ -220,33 +224,99 @@ func TestHeldConnectIsReleasedByAnApproval(t *testing.T) {
 	}
 }
 
-func TestHeldRequestIsDeniedAtOnceWhenTheUserIgnoresTheHost(t *testing.T) {
+func TestHeldRequestIsDeniedAtOnceWhenTheUserDeniesTheHost(t *testing.T) {
 	e := startHoldProxy(t, "allowlist", "10s", true)
 	req := e.send(connectTo("blocked.test:443"))
 	if _, done := req.within(t, 600*time.Millisecond); done {
 		t.Fatal("not held")
 	}
-	e.ignore("blocked.test")
+	e.deny("blocked.test")
 	line, done := req.within(t, 3*time.Second)
 	if !done || !strings.Contains(line, "403 Forbidden") {
-		t.Fatalf("an ignored host was not denied promptly: %q", line)
+		t.Fatalf("a denied host was not denied promptly: %q", line)
+	}
+	if body := <-req.body; !strings.Contains(body, "denied by the user's policy") || !strings.Contains(body, "Do not ask for it again") {
+		t.Fatalf("the denial does not say the user decided: %q", body)
+	}
+}
+
+func TestTheModeDenialTellsTheAgentToAsk(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "off", true)
+	req := e.send(connectTo("blocked.test:443"))
+	if line, done := req.within(t, 2*time.Second); !done || !strings.Contains(line, "403 Forbidden") {
+		t.Fatalf("got %q", line)
 	}
 	if body := <-req.body; !strings.Contains(body, "blocked on purpose") || !strings.Contains(body, "Do not try other tools") {
 		t.Fatalf("the denial does not tell the agent what to do: %q", body)
 	}
 }
 
-func TestAlreadyIgnoredHostsAreNotHeld(t *testing.T) {
+func TestAlreadyDeniedHostsAreNotHeld(t *testing.T) {
 	e := startHoldProxy(t, "allowlist", "10s", true)
 	first := e.send(connectTo("noisy.test:443"))
 	first.within(t, 400*time.Millisecond)
-	e.ignore("noisy.test")
+	e.deny("noisy.test")
 	first.within(t, 2*time.Second)
 	start := time.Now()
 	second := e.send(connectTo("noisy.test:443"))
 	line, done := second.within(t, 2*time.Second)
 	if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second {
-		t.Fatalf("a host the user ignored was held again: %q after %s", line, time.Since(start))
+		t.Fatalf("a host the user denied was held again: %q after %s", line, time.Since(start))
+	}
+	if rows := e.deniedRows(); len(rows) != 1 || rows[0].Count != 2 || !rows[0].Denied() {
+		t.Fatalf("a denied request is still recorded: %+v", rows)
+	}
+}
+
+func TestQuietHostsAreNotHeld(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "10s", true)
+	db, err := sql.Open("sqlite", "file:"+monitordb.MonitorDBPath(filepath.Dir(e.cfgPath)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO rules (pattern, source, access, log, decided_at) VALUES ('*.sentry.test', 'policy:quiet', NULL, 'record', 'x')`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	time.Sleep(300 * time.Millisecond)
+	start := time.Now()
+	line, done := e.send(connectTo("o1.sentry.test:443")).within(t, 2*time.Second)
+	if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second {
+		t.Fatalf("a quiet host was held: %q after %s", line, time.Since(start))
+	}
+	if rows := e.deniedRows(); len(rows) != 1 || rows[0].State != monitordb.StateQuiet {
+		t.Fatalf("a quiet denial is still recorded: %+v", rows)
+	}
+}
+
+func TestADenyBlocksPort443InHTTPSMode(t *testing.T) {
+	e := startHoldProxy(t, "https", "10s", true)
+	e.deny("127.0.0.1")
+	time.Sleep(300 * time.Millisecond)
+	start := time.Now()
+	req := e.send(connectTo("127.0.0.1:443"))
+	line, done := req.within(t, 2*time.Second)
+	if !done || !strings.Contains(line, "403 Forbidden") || time.Since(start) > time.Second || e.activeHolds() != 0 {
+		t.Fatalf("a denied host reached :443 in https mode: %q after %s", line, time.Since(start))
+	}
+	if body := <-req.body; !strings.Contains(body, "denied by the user's policy") {
+		t.Fatalf("body = %q", body)
+	}
+}
+
+func TestAUserDenyBeatsTheCopiedAllowlist(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "off", true)
+	up := upstreamListener(t)
+	host, _, _ := net.SplitHostPort(up)
+	e.allow(host)
+	time.Sleep(300 * time.Millisecond)
+	if line, _ := e.send(connectTo(up)).within(t, 2*time.Second); !strings.Contains(line, "200") {
+		t.Fatalf("allowed host: %q", line)
+	}
+	e.deny(host)
+	time.Sleep(300 * time.Millisecond)
+	if line, _ := e.send(connectTo(up)).within(t, 2*time.Second); !strings.Contains(line, "403 Forbidden") {
+		t.Fatalf("denied host: %q", line)
 	}
 }
 
@@ -273,7 +343,7 @@ func TestPlaintextRequestsAreHeldToo(t *testing.T) {
 	if _, done := req.within(t, 600*time.Millisecond); done {
 		t.Fatal("plaintext request not held")
 	}
-	e.ignore("blocked.test")
+	e.deny("blocked.test")
 	if line, done := req.within(t, 3*time.Second); !done || !strings.Contains(line, "403 Forbidden") {
 		t.Fatalf("got %q", line)
 	}
@@ -475,7 +545,7 @@ func TestHeldRequestsAreCountedInTheDenialDatabase(t *testing.T) {
 	if holding() != 1 {
 		t.Fatalf("holding = %d while a request is held", holding())
 	}
-	e.ignore("blocked.test")
+	e.deny("blocked.test")
 	req.within(t, 3*time.Second)
 	time.Sleep(200 * time.Millisecond)
 	if holding() != 0 {

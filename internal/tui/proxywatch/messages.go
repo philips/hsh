@@ -12,7 +12,7 @@ type tickMsg time.Time
 
 type refreshMsg struct {
 	pending []monitordb.DeniedHost
-	ignored []monitordb.DeniedHost
+	denied  []monitordb.DeniedHost
 	holds   map[string]string
 	err     error
 }
@@ -28,7 +28,7 @@ type action int
 
 const (
 	actionApprove action = iota
-	actionIgnore
+	actionDeny
 )
 
 type actionMsg struct {

@@ -463,7 +463,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	if err := os.MkdirAll(proxyStateDir, 0o700); err != nil {
 		return err
 	}
-	if err := monitordb.InitSession(sessionDir); err != nil {
+	if err := monitordb.InitSession(sessionDir, cfg.Network.Allow); err != nil {
 		return fmt.Errorf("session monitor database: %w", err)
 	}
 	proxyArgs := []string{

@@ -18,6 +18,7 @@ import (
 
 	"hsh/internal/certs"
 	"hsh/internal/config"
+	"hsh/internal/monitordb"
 	"hsh/internal/oauthprov"
 )
 
@@ -140,7 +141,15 @@ func startTestProxyMode(t *testing.T, dir, configPath string, rootsPEM []byte, n
 		t.Fatal(err)
 	}
 	storePath := filepath.Join(dir, "oauth-tokens.json")
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monitordb.InitSession(dir, cfg.Network.Allow); err != nil {
+		t.Fatal(err)
+	}
 	opts := Options{
+		MonitorDB:   monitordb.MonitorDBPath(dir),
 		ListenAddr:  "127.0.0.1:0",
 		ConfigPath:  configPath,
 		SecretsPath: filepath.Join(dir, "secrets.json"),

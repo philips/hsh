@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -48,17 +47,6 @@ func (e *env) session(id, workspace string) *Recorder {
 	}
 	e.recs[id] = r
 	return r
-}
-
-func (e *env) allowConfig(id string, hosts ...string) {
-	e.t.Helper()
-	data, err := json.Marshal(map[string]any{"network": map[string]any{"allow": hosts}})
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(e.dir(id), "config.json"), data, 0o644); err != nil {
-		e.t.Fatal(err)
-	}
 }
 
 func (e *env) record(id, host string) {
@@ -105,75 +93,171 @@ func TestReadersUnionSessionsWithHostSideAttribution(t *testing.T) {
 	}
 }
 
-func TestMarkIgnored(t *testing.T) {
+func TestDenyTakesAHostOutOfTheQueue(t *testing.T) {
 	e := newEnv(t)
 	e.record("s1", "a.example")
-	if err := e.store().MarkIgnored("s1", []string{"a.example"}); err != nil {
+	if err := e.store().Deny("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
-	pending, _ := e.store().Pending(Filter{})
-	if len(pending) != 0 {
-		t.Errorf("ignored host still pending: %+v", pending)
+	if pending, _ := e.store().Pending(Filter{}); len(pending) != 0 {
+		t.Errorf("denied host still pending: %+v", pending)
 	}
-	ignored, _ := e.store().Ignored(Filter{})
-	if len(ignored) != 1 || !ignored[0].Ignored || ignored[0].AllowedAt == "" {
-		t.Fatalf("ignored = %+v", ignored)
+	denied, _ := e.store().Denied(Filter{})
+	if len(denied) != 1 || !denied[0].Denied() || denied[0].Source != SourceUser || denied[0].DecidedAt == "" || denied[0].DeniedBy != "denied by you" {
+		t.Fatalf("denied = %+v", denied)
 	}
 	e.record("s1", "a.example")
 	if pending, _ := e.store().Pending(Filter{}); len(pending) != 0 {
-		t.Errorf("a later denial brought an ignored host back to the review list: %+v", pending)
+		t.Errorf("a later denial brought a denied host back to the review list: %+v", pending)
 	}
 }
 
-func TestMarkAllowedClearsIgnored(t *testing.T) {
+func TestTheLatestUserDecisionWins(t *testing.T) {
 	e := newEnv(t)
 	e.record("s1", "a.example")
-	e.allowConfig("s1", "a.example")
-	if err := e.store().MarkIgnored("s1", []string{"a.example"}); err != nil {
+	if err := e.store().Deny("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.store().MarkAllowed("s1", []string{"a.example"}); err != nil {
+	if err := e.store().Allow("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if ignored, _ := e.store().Ignored(Filter{}); len(ignored) != 0 {
-		t.Errorf("approved host still listed as ignored: %+v", ignored)
+	if denied, _ := e.store().Denied(Filter{}); len(denied) != 0 {
+		t.Errorf("approved host still listed as denied: %+v", denied)
 	}
 	all, _ := e.store().All(Filter{})
-	if len(all) != 1 || !all[0].Allowed || all[0].Ignored {
+	if len(all) != 1 || all[0].State != StateAllowed {
 		t.Errorf("unexpected row after approve: %+v", all)
 	}
-	e.allowConfig("s1")
-	pending, _ := e.store().Pending(Filter{})
-	if len(pending) != 1 || pending[0].Allowed {
-		t.Fatalf("removing the host from the config must put it back in the review list: %+v", pending)
+	rules, err := e.store().Rules("s1")
+	if err != nil || len(rules) != 1 || rules[0].Access != AccessAllow {
+		t.Fatalf("one user row per pattern: %+v %v", rules, err)
 	}
 }
 
-func TestDecisionsReachTheProxy(t *testing.T) {
+func TestInitSessionCopiesTheAllowlistOnce(t *testing.T) {
+	e := newEnv(t)
+	e.record("s1", "a.example")
+	e.record("s1", "b.test")
+	if err := InitSession(e.dir("s1"), []string{"a.example", "*.test"}); err != nil {
+		t.Fatal(err)
+	}
+	rules, _ := e.store().Rules("s1")
+	if len(rules) != 2 || rules[0].Source != SourceConfig || rules[0].Access != AccessAllow {
+		t.Fatalf("rules = %+v", rules)
+	}
+	if pending, _ := e.store().Pending(Filter{}); len(pending) != 0 {
+		t.Fatalf("hosts the copied allowlist matches are not pending: %+v", pending)
+	}
+	if err := e.store().Deny("s1", []string{"a.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitSession(e.dir("s1"), []string{"c.example"}); err != nil {
+		t.Fatal(err)
+	}
+	rules, _ = e.store().Rules("s1")
+	if len(rules) != 3 {
+		t.Fatalf("resume must not copy the allowlist again: %+v", rules)
+	}
+	if denied, _ := e.store().Denied(Filter{}); hosts(denied) != "a.example@s1" {
+		t.Fatalf("a user deny beats the config allow: %s", hosts(denied))
+	}
+}
+
+func TestEvaluate(t *testing.T) {
+	rules := []Rule{
+		{Pattern: "*.example.com", Source: SourceConfig, Access: AccessAllow},
+		{Pattern: "bad.example.com", Source: SourceUser, Access: AccessDeny},
+		{Pattern: "bad.example.com", Source: "policy:corp", Access: AccessDeny},
+		{Pattern: "quiet.test", Source: "policy:q", Log: LogRecord},
+		{Pattern: "quiet.test", Source: "policy:r", Log: LogReview},
+		{Pattern: "loud.test", Source: "policy:r", Log: LogReview},
+	}
+	cases := []struct {
+		host, access, log, source string
+	}{
+		{"api.example.com", AccessAllow, "", SourceConfig},
+		{"BAD.example.com.", AccessDeny, "", "policy:corp"},
+		{"example.com", "", "", ""},
+		{"quiet.test", "", LogRecord, ""},
+		{"loud.test", "", LogReview, ""},
+	}
+	for _, c := range cases {
+		m := Evaluate(rules, c.host)
+		if m.Access != c.access || m.Log != c.log || m.Rule.Source != c.source {
+			t.Errorf("%s: %+v", c.host, m)
+		}
+	}
+	if m := Evaluate(rules, "bad.example.com"); m.Rule.DeniedBy() != "denied by policy corp" {
+		t.Errorf("a policy deny is reported over a user deny: %s", m.Rule.DeniedBy())
+	}
+}
+
+func TestQuietHostsLeaveTheQueue(t *testing.T) {
+	e := newEnv(t)
+	e.record("s1", "quiet.test")
+	if err := InitSession(e.dir("s1"), nil); err != nil {
+		t.Fatal(err)
+	}
+	rawExec(t, MonitorDBPath(e.dir("s1")), `INSERT INTO rules (pattern, source, access, log, decided_at) VALUES ('quiet.test', 'policy:q', NULL, 'record', '2026-01-01T00:00:00Z')`)
+	if pending, _ := e.store().Pending(Filter{}); len(pending) != 0 {
+		t.Fatalf("quiet host pending: %+v", pending)
+	}
+	if all, _ := e.store().All(Filter{}); len(all) != 1 || all[0].State != StateQuiet {
+		t.Fatalf("all = %+v", all)
+	}
+}
+
+func TestRulesReachTheProxy(t *testing.T) {
 	e := newEnv(t)
 	e.record("s1", "a.example")
 	e.record("s2", "a.example")
-	d := NewDecisions(MonitorDBPath(e.dir("s1")))
-	if got := d.Lookup("a.example"); got.Found {
-		t.Fatalf("undecided: %+v", got)
+	var logged []string
+	r := NewRuleReader(MonitorDBPath(e.dir("s1")), func(f string, a ...any) { logged = append(logged, fmt.Sprintf(f, a...)) })
+	defer r.Close()
+	if got := r.Rules(); len(got) != 0 {
+		t.Fatalf("no rules yet: %+v", got)
 	}
-	if err := e.store().MarkIgnored("s1", []string{"a.example"}); err != nil {
+	if len(logged) != 1 || !strings.Contains(logged[0], "missing") {
+		t.Fatalf("a missing database is logged once: %q", logged)
+	}
+	if err := e.store().Deny("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.Lookup("a.example"); !got.Ignored {
-		t.Fatalf("ignored: %+v", got)
+	time.Sleep(rulesTTL)
+	if m := Evaluate(r.Rules(), "a.example"); m.Access != AccessDeny {
+		t.Fatalf("denied: %+v", m)
 	}
-	if got := NewDecisions(MonitorDBPath(e.dir("s2"))).Lookup("a.example"); got.Found {
+	if len(logged) != 2 || !strings.Contains(logged[1], "1 rule") {
+		t.Fatalf("recovery is logged: %q", logged)
+	}
+	s2 := NewRuleReader(MonitorDBPath(e.dir("s2")), nil)
+	defer s2.Close()
+	if got := s2.Rules(); len(got) != 0 {
 		t.Fatalf("another session's decision leaked: %+v", got)
 	}
-	if err := e.store().MarkAllowed("s1", []string{"a.example"}); err != nil {
+	if err := e.store().Allow("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := d.Lookup("a.example"); !got.Allowed || got.Ignored {
-		t.Fatalf("approved: %+v", got)
+	time.Sleep(rulesTTL)
+	if m := Evaluate(r.Rules(), "a.example"); m.Access != AccessAllow {
+		t.Fatalf("approved: %+v", m)
 	}
-	if got, _ := e.store().Lookup("s1", "a.example"); !got.Allowed {
-		t.Fatalf("store lookup: %+v", got)
+}
+
+func TestAnOldMonitorDatabaseIsRefused(t *testing.T) {
+	e := newEnv(t)
+	e.record("s1", "a.example")
+	rawExec(t, MonitorDBPath(e.dir("s1")), `CREATE TABLE decisions (host TEXT PRIMARY KEY, ignored INTEGER NOT NULL DEFAULT 0, decided_at TEXT NOT NULL)`, `PRAGMA user_version = 1`)
+	if err := e.store().Deny("s1", []string{"a.example"}); err == nil || !strings.Contains(err.Error(), "older than this hsh reads") {
+		t.Fatalf("deny on a version 1 database: %v", err)
+	}
+	if _, err := e.store().Pending(Filter{}); err == nil {
+		t.Fatal("readers must refuse a version 1 database")
+	}
+	r := NewRuleReader(MonitorDBPath(e.dir("s1")), nil)
+	defer r.Close()
+	if got := r.Rules(); got != nil {
+		t.Fatalf("the proxy must use no rules: %+v", got)
 	}
 }
 
@@ -447,12 +531,12 @@ func TestSwappedInFilesAreRefusedWithoutBlocking(t *testing.T) {
 	}
 }
 
-func TestMarkAllowedNeedsASessionDirectory(t *testing.T) {
+func TestDecisionsNeedASessionDirectory(t *testing.T) {
 	e := newEnv(t)
-	if err := e.store().MarkAllowed("missing", []string{"a.example"}); err == nil {
+	if err := e.store().Allow("missing", []string{"a.example"}); err == nil {
 		t.Fatal("decided for a session that does not exist")
 	}
-	if err := e.store().MarkAllowed("../x", []string{"a.example"}); err == nil {
+	if err := e.store().Deny("../x", []string{"a.example"}); err == nil {
 		t.Fatal("decided outside the sessions directory")
 	}
 }
@@ -465,15 +549,17 @@ func TestConcurrentDecisionsAreAllKept(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := e.store().MarkAllowed("s1", []string{fmt.Sprintf("h%d.example", i)}); err != nil {
+			if err := e.store().Allow("s1", []string{fmt.Sprintf("h%d.example", i)}); err != nil {
 				t.Error(err)
 			}
 		}(i)
 	}
 	wg.Wait()
-	d := NewDecisions(MonitorDBPath(e.dir("s1")))
+	r := NewRuleReader(MonitorDBPath(e.dir("s1")), nil)
+	defer r.Close()
+	rules := r.Rules()
 	for i := 0; i < 20; i++ {
-		if !d.Lookup(fmt.Sprintf("h%d.example", i)).Allowed {
+		if Evaluate(rules, fmt.Sprintf("h%d.example", i)).Access != AccessAllow {
 			t.Fatalf("decision %d was lost", i)
 		}
 	}

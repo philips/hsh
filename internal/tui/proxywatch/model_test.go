@@ -99,6 +99,15 @@ func allowlist(t *testing.T, path string) []string {
 	return cfg.Network.Allow
 }
 
+func (e *testEnv) access(t *testing.T, host string) string {
+	t.Helper()
+	rules, err := e.db.Rules(e.session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return monitordb.Evaluate(rules, host).Access
+}
+
 func hasHost(hosts []string, host string) bool {
 	for _, h := range hosts {
 		if h == host {
@@ -126,8 +135,11 @@ func TestApproveSelected(t *testing.T) {
 	}
 	m, _ = send(m, msg)
 
-	if got := allowlist(t, env.configPath); !hasHost(got, "beta.example.com") {
-		t.Errorf("approved host missing from network.allow: %v", got)
+	if got := env.access(t, "beta.example.com"); got != monitordb.AccessAllow {
+		t.Errorf("approved host has no allow rule: %q", got)
+	}
+	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
+		t.Errorf("an approval edited the session config: %v", got)
 	}
 	all, err := env.db.All(monitordb.Filter{})
 	if err != nil {
@@ -139,7 +151,7 @@ func TestApproveSelected(t *testing.T) {
 			row = &all[i]
 		}
 	}
-	if row == nil || !row.Allowed || row.Ignored {
+	if row == nil || row.State != monitordb.StateAllowed || row.Source != monitordb.SourceUser {
 		t.Errorf("approved host not marked allowed in the DB: %+v", row)
 	}
 	if hasHost(listHosts(m), "beta.example.com") {
@@ -150,74 +162,104 @@ func TestApproveSelected(t *testing.T) {
 	}
 }
 
-func TestIgnoreSelected(t *testing.T) {
+func TestDenySelected(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
 	m, _ := send(env.model, keyMsg(" "))
-	m, cmd := send(m, keyMsg("i"))
+	m, cmd := send(m, keyMsg("d"))
 	msg := runCmd(cmd)
 	if msg == nil {
 		t.Fatal("expected an action command")
 	}
 	m, _ = send(m, msg)
 
-	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
-		t.Errorf("ignored host was added to the allowlist: %v", got)
+	if got := env.access(t, "beta.example.com"); got != monitordb.AccessDeny {
+		t.Errorf("denied host has no deny rule: %q", got)
 	}
-	ignored, err := env.db.Ignored(monitordb.Filter{})
+	denied, err := env.db.Denied(monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ignored) != 1 || ignored[0].Host != "beta.example.com" || !ignored[0].Ignored {
-		t.Fatalf("ignored host not recorded: %+v", ignored)
+	if len(denied) != 1 || denied[0].Host != "beta.example.com" || denied[0].DeniedBy != "denied by you" {
+		t.Fatalf("denied host not recorded: %+v", denied)
 	}
 	if hasHost(listHosts(m), "beta.example.com") {
-		t.Error("ignored host still listed")
+		t.Error("denied host still listed")
 	}
-	if !strings.Contains(m.status, "ignored") {
+	if !strings.Contains(m.status, "denied 1 host") {
 		t.Errorf("unexpected status %q", m.status)
 	}
 }
 
-func TestShowIgnoredToggle(t *testing.T) {
+func TestDeniedViewToggleAndUndo(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
 	m, _ := send(env.model, keyMsg(" "))
-	m, cmd := send(m, keyMsg("i"))
+	m, cmd := send(m, keyMsg("d"))
 	m, _ = send(m, runCmd(cmd))
 
+	m, _ = send(m, tea.WindowSizeMsg{Width: 160, Height: 30})
 	m, _ = send(m, keyMsg("t"))
 	idx := -1
 	for j, r := range m.rows {
 		if r.Host == "beta.example.com" {
 			idx = j
-			if !r.Ignored {
-				t.Error("row shown in the ignored view is not marked ignored")
+			if !r.Denied() {
+				t.Error("row shown in the denied view is not marked denied")
 			}
 		}
 	}
 	if idx < 0 {
-		t.Fatal("ignored host not shown after toggling show-ignored")
+		t.Fatal("denied host not shown after toggling the denied view")
+	}
+	if !strings.Contains(m.View(), "(denied by you)") || !strings.Contains(m.View(), "pending and denied") {
+		t.Fatalf("view:\n%s", m.View())
 	}
 
 	m.table.SetCursor(idx)
 	m, _ = send(m, keyMsg(" "))
 	if m.selected[rowKey(m.rows[idx])] {
-		t.Error("ignored host became selectable")
+		t.Error("denied host became selectable")
 	}
-	if m.status != "ignored rows cannot be selected" {
-		t.Errorf("unexpected status %q", m.status)
+	m, cmd = send(m, keyMsg("d"))
+	if cmd != nil || !strings.Contains(m.status, "already denied by you") {
+		t.Errorf("d on a denied row: %q", m.status)
+	}
+
+	m, cmd = send(m, keyMsg("enter"))
+	m, _ = send(m, runCmd(cmd))
+	if got := env.access(t, "beta.example.com"); got != monitordb.AccessAllow {
+		t.Fatalf("enter on a row denied by you did not approve it: %q", got)
+	}
+	if hasHost(listHosts(m), "beta.example.com") {
+		t.Error("approved host still listed in the denied view")
 	}
 
 	pending, err := env.db.Pending(monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ignored, err := env.db.Ignored(monitordb.Filter{})
+	if err := env.db.Deny(env.session, []string{"alpha.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	denied, err := env.db.Denied(monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	m2 := New(env.db, monitordb.Filter{}, pending, ignored, true)
-	if !hasHost(listHosts(m2), "beta.example.com") {
-		t.Error("New with showIgnored=true does not list ignored hosts")
+	m2 := New(env.db, monitordb.Filter{}, pending, denied, true)
+	if !hasHost(listHosts(m2), "alpha.example.com") {
+		t.Error("New with showDenied=true does not list denied hosts")
+	}
+}
+
+func TestAPolicyDenyCannotBeApprovedInTheMonitor(t *testing.T) {
+	env := newTestEnv(t)
+	h := monitordb.DeniedHost{Host: "gist.example.com", Session: env.session, State: monitordb.StateDenied, Source: "policy:corp", DeniedBy: "denied by policy corp"}
+	m := New(env.db, monitordb.Filter{}, nil, []monitordb.DeniedHost{h}, true)
+	m, cmd := send(m, keyMsg("enter"))
+	if cmd != nil {
+		t.Fatal("enter on a policy deny returned a command")
+	}
+	if m.status != "denied by policy corp; hsh policy unapply corp to undo" {
+		t.Fatalf("status = %q", m.status)
 	}
 }
 
@@ -268,24 +310,23 @@ func TestEnterWithoutASelectionApprovesTheCursorRow(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
 	m, cmd := send(env.model, keyMsg("enter"))
 	m, _ = send(m, runCmd(cmd))
-	got := allowlist(t, env.configPath)
-	if !hasHost(got, "beta.example.com") || hasHost(got, "alpha.example.com") {
-		t.Fatalf("enter did not approve just the cursor row: %v", got)
+	if env.access(t, "beta.example.com") != monitordb.AccessAllow || env.access(t, "alpha.example.com") != "" {
+		t.Fatal("enter did not approve just the cursor row")
 	}
 	if hosts := listHosts(m); len(hosts) != 1 || hosts[0] != "alpha.example.com" {
 		t.Fatalf("rows after approving: %v", hosts)
 	}
 }
 
-func TestIgnoreWithoutASelectionIgnoresTheCursorRow(t *testing.T) {
+func TestDenyWithoutASelectionDeniesTheCursorRow(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com", "beta.example.com")
-	m, cmd := send(env.model, keyMsg("i"))
+	m, cmd := send(env.model, keyMsg("d"))
 	m, _ = send(m, runCmd(cmd))
 	if hosts := listHosts(m); len(hosts) != 1 || hosts[0] != "alpha.example.com" {
-		t.Fatalf("rows after ignoring: %v", hosts)
+		t.Fatalf("rows after denying: %v", hosts)
 	}
-	if got := allowlist(t, env.configPath); hasHost(got, "beta.example.com") {
-		t.Fatalf("ignoring allowed the host: %v", got)
+	if env.access(t, "beta.example.com") != monitordb.AccessDeny || env.access(t, "alpha.example.com") != "" {
+		t.Fatal("d did not deny just the cursor row")
 	}
 }
 
@@ -312,9 +353,9 @@ func TestEmptyViewSaysSoOnce(t *testing.T) {
 	}
 }
 
-func TestApproveConfigFailure(t *testing.T) {
+func TestApproveWriteFailure(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
-	if err := os.Remove(env.configPath); err != nil {
+	if err := os.Mkdir(monitordb.MonitorDBPath(state.SessionDir(env.session)), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	m, _ := send(env.model, keyMsg(" "))
@@ -325,14 +366,17 @@ func TestApproveConfigFailure(t *testing.T) {
 	}
 	m, _ = send(m, msg)
 	if !strings.Contains(m.status, "error") {
-		t.Errorf("config failure not surfaced: %q", m.status)
+		t.Errorf("write failure not surfaced: %q", m.status)
+	}
+	if err := os.Remove(monitordb.MonitorDBPath(state.SessionDir(env.session))); err != nil {
+		t.Fatal(err)
 	}
 	pending, err := env.db.Pending(monitordb.Filter{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(pending) != 1 {
-		t.Errorf("DB marked allowed despite the config failure: %+v", pending)
+		t.Errorf("host left the queue despite the failure: %+v", pending)
 	}
 }
 
@@ -432,7 +476,7 @@ func TestRefreshEmptyQueueDoesNotPanic(t *testing.T) {
 func TestRefreshToEmptyPreservesNoCursor(t *testing.T) {
 	env := newTestEnv(t, "alpha.example.com")
 	m := env.model
-	msg := refreshMsg{pending: nil, ignored: nil}
+	msg := refreshMsg{pending: nil, denied: nil}
 	updated, _ := send(m, msg)
 	if len(updated.rows) != 0 {
 		t.Fatalf("expected no rows, got %d", len(updated.rows))
@@ -593,7 +637,7 @@ func TestNewRowsAfterAnEmptyListAreSelectable(t *testing.T) {
 	m, _ = send(m, keyMsg("n"))
 	m, cmd = send(m, keyMsg("enter"))
 	m, _ = send(m, runCmd(cmd))
-	if got := allowlist(t, env.configPath); !hasHost(got, "beta.example.com") {
-		t.Fatalf("enter did not approve the new row: %v", got)
+	if env.access(t, "beta.example.com") != monitordb.AccessAllow {
+		t.Fatal("enter did not approve the new row")
 	}
 }

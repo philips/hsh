@@ -16,7 +16,7 @@ func Proxy(args []string) error {
 	caKey := fs.String("ca-key", "/hsh-run/ca.key", "CA private key path")
 	roots := fs.String("roots", "", "upstream root CA bundle path")
 	proxyDB := fs.String("proxy-db", "", "this session's denial database, in its own writable directory; read by hsh monitor (empty disables recording)")
-	monitorDB := fs.String("monitor-db", "", "this session's review decisions, written by the host and read here read-only")
+	monitorDB := fs.String("monitor-db", "", "this session's rules, written by the host and read here read-only (empty: the config's network.allow is the allowlist)")
 	oauthStore := fs.String("oauth-store", "", "oauth token capture store path, in the session's own writable directory (empty keeps captures in memory)")
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	attended := fs.String("attended", "", "marker file whose recent modification time means someone can approve denied requests (enables holding them)")
