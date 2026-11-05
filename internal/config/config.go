@@ -27,7 +27,7 @@ type Network struct {
 	Mode         string   `json:"mode"`
 	Allow        []string `json:"allow"`
 	ApprovalWait string   `json:"approval_wait,omitempty"`
-	FreezeDelay  string   `json:"freeze_delay,omitempty"`
+	SuspendDelay string   `json:"suspend_delay,omitempty"`
 	Notice       *bool    `json:"notice,omitempty"`
 }
 
@@ -39,40 +39,40 @@ const (
 	DefaultApprovalWait   time.Duration = 30 * time.Second
 	SuggestedApprovalWait               = 30 * time.Second
 	MaxApprovalWait                     = 5 * time.Minute
-	DefaultFreezeDelay                  = 3 * time.Second
-	MaxFreezeDelay                      = time.Minute
+	DefaultSuspendDelay                 = 3 * time.Second
+	MaxSuspendDelay                    = time.Minute
 )
 
-func ParseFreezeDelay(v string) (time.Duration, error) {
+func ParseSuspendDelay(v string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "":
-		return DefaultFreezeDelay, nil
+		return DefaultSuspendDelay, nil
 	case "off", "0", "0s":
 		return 0, nil
 	}
 	d, err := time.ParseDuration(strings.TrimSpace(v))
 	if err != nil {
-		return 0, fmt.Errorf("invalid network.freeze_delay %q (want a duration such as \"1s\", or \"off\" to freeze immediately)", v)
+		return 0, fmt.Errorf("invalid network.suspend_delay %q (want a duration such as \"1s\", or \"off\" to never suspend)", v)
 	}
 	if d < 0 {
-		return 0, fmt.Errorf("invalid network.freeze_delay %q: negative", v)
+		return 0, fmt.Errorf("invalid network.suspend_delay %q: negative", v)
 	}
-	if d > MaxFreezeDelay {
-		return 0, fmt.Errorf("invalid network.freeze_delay %q: more than %s", v, MaxFreezeDelay)
+	if d > MaxSuspendDelay {
+		return 0, fmt.Errorf("invalid network.suspend_delay %q: more than %s", v, MaxSuspendDelay)
 	}
 	return d, nil
 }
 
-func (n Network) FreezeDelayDuration() time.Duration {
-	d, err := ParseFreezeDelay(n.FreezeDelay)
+func (n Network) SuspendDelayDuration() time.Duration {
+	d, err := ParseSuspendDelay(n.SuspendDelay)
 	if err != nil {
-		return DefaultFreezeDelay
+		return DefaultSuspendDelay
 	}
 	return d
 }
 
-func (n Network) ValidateFreezeDelay() error {
-	_, err := ParseFreezeDelay(n.FreezeDelay)
+func (n Network) ValidateSuspendDelay() error {
+	_, err := ParseSuspendDelay(n.SuspendDelay)
 	return err
 }
 
@@ -395,7 +395,7 @@ func decode(data []byte, source string) (*Config, error) {
 	if err := cfg.Network.ValidateMode(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
-	if err := cfg.Network.ValidateFreezeDelay(); err != nil {
+	if err := cfg.Network.ValidateSuspendDelay(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateApprovalWait(); err != nil {
@@ -737,9 +737,9 @@ func AddAllowedHosts(path string, hosts []string) ([]string, error) {
 	return added, os.Rename(tmp, path)
 }
 
-func SetApprovalWait(path, value string) error {
+func setNetworkString(path, key, value string, parse func(string) (time.Duration, error)) error {
 	if value != "" {
-		if _, err := ParseApprovalWait(value); err != nil {
+		if _, err := parse(value); err != nil {
 			return err
 		}
 	}
@@ -761,13 +761,13 @@ func SetApprovalWait(path, value string) error {
 		}
 	}
 	if value == "" {
-		delete(netDoc, "approval_wait")
+		delete(netDoc, key)
 	} else {
 		v, err := json.Marshal(value)
 		if err != nil {
 			return err
 		}
-		netDoc["approval_wait"] = v
+		netDoc[key] = v
 	}
 	netJSON, err := json.Marshal(netDoc)
 	if err != nil {
@@ -784,6 +784,14 @@ func SetApprovalWait(path, value string) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func SetApprovalWait(path, value string) error {
+	return setNetworkString(path, "approval_wait", value, ParseApprovalWait)
+}
+
+func SetSuspendDelay(path, value string) error {
+	return setNetworkString(path, "suspend_delay", value, ParseSuspendDelay)
 }
 
 func WatchFile(path string, interval time.Duration, onChange func(data []byte)) {

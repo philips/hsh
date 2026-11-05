@@ -39,10 +39,10 @@ type inlineMonitor struct {
 	session    string
 	configPath string
 	monitor    config.Monitor
-	freeze     *freezeState
+	suspend    *suspendState
 }
 
-func newInlineMonitor(cfg *config.Config, session, configPath string, interactive bool, fstate *freezeState) (*inlineMonitor, string) {
+func newInlineMonitor(cfg *config.Config, session, configPath string, interactive bool, sstate *suspendState) (*inlineMonitor, string) {
 	switch {
 	case !cfg.Monitor.Enabled:
 		return nil, ""
@@ -58,7 +58,7 @@ func newInlineMonitor(cfg *config.Config, session, configPath string, interactiv
 	if _, err := relay.ParseKey(name); err != nil {
 		return nil, "hsh: " + err.Error() + "; the inline proxy review is disabled"
 	}
-	return &inlineMonitor{session: session, configPath: configPath, monitor: cfg.Monitor, freeze: fstate}, ""
+	return &inlineMonitor{session: session, configPath: configPath, monitor: cfg.Monitor, suspend: sstate}, ""
 }
 
 func effectiveMonitorKey(configKey string) (string, string) {
@@ -206,9 +206,9 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 		return 0, err
 	}
 	source := &sessionDenials{store: monitordb.DefaultStore(), session: im.session, cfgPath: im.configPath, configKey: im.monitor.Key}
-	freezeNote := func() string {
-		if im.freeze != nil {
-			return im.freeze.current()
+	suspendNote := func() string {
+		if im.suspend != nil {
+			return im.suspend.current()
 		}
 		return ""
 	}
@@ -221,15 +221,15 @@ func attachWithRelay(name string, flags []string, running bool, im *inlineMonito
 	r, err := relay.New(relay.Config{
 		In: os.Stdin, Out: os.Stdout, Pty: master, Cols: cols, Rows: rows,
 		StatusLine: im.monitor.StatusLine, Key: key,
-		Count: source.Count, Notice: source.Notice, FreezeNote: freezeNote, Overlay: source.Overlay, Name: im.session,
+		Count: source.Count, Notice: source.Notice, SuspendNote: suspendNote, Overlay: source.Overlay, Name: im.session,
 	})
 	if err != nil {
 		slave.Close()
 		fmt.Fprintf(os.Stderr, "hsh: inline proxy review unavailable: %v\n", err)
 		return attachContainer(name, flags, running, nil)
 	}
-	if im.freeze != nil {
-		im.freeze.markSink()
+	if im.suspend != nil {
+		im.suspend.markSink()
 	}
 
 	cmd := exec.Command("podman", attachArgs(name, flags, running)...)

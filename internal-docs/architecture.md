@@ -312,7 +312,7 @@ in `~/.config/hsh/settings.json`, then the builtin default:
 - The denial is recorded first, so the host shows up in `hsh monitor` and
   the inline status line at once, and the `holding` column of the session's
   `proxy.db` counts the requests currently held for that host (the monitor lists held hosts
-  first with `HELD xN`; the status line says `(N held)`; the proxy zeroes
+  first; the status line says `(N held)`; the proxy zeroes
   its session's counts when it starts).
 - The proxy then polls every 250 ms. It lets the request through as soon
   as the host is allowed (an approval rewrites the session config and the
@@ -337,11 +337,10 @@ in `~/.config/hsh/settings.json`, then the builtin default:
 - Holding does not widen policy: allow decisions still come only from the
   allowlist in the session config, and a hold ends in the same denial as
   without holding.
-- Per session: `hsh proxy hold [--session ID] [on|off|default|DURATION]`
-  rewrites `network.approval_wait` in the session config (`on` is 30 s), and
-  `w` in `hsh monitor` (and the inline review screen, which is the same
-  model) toggles it for the selected row's session; the title shows
-  `holding: 30s` or `holding: off`.
+- Per session: `hsh settings edit --session ID` rewrites
+  `network.approval_wait` in the session config, and `w` in `hsh monitor`
+  (and the inline review screen, which is the same model) toggles it for the
+  selected row's session; the title shows `holding: 30s` or `holding: off`.
 
 ### DNS
 

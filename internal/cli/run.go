@@ -579,10 +579,10 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	failureCleanup = false
 
-	freezeCtx, stopFreeze := context.WithCancel(ctx)
-	defer stopFreeze()
-	fstate := &freezeState{}
-	go watchHoldFreeze(freezeCtx, sessionDir, wsName, fstate)
+	suspendCtx, stopSuspend := context.WithCancel(ctx)
+	defer stopSuspend()
+	sstate := &suspendState{}
+	go watchHoldSuspend(suspendCtx, sessionDir, wsName, sstate)
 
 	stopSession := func() { stopSessionPod(podName, sessionDir) }
 	cleanup := stopSession
@@ -675,7 +675,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	var inline *inlineMonitor
 	if detachable {
 		var warn string
-		inline, warn = newInlineMonitor(cfg, sessionID, sessionConfig, interactive, fstate)
+		inline, warn = newInlineMonitor(cfg, sessionID, sessionConfig, interactive, sstate)
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}

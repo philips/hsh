@@ -29,7 +29,7 @@ type Config struct {
 	Key        Key
 	Count      func() (pending, held int, err error)
 	Notice     func() string
-	FreezeNote func() string
+	SuspendNote func() string
 	Overlay    func(cols, rows int) tea.Model
 	Name       string
 	PollEvery  time.Duration
@@ -56,7 +56,7 @@ type Relay struct {
 	pending        int
 	heldReqs       int
 	notice         string
-	freezeNote     string
+	suspendNote    string
 	covTop         int
 	covRows        int
 	lastPoll       time.Time

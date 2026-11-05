@@ -32,17 +32,17 @@ podman 5.8.9.
 
 Two mechanisms, very different costs:
 
-### 1. pause/resume (freeze CPU) -- works today, shipped as the prototype
+### 1. pause/resume (suspend CPU) -- works today, shipped as the prototype
 
 `runsc pause` / `runsc resume` (equivalent to SIGSTOP/SIGCONT of the
 sentry, but gVisor-native) work with the embedded payload, no extra
 binaries:
 
-- `podman pod pause hsh-<id>` freezes the sandbox. Status reports `paused`.
+- `podman pod pause hsh-<id>` suspends the sandbox. Status reports `paused`.
   `podman pod unpause` resumes it. Both go through the runsc runtime
   cleanly (needs `--security-opt label=disable`, which hsh already sets).
 - Latency ~5-6 ms each way.
-- A counter loop inside the guest stays frozen across the pause (4 -> 4,
+- A counter loop inside the guest stays suspended across the pause (4 -> 4,
   not 4 -> 8), confirming guest processes do not execute.
 - Memory stays resident; only CPU is saved. Survives nothing (a reboot
   loses it).
@@ -55,7 +55,7 @@ binaries:
 Shipped prototype: `hsh suspend [SESSION]` (detaches any client, then
 `podman pod pause`), a `Suspended` status in `sessionStatus`, and an early
 `podman pod unpause` in the resume path so `hsh resume` wakes it. Pod-level
-pause also freezes the proxy, which is why the unpause must run before the
+pause also suspends the proxy, which is why the unpause must run before the
 proxy/ws start logic, not in the reattach block.
 
 ### 2. checkpoint/restore (free memory) -- needs one payload change
@@ -88,7 +88,7 @@ proxy/ws start logic, not in the reattach block.
 
 - Ship pause/resume as `hsh suspend` now (done in this prototype): zero
   payload cost, instant, covers the "pause work to save CPU" use case and
-  the short-hold proxy UX (freeze the agent while a fedora-mirror-style
+  the short-hold proxy UX (suspend the agent while a fedora-mirror-style
   denial waits for approval, instead of letting it spin and burn tokens).
 - Treat checkpoint/restore as a later, heavier feature gated on shipping
   `checkpointgofer` and solving the netstack reconnect + clock questions.
@@ -96,7 +96,7 @@ proxy/ws start logic, not in the reattach block.
   and can grow a second "checkpoint image on disk" case without
   scattering status checks.
 
-### 3. freeze-on-hold for the proxy (prototype, opt-in)
+### 3. suspend-on-hold for the proxy (prototype)
 
 The secondary goal (avoid burning tokens on a denial the user will
 approve) is prototyped with pause, not checkpoint-to-disk, because the
@@ -105,38 +105,37 @@ for a disk checkpoint drops the proxy's per-connection netstack stack and
 with it the held TCP connection, so the approved request could not
 complete. Pause keeps the connection open.
 
-How it works (`HSH_FREEZE_ON_HOLD=1`, opt-in):
+How it works (always on, unless `suspend_delay` is `off`):
 
 - The proxy already bumps a `holding` count in `proxy.db` for each request
   it is holding for approval (`monitordb.AdjustHolding`).
 - A host-side watcher in `hsh run`/`resume` (`watchHoldFreeze`) polls
   `monitordb.HoldingCount(sessionDir)` every 150 ms. When a hold has been
-  active for longer than `network.freeze_delay` (grace period, default
+  active for longer than `network.suspend_delay` (grace period, default
   1000 ms) it `podman pause`es the *workspace container only* (the proxy
   keeps running to serve the approval); when the count returns to zero it
   `podman unpause`s and resets the timer.
 - The grace period keeps a burst of quick holds -- e.g. dnf/apt fanning
   out across mirrors -- from flapping the agent: holds that resolve within
-  `freeze_delay` never freeze, and the denials they record can be
-  approved together with `hsh proxy allow --all`. Set `freeze_delay` to
-  `off` to freeze immediately, or a duration up to 1m.
-- `approval_wait` and `freeze_delay` resolve session over global over
+  `suspend_delay` never suspend, and the denials they record can be
+  approved together with `hsh proxy allow --all`. Set `suspend_delay` to
+  `off` to never suspend, or a duration up to 1m.
+- `approval_wait` and `suspend_delay` resolve session over global over
   builtin: an explicit value in the session's `network` config wins,
   then `$XDG_CONFIG_HOME/hsh/settings.json` (`approval_wait`,
-  `freeze_delay`; edit with `hsh settings edit`), then the built-in
+  `network_proxy_approval_suspend_delay`; edit with `hsh settings edit`), then the built-in
   defaults (30s and 3s). Holding is therefore on by default when someone
   is attending. `hsh run` passes the resolved global wait to the proxy
   container as `--approval-wait-default` (the proxy cannot read the
   host's settings file); a session config with `approval_wait` set
-  overrides it live. Adding `freeze_delay` bumped the config schema to
+  overrides it live. Adding `suspend_delay` bumped the config schema to
   version 2 (v1 configs still load; the field is optional).
-- Enable the whole behavior with `HSH_FREEZE_ON_HOLD=1`.
 
 - Approving with `hsh proxy allow` (or the monitor) releases the proxy's
   hold, the count drops, the watcher thaws, and the *same held request*
   proceeds.
 - Freeze/thaw feedback goes to the relay's status line, not stderr: the
-  watcher and the inline monitor share a `freezeState`; when a relay is
+  watcher and the inline monitor share a `suspendState`; when a relay is
   attached it polls a `FreezeNote` callback (like `Notice`) and paints
   "SUSPENDED: proxy approval | * N to review (M held)" in the status
   line (yellow, like the red MONITOR mode) instead of scribbling over
@@ -145,8 +144,8 @@ How it works (`HSH_FREEZE_ON_HOLD=1`, opt-in):
   Without a status line (monitor disabled, non-tty, relay unavailable)
   it falls back to stderr lines.
 
-`freeze_delay` is a grace period *before* freezing, not a hard cap -- once
-frozen, the hold still runs its normal `approval_wait`.
+`suspend_delay` is a grace period *before* suspending, not a hard cap -- once
+suspended, the hold still runs its normal `approval_wait`.
 
 Verified end to end (allowlist mode, holding on, attended fresh): an agent
 `curl https://example.org` hit the gate, the watcher froze the workspace
@@ -171,7 +170,7 @@ Limitations of this prototype:
 - The watcher runs only in the attached `hsh run`/`resume` process, so it
   covers the attached experience. A detached session would need the same
   loop in the reaper.
-- Freezing is coarse: any hold freezes the whole workspace, including
+- Suspending is coarse: any hold suspends the whole workspace, including
   unrelated work the agent might be doing concurrently. Fine for a single
   agent; a shell doing other things would stall too.
 - The guest clock still advances while frozen (see finding 1), so a hold

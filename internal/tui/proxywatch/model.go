@@ -152,9 +152,6 @@ func (m Model) tableRows(rows []monitordb.DeniedHost) []table.Row {
 		if h.Ignored {
 			url += "  (ignored)"
 		}
-		if h.Holding > 0 {
-			url += fmt.Sprintf("  HELD x%d", h.Holding)
-		}
 		out = append(out, table.Row{sel, h.Session, ws, url, fmt.Sprint(h.Count), h.LastSeen})
 	}
 	return out

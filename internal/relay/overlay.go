@@ -62,9 +62,9 @@ func (r *Relay) pollLocked() {
 			r.dirty = true
 		}
 	}
-	if r.cfg.FreezeNote != nil {
-		if fn := printable(r.cfg.FreezeNote()); fn != r.freezeNote {
-			r.freezeNote = fn
+	if r.cfg.SuspendNote != nil {
+		if sn := printable(r.cfg.SuspendNote()); sn != r.suspendNote {
+			r.suspendNote = sn
 			r.dirty = true
 		}
 	}
@@ -246,7 +246,7 @@ func (r *Relay) statusLineLocked() string {
 		text = " hsh " + name + " | MONITOR | Esc goes back | " + r.keyName() + " closes"
 	default:
 		sgr = sgrGreen
-		if r.freezeNote != "" {
+		if r.suspendNote != "" {
 			sgr = sgrYellow
 		} else if r.pending > 0 {
 			sgr = sgrBlue
@@ -256,8 +256,8 @@ func (r *Relay) statusLineLocked() string {
 			heldNote = fmt.Sprintf(" (%d held)", r.heldReqs)
 		}
 		switch {
-		case r.freezeNote != "":
-			text = " hsh " + name + " | " + r.freezeNote
+		case r.suspendNote != "":
+			text = " hsh " + name + " | " + r.suspendNote
 			if n := r.pending; n > 0 {
 				text += fmt.Sprintf(" | * %d to review%s | %s", n, heldNote, r.keyName())
 			}

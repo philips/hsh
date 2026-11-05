@@ -569,8 +569,8 @@ func TestHeldHostsAreListedFirstAndMarked(t *testing.T) {
 	if m.rows[0].Host != "alpha.example.com" {
 		t.Fatalf("the held host is not first: %v", listHosts(m))
 	}
-	if !strings.Contains(m.View(), "HELD x2") {
-		t.Fatalf("the held marker is missing:\n%s", m.View())
+	if strings.Contains(m.View(), "HELD") {
+		t.Fatalf("the held count is user-visible:\n%s", m.View())
 	}
 }
 

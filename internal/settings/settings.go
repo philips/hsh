@@ -10,9 +10,9 @@ import (
 )
 
 type Settings struct {
-	MonitorKey   string `json:"monitor_key,omitempty"`
-	ApprovalWait string `json:"approval_wait,omitempty"`
-	FreezeDelay  string `json:"freeze_delay,omitempty"`
+	MonitorKey                       string `json:"monitor_key,omitempty"`
+	NetworkProxyApprovalWait         string `json:"network_proxy_approval_wait,omitempty"`
+	NetworkProxyApprovalSuspendDelay string `json:"network_proxy_approval_suspend_delay,omitempty"`
 }
 
 func Dir() string {

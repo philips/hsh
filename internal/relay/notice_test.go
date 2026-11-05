@@ -37,27 +37,27 @@ func TestStatusLineShowsTheSessionNotice(t *testing.T) {
 	}
 }
 
-func TestStatusLineShowsTheFreezeNote(t *testing.T) {
-	frozen, pending := "", 1
+func TestStatusLineShowsTheSuspendNote(t *testing.T) {
+	suspended, pending := "", 1
 	r := &Relay{cols: 160, cfg: Config{
 		Name:       "unit",
 		Count:      func() (int, int, error) { return pending, 1, nil },
-		FreezeNote: func() string { return frozen },
+		SuspendNote: func() string { return suspended },
 	}}
 	r.pollLocked()
 	if got := r.statusLineLocked(); !strings.Contains(got, "needs review") {
-		t.Fatalf("before the freeze: %q", got)
+		t.Fatalf("before the suspend: %q", got)
 	}
-	frozen = "SUSPENDED: proxy approval"
+	suspended = "SUSPENDED: proxy approval"
 	r.pollLocked()
 	got := r.statusLineLocked()
 	if !strings.HasPrefix(got, sgrYellow) || !strings.Contains(got, " hsh unit | SUSPENDED: proxy approval | * 1 to review (1 held) | Ctrl+Space") {
 		t.Fatalf("frozen: %q", got)
 	}
-	frozen = ""
+	suspended = ""
 	pending = 0
 	r.pollLocked()
 	if got := r.statusLineLocked(); !strings.Contains(got, "nothing to review") || strings.Contains(got, "frozen") {
-		t.Fatalf("after the thaw: %q", got)
+		t.Fatalf("after the resume: %q", got)
 	}
 }

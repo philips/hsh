@@ -54,7 +54,7 @@ else with a message that says what to do:
 After the version check the config is decoded strictly: a field hsh does not
 know is an error that names it (a typo such as `"approval_wiat"` never silently
 changes the policy). The commands that edit a session's config
-(`hsh proxy allow`, `hsh proxy hold`, and the
+(`hsh proxy allow`, `hsh settings edit --session`, and the
 monitor) apply the same version check first and leave a file they cannot read
 untouched.
 
@@ -77,7 +77,8 @@ bump.
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax); relative sources resolve against `WORKSPACE-DIR`, and none apply without one ([sessions without a workspace](#sessions-without-a-workspace)) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
-| `network.approval_wait` | *(unset)* | how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)). Unset means the global `approval_wait` setting, then the builtin default `30s` |
+| `network.approval_wait` | *(unset)* | how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)). Unset means the global `network_proxy_approval_wait` setting, then the builtin default `30s` |
+| `network.suspend_delay` | *(unset)* | how long a hold must last before the sandbox is suspended to wait out the approval (for example `"2s"`, at most `1m`); `off` never suspends. Unset means the global `network_proxy_approval_suspend_delay` setting, then the builtin default `3s` |
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | `oauth.providers`: OAuth provider descriptors to load by name; `oauth.api_hosts`: optional per-provider subset of their API hosts ([sandboxed OAuth logins](oauth.md)) |
@@ -281,9 +282,9 @@ By default a denied request fails at once with a `403 Forbidden` whose message
 tells the agent that the block is on purpose, that you have been notified, and
 to tell you which host it needs and why instead of looking for workarounds.
 
-Holding is on by default (`30s`, from the global `approval_wait` setting or
-the builtin default; set `network.approval_wait` per session to change it —
-for example `"45s"`, at most `5m`, `off` to fail at once). A request the
+Holding is on by default (`30s`, from the global `network_proxy_approval_wait`
+setting or the builtin default; set `network.approval_wait` per session to
+change it — for example `"45s"`, at most `5m`, `off` to fail at once). A request the
 policy would deny (a CONNECT, or a plaintext HTTP request) is *held* for
 that long while you decide: if you approve the host in time the request just
 succeeds, if you ignore the host it fails at once, and if nobody decides it
@@ -298,12 +299,11 @@ fails with the same 403.
 - Clients with short connect timeouts (Node's fetch gives up after 10 s) will
   see a timeout before a long wait ends.
 - Turn it on in the seed config, an image label, or the session's
-  `config.json`; `hsh proxy hold [--session ID] on|off|default|45s` changes a
-  running session (`on` means 30 s; the proxy reloads within a second and
-  releases requests already held when it goes off); in `hsh monitor` and the
-  inline review screen press `w` to toggle the session of the selected row.
-- Held hosts are listed first in the monitor (`HELD x2`) and the inline
-  status line shows `(M held)`.
+  `config.json`; `hsh settings edit --session ID` edits a running session's
+  `approval_wait` (the proxy reloads within a second and releases requests
+  already held when it goes off); in `hsh monitor` and the inline review
+  screen press `w` to toggle the session of the selected row.
+- Held hosts are listed first in the monitor.
 
 ## Allowlist matching
 
@@ -514,15 +514,19 @@ overrides them; edit it with `hsh settings edit`:
 ```json
 {
   "monitor_key": "ctrl-a",
-  "approval_wait": "45s",
-  "freeze_delay": "2s"
+  "network_proxy_approval_wait": "45s",
+  "network_proxy_approval_suspend_delay": "2s"
 }
 ```
 
 `monitor_key`, when set, overrides `monitor.key` from the session config.
-`approval_wait` and `freeze_delay` are the global defaults for the session
-config's `network.approval_wait` and `network.freeze_delay` (hold and
-freeze-on-hold timing; builtin defaults `30s` and `3s`, `off` disables).
+`network_proxy_approval_wait` and `network_proxy_approval_suspend_delay` are
+the global defaults for the session config's `network.approval_wait` and
+`network.suspend_delay` (how long a denied request is held for approval, and
+how long a hold must last before the sandbox is suspended to wait it out;
+builtin defaults `30s` and `3s`, `off` disables).
+`hsh settings edit --session ID` edits the per-session overrides of the same
+two knobs.
 Unknown fields are an error; an unreadable file is ignored with a warning
 and the builtin defaults are used.
 

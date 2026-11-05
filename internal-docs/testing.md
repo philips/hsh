@@ -97,9 +97,10 @@ proxy, the monitor database, and the example image:
 - **step 19**: held requests — in an `allowlist` session with
   `approval_wait` set and someone watching (the `attended` marker), a denied
   CONNECT stays pending until `hsh proxy allow` approves it and then
-  succeeds; with no setting (the default) a denied request fails at once with
-  the agent-directed message; `hsh proxy hold 4s` turns holding on live and an
-  unapproved request is held about 4 s, then denied. The proxy unit tests
+  succeeds; with no setting (the default, 30 s) a denied request is held while
+  someone is watching; setting `network.approval_wait` in the session config
+  to `4s` (or `off`) changes it live and an unapproved request is held about
+  4 s, then denied. The proxy unit tests
   (`hold_test.go`) cover release by approval, release by ignore, timeout,
   disabling during a hold, unattended and stale markers, `none` mode, the
   default being off, the concurrency cap, client disconnects, the `holding`

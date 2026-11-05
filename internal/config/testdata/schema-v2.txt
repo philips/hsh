@@ -17,9 +17,9 @@ network object
 network.allow array
 network.allow[] string
 network.approval_wait string
-network.freeze_delay string
 network.mode string
 network.notice bool
+network.suspend_delay string
 oauth object
 oauth.api_hosts map
 oauth.api_hosts[*] array
