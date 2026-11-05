@@ -76,6 +76,27 @@ If your `Sleep`s are real API waits you can't shorten, cut the *encode* instead:
 
 Combine both for the biggest win without changing a single `Sleep`.
 
+## Re-encode a take without re-recording
+
+The slow/variable part is the *take* (VHS replays the whole timed session). Once
+captured, switching formats is just an ffmpeg transcode. `demo/encode.sh` turns
+an existing frames directory (best) or GIF into any format:
+
+```sh
+# capture once, lossless:
+demo/render.sh frames demo/tape-example.md
+# then produce outputs from the SAME take, no re-record:
+demo/encode.sh demo/out/tape-example-frames demo/out/final.webm
+demo/encode.sh demo/out/tape-example-frames demo/out/preview.gif
+
+# or salvage an old preview GIF into a webm:
+demo/encode.sh demo/out/webserver.gif demo/out/webserver.webm
+```
+
+Set `FRAMERATE=` to match the take's framerate when encoding from frames
+(default 24). Frames give the best quality; a GIF source is capped by its
+256-color palette.
+
 ## Skip ffmpeg entirely — export raw frames
 
 VHS renders a lossless PNG frame sequence first, then only uses ffmpeg to pack
