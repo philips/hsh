@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "shell": "/bin/bash",
   "secrets": {
     "MISTRAL_API_KEY": {

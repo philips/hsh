@@ -31,10 +31,7 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hsh: %v\n", err)
-		if cli.IsUnknownCommand(err) {
-			os.Exit(2)
-		}
-		os.Exit(1)
+		os.Exit(cli.ExitStatus(err))
 	}
 }
 

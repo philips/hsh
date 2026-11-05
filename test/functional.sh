@@ -381,6 +381,59 @@ CMDS
 grep -q '^curl-rc=0$' "$TMP/policy2.out" || fail "unapplying the policy did not restore the approval: $(cat "$TMP/policy2.out")"
 pass "a policy is validated and stored, applying copies its rules (a policy deny beats your approval, removing the file changes nothing), unapplying removes them"
 
+echo "== step 3d: the connection log, hsh proxy report, --wait, and report mode"
+REPORT="$("$HSH" proxy report --session "$DB_SESSION")"
+echo "$REPORT" | grep -Eq '^api\.mistral\.ai +[0-9]+ +443 ' || fail "proxy report does not list api.mistral.ai: $REPORT"
+echo "$REPORT" | grep -Eq '^api\.mistral\.ai .*allowed, denied$' || fail "proxy report does not show api.mistral.ai as both allowed and denied: $REPORT"
+"$HSH" proxy report --session "$DB_SESSION" --format policy >"$TMP/draft.json" || fail "proxy report --format policy failed"
+"$HSH" policy add draft "$TMP/draft.json" >/dev/null || fail "the draft policy does not load: $(cat "$TMP/draft.json")"
+grep -q '"api.mistral.ai"' "$TMP/draft.json" || fail "the draft policy lacks an allowed host: $(cat "$TMP/draft.json")"
+"$HSH" policy rm draft >/dev/null
+python3 - "$SESSION_CONFIG" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1]))
+c["network"]["approval_wait"] = "off"
+json.dump(c, open(sys.argv[1], "w"), indent=2)
+PY
+"$HSH" proxy report --wait --denied --session "$DB_SESSION" --format json --timeout 120s >"$TMP/wait.out" 2>"$TMP/wait.err" &
+WAIT_PID=$!
+sleep 1
+"$HSH" resume "$DB_SESSION" >"$TMP/wait-run.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null --max-time 8 https://judge-first.example.invalid:8443/ 2>&1
+sleep 2
+curl -sS -o /dev/null --max-time 8 http://judge-me.example.invalid/ 2>&1
+CMDS
+wait "$WAIT_PID" || fail "proxy report --wait failed: $(cat "$TMP/wait.err")"
+python3 - "$TMP/wait.out" "$DB_SESSION" <<'PY' || fail "proxy report --wait printed the wrong entry: $(cat "$TMP/wait.out")"
+import json, sys
+first = json.loads(open(sys.argv[1]).readline())
+assert first["host"] == "judge-first.example.invalid" and first["port"] == 8443, first
+assert first["access"] == "deny" and first["log"] == "review" and first["session"] == sys.argv[2], first
+PY
+FIRST_ID="$(head -1 "$TMP/wait.out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+OUT="$("$HSH" proxy report --wait --denied --session "$DB_SESSION" --since "$FIRST_ID" --timeout 20s --format json)" || fail "--since missed an entry"
+echo "$OUT" | head -1 | grep -q '"host":"judge-me.example.invalid"' || fail "--since did not return the next denial: $OUT"
+RC=0
+"$HSH" proxy report --wait --session "$DB_SESSION" --timeout 1s >/dev/null 2>&1 || RC=$?
+[ "$RC" -eq 2 ] || fail "proxy report --wait --timeout exited $RC, want 2"
+pass "the connection log records allowed and denied connections; proxy report summarizes it and drafts a policy; --wait returns the next denial, --since continues, --timeout exits 2"
+
+REPORT_WS="$TMP/report-ws"
+mkdir -p "$REPORT_WS"
+BEFORE_IDS="$(ls "$XDG_STATE_HOME/hsh/sessions" 2>/dev/null | tr '\n' ' ')"
+(cd "$REPORT_WS" && "$HSH" run --runtime "$RUNTIME" --network report --config "$TMP/config.hsh" localhost/hsh-example:latest .) >"$TMP/report-run.out" 2>&1 <<'CMDS' || true
+IP="$(getent hosts host.containers.internal | awk '{print $1; exit}')"
+curl -sS -o /dev/null -w "report-ip code=%{http_code}\n" --max-time 8 "http://$IP:8899/v1/models" 2>&1
+CMDS
+grep -q '^report-ip code=200$' "$TMP/report-run.out" || fail "report mode did not allow a host outside the allowlist: $(cat "$TMP/report-run.out")"
+REPORT_SESSION="$(for id in $(ls "$XDG_STATE_HOME/hsh/sessions"); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
+[ -n "$REPORT_SESSION" ] || fail "the report-mode session left no state"
+"$HSH" proxy denied --session "$REPORT_SESSION" | grep -q "no denied hosts awaiting review" || fail "report mode queued something for review"
+"$HSH" proxy report --session "$REPORT_SESSION" | grep -Eq ' 8899 +http .*allowed$' || fail "report mode did not log the connection: $("$HSH" proxy report --session "$REPORT_SESSION")"
+[ ! -s "$XDG_STATE_HOME/hsh/sessions/$REPORT_SESSION/notice/network-policy.md" ] || fail "report mode wrote a network notice"
+"$HSH" rm -f "$REPORT_SESSION" >/dev/null 2>&1 || true
+pass "report mode allows hosts outside the allowlist, queues nothing, logs every connection, and writes no network notice"
+
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
 cat >"$TMP/proxy-config.hsh" <<'EOF'
@@ -1951,9 +2004,9 @@ ver_expect_failure() {
 printf '%s\n' '{ "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }' >"$TMP/ver-missing.hsh"
 printf '%s\n' '{ "version": 99, "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }' >"$TMP/ver-newer.hsh"
 printf '%s\n' '{ "version": 1, "image": "localhost/hsh-example:latest", "network": { "alow": [] } }' >"$TMP/ver-typo.hsh"
-ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 2)' \
+ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 3)' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-missing.hsh"
-ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 2); update hsh' \
+ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 3); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-newer.hsh"
 ver_expect_failure "a seed config with an unknown field" 'unknown field "alow"' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-typo.hsh"
@@ -1969,9 +2022,9 @@ FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"shell":"/bin/bash"}'
 EOF
 podman build -q -t localhost/hsh-ver-missing:latest -f "$TMP/ver-label2.Containerfile" "$TMP" >/dev/null || fail "could not build the unversioned-label image"
-ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 2); update hsh' \
+ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 3); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-newer:latest
-ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 2); rebuild the image' \
+ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 3); rebuild the image' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-missing:latest
 pass "image labels without a version or from a newer hsh are refused with what to do"
 
@@ -2022,7 +2075,7 @@ grep -q "configuration reload failed.*newer than this hsh reads" <<<"$VER_PROXY_
 pass "a running proxy keeps its last readable policy when the session config becomes unreadable, and logs why"
 
 "$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
-grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
+grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 3); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
 printf '%s\n' '{ "image": "localhost/hsh-example:latest" }' >"$VER_CFG"
 "$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
 grep -q "remove the session with: hsh rm $VER_SESSION" "$TMP/ver.out" || fail "resume did not say how to remove the stale session: $(cat "$TMP/ver.out")"

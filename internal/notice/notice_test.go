@@ -17,6 +17,7 @@ func TestEnabled(t *testing.T) {
 		{true, "https", true},
 		{true, "allowlist", true},
 		{true, "none", false},
+		{true, "report", false},
 		{false, "https", false},
 		{false, "allowlist", false},
 	} {

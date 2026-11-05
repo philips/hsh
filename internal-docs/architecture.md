@@ -373,7 +373,7 @@ the lookup and the connection work.
 
 ### Denial records and session rules
 
-What the monitor shows is kept per session, in two SQLite databases
+What the monitor shows is kept per session, in three SQLite databases
 (modernc.org/sqlite, pure Go, so the `CGO_ENABLED=0` static build is
 unaffected) with one writer each, so that no process writes where another
 session's proxy or the host trusts it:
@@ -381,6 +381,7 @@ session's proxy or the host trusts it:
 | Database | Written by | Proxy sees it as | Content |
 |---|---|---|---|
 | `sessions/<id>/proxy/proxy.db` | the session's proxy | `/hsh-proxy-state/proxy.db` (rw) | the `denied` table |
+| `sessions/<id>/proxy/connections.db` | the session's proxy | `/hsh-proxy-state/connections.db` (rw) | the `connections` table (the [connection log](config.md#connection-log)) |
 | `sessions/<id>/monitor.db` | the host (`hsh run`, `hsh proxy allow`/`deny`, `hsh monitor`, the inline review) | `/hsh-session/monitor.db` (ro) | the `rules` table |
 
 ```sql
@@ -422,7 +423,36 @@ standalone `hsh-proxy`) uses the config's `network.allow` as its allow rules.
 A proxy that cannot read the rules table (missing, other schema version)
 logs it once and falls back to the mode's defaults.
 
-Both use the default rollback journal, not WAL. With a single writer per
+```sql
+CREATE TABLE IF NOT EXISTS connections (  -- connections.db, schema version 1
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- only increases: the --wait cursor
+    time        TEXT NOT NULL,
+    host        TEXT NOT NULL,
+    port        INTEGER NOT NULL,
+    scheme      TEXT NOT NULL,          -- tls | http | tcp
+    access      TEXT NOT NULL,          -- allow | deny
+    log         TEXT NOT NULL,          -- record | review
+    pattern     TEXT,                   -- the deciding rule, NULL for the mode
+    source      TEXT,
+    held_ms     INTEGER NOT NULL DEFAULT 0,
+    bytes_up    INTEGER NOT NULL DEFAULT 0,
+    bytes_down  INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0  -- from arrival to end, including held_ms
+);
+```
+
+The connection log is its own file so that the readers that poll
+`proxy.db` every second (the status line, the monitor) never copy it. The
+proxy (`internal/proxy/connlog.go`) counts bytes on the client side of each
+connection, inserts a denial before any hold and updates it when the hold
+ends, inserts an allowed connection when it ends, and deletes rows older
+than the newest 50,000. `hsh proxy report` reads it like `proxy.db` (the
+snapshot below, at most 32 MiB) and drops rows whose host, scheme, access,
+log, pattern, source, port, time, or counters are malformed; `--wait` polls
+every 250 ms and only snapshots when the file's size or modification time
+changed.
+
+All three use the default rollback journal, not WAL. With a single writer per
 database there is nothing for WAL to buy, and a read-only reader of a
 rollback-journal database creates no files: it takes a shared lock on the
 database file and opens nothing writable beside it (a WAL reader would open

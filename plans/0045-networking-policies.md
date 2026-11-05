@@ -1,6 +1,6 @@
 # Network policies
 
-> **Status:** draft. Phases 1, 2 and 3 implemented.
+> **Status:** implemented (all four phases).
 
 ## Goal
 
@@ -336,7 +336,9 @@ trailing dot removed.
 
 ## Connection log
 
-`proxy.db` schema version 2 adds:
+A separate file, `proxy/connections.db` (schema version 1), written by the
+proxy. It is not a table in `proxy.db` so that the status line and monitor,
+which snapshot `proxy.db` every refresh, never copy the log.
 
 ```
 connections(
@@ -344,7 +346,7 @@ connections(
   time        TEXT NOT NULL,
   host        TEXT NOT NULL,
   port        INTEGER NOT NULL,
-  scheme      TEXT NOT NULL,   -- tls | http
+  scheme      TEXT NOT NULL,   -- tls | http | tcp (transparent non-TLS, non-HTTP)
   access      TEXT NOT NULL,   -- allow | deny
   log         TEXT NOT NULL,   -- record | review
   pattern     TEXT,            -- the matching rule, NULL for the mode default
@@ -373,8 +375,9 @@ connections(
 - `network.mode: report` and `hsh run --network report`: every host is
   allowed on every port and scheme unless a `deny` rule matches. Unmatched
   hosts get `log: record`, so nothing is queued or held.
-- Bumps `config.Version`: an older hsh would otherwise reject the mode with a
-  misleading "invalid network mode".
+- Bumps `config.Version` to 3 (and the shipped image labels with it): an
+  older hsh would otherwise reject the mode with a misleading "invalid
+  network mode".
 - The network notice is not written in `report` mode (nothing is blocked
   unless the user denied it).
 

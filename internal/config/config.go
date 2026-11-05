@@ -135,10 +135,10 @@ func (n Network) ValidateAllow() error {
 
 func (n Network) ValidateMode() error {
 	switch n.Mode {
-	case "", "https", "allowlist", "none":
+	case "", "https", "allowlist", "report", "none":
 		return nil
 	default:
-		return fmt.Errorf("invalid network mode %q (want https, allowlist, or none)", n.Mode)
+		return fmt.Errorf("invalid network mode %q (want https, allowlist, report, or none)", n.Mode)
 	}
 }
 
@@ -193,7 +193,7 @@ func (o OAuth) validate() error {
 }
 
 const (
-	Version    = 2
+	Version    = 3
 	MinVersion = 1
 )
 

@@ -47,6 +47,13 @@ proxy, the monitor database, and the example image:
   approval (shown by `hsh proxy rules` and `hsh proxy denied --all`, and a
   request gets the user-decided 403), `hsh policy rm` leaves the session's
   copy alone, and `hsh policy unapply` restores the approval
+- **step 3d**: `hsh proxy report` lists api.mistral.ai as allowed and
+  denied, `--format policy` drafts a policy that `hsh policy add` accepts,
+  `hsh proxy report --wait --denied --format json` returns the next denial
+  (with its session) while a request is made, `--since` returns the one
+  after it, and `--timeout` exits 2; a `--network report` session reaches a
+  host outside the allowlist, queues nothing, logs the connection, and
+  writes no network notice
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 403
@@ -272,7 +279,14 @@ config's `network.allow`; `internal/cli` covers `hsh proxy deny`/`allow`/
 `denied --all` writing and showing session rules, and the `hsh policy`
 commands (add, `--force`, ls, show, apply and reapply, a policy deny beating
 a user allow, unapply, rm, refusing bad names, files, and sessions);
-`internal/policy` covers parsing (version rules, unknown fields, empty or
+`hsh proxy report` (the summary, the draft policy parsing as a policy,
+`--wait` returning only after a denial, `--since`, `--timeout` exiting 2,
+and flag validation); `internal/monitordb` also covers the connection log
+(insert, update, reading since an id, the cap without reusing ids, and
+dropping malformed or symlinked input); `internal/proxy` covers denials
+logged at once, a held request logged before its hold ends and updated on
+approval, an allowed plaintext request logged with its byte counts, and
+`report` mode allowing everything but denied hosts; `internal/policy` covers parsing (version rules, unknown fields, empty or
 invalid rules, the `recorded` block), names, merging a host's rules, and
 storing, listing, loading, and removing files; `internal/cli`
 covers `secret add`/`allow`/`disallow`/`edit`/`rm`/`ls` behavior via

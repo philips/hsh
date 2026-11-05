@@ -64,24 +64,39 @@ func (p *Proxy) ruleDenial(host string) (monitordb.Rule, bool) {
 	return m.Rule, m.Access == monitordb.AccessDeny
 }
 
-func (p *Proxy) admit(ctx context.Context, host, target, kind string, allowed func() bool) bool {
+func (p *Proxy) admit(ctx context.Context, rec *connRecord, host, target, kind string, allowed func() bool) bool {
 	if allowed() {
+		rec.decided(monitordb.AccessAllow, monitordb.LogRecord, p.match(host).Rule)
 		return true
 	}
 	p.recordDenial(host, target)
 	m := p.match(host)
 	switch {
 	case m.Access == monitordb.AccessDeny:
+		rec.decided(monitordb.AccessDeny, monitordb.LogRecord, m.Rule)
+		rec.write()
 		log.Printf("%s %s: denied (%s)", kind, host, m.Rule.DeniedBy())
 		return false
 	case m.Log == monitordb.LogRecord:
+		rec.decided(monitordb.AccessDeny, monitordb.LogRecord, monitordb.Rule{})
+		rec.write()
 		log.Printf("%s %s: denied (not allowed by the session's rules; recorded, not queued for review)", kind, host)
 		return false
-	case !p.holdsEnabled():
+	}
+	rec.decided(monitordb.AccessDeny, monitordb.LogReview, monitordb.Rule{})
+	rec.write()
+	if !p.holdsEnabled() {
 		log.Printf("%s %s: denied (not allowed by the session's rules)", kind, host)
 		return false
 	}
-	return p.awaitApproval(ctx, host, kind, allowed, p.approvalWait())
+	start := time.Now()
+	ok := p.awaitApproval(ctx, host, kind, allowed, p.approvalWait())
+	rec.held(time.Since(start))
+	if ok {
+		rec.decided(monitordb.AccessAllow, monitordb.LogReview, p.match(host).Rule)
+	}
+	rec.write()
+	return ok
 }
 
 func (p *Proxy) awaitApproval(ctx context.Context, host, kind string, allowed func() bool, maxWait time.Duration) bool {
@@ -124,8 +139,8 @@ func (p *Proxy) awaitApproval(ctx context.Context, host, kind string, allowed fu
 	}
 }
 
-func (p *Proxy) gate(w http.ResponseWriter, ctx context.Context, host, target, kind string, allowed func() bool) bool {
-	if p.admit(ctx, host, target, kind, allowed) {
+func (p *Proxy) gate(w http.ResponseWriter, ctx context.Context, rec *connRecord, host, target, kind string, allowed func() bool) bool {
+	if p.admit(ctx, rec, host, target, kind, allowed) {
 		return true
 	}
 	p.writeDeny(w, host)

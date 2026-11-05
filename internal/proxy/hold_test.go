@@ -67,7 +67,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	p, err := New(Options{
 		ListenAddr: "127.0.0.1:0", ConfigPath: cfgPath, SecretsPath: filepath.Join(dir, "secrets.json"),
 		CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"),
-		ProxyDB: monitordb.ProxyDBPath(dir), MonitorDB: monitordb.MonitorDBPath(dir),
+		ProxyDB: monitordb.ProxyDBPath(dir), MonitorDB: monitordb.MonitorDBPath(dir), ConnLog: monitordb.ConnLogPath(dir),
 		OAuthStore: filepath.Join(dir, "proxy", "tokens.json"), AttendedPath: e.attended,
 		ApprovalWaitDefault: holdTestWaitDefault,
 	})

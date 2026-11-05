@@ -49,6 +49,26 @@ func IsUnknownCommand(err error) bool {
 	return errors.As(err, &u)
 }
 
+type exitStatusError struct {
+	code int
+	err  error
+}
+
+func (e *exitStatusError) Error() string { return e.err.Error() }
+
+func (e *exitStatusError) Unwrap() error { return e.err }
+
+func ExitStatus(err error) int {
+	var s *exitStatusError
+	if errors.As(err, &s) {
+		return s.code
+	}
+	if IsUnknownCommand(err) {
+		return 2
+	}
+	return 1
+}
+
 var (
 	verbose = os.Getenv("HSH_VERBOSE") != ""
 )

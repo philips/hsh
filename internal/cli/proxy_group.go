@@ -34,6 +34,7 @@ func proxyCommand() *ff.Command {
 			proxyAllowCommand(),
 			proxyDenyCommand(),
 			proxyRulesCommand(),
+			proxyReportCommand(),
 		},
 	}
 	cmd.Exec = groupExec(&cmd)

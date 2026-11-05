@@ -29,6 +29,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
+
+	"hsh/internal/monitordb"
 )
 
 const (
@@ -177,7 +179,7 @@ func (p *Proxy) isSynthetic(ip string) bool {
 }
 
 func (p *Proxy) answerSynthetic(w dns.ResponseWriter, r *dns.Msg) bool {
-	if len(r.Question) != 1 || p.mode() == "https" {
+	if mode := p.mode(); len(r.Question) != 1 || mode == "https" || mode == "report" {
 		return false
 	}
 	q := r.Question[0]
@@ -310,6 +312,8 @@ func (p *Proxy) handleTransparentTCP(c net.Conn, dstIP, dstPort string) {
 		p.serveTransparentDNS(c, false)
 		return
 	}
+	counter := &byteCounter{}
+	c = &countingConn{Conn: c, n: counter}
 	br := bufio.NewReader(c)
 	_ = c.SetReadDeadline(time.Now().Add(netstackSniffWait))
 	first, err := br.Peek(1)
@@ -318,28 +322,28 @@ func (p *Proxy) handleTransparentTCP(c net.Conn, dstIP, dstPort string) {
 		sni, hello := sniffSNI(&prefixConn{Conn: c, r: br})
 		_ = c.SetReadDeadline(time.Time{})
 		replay := &prefixConn{Conn: c, r: io.MultiReader(bytes.NewReader(hello), br)}
-		p.transparentTLS(replay, sni, dstIP, dstPort)
+		p.transparentTLS(replay, sni, dstIP, dstPort, counter)
 		return
 	}
 	if err == nil {
 		head, _ := br.Peek(8)
 		if looksLikeHTTP(head) {
 			_ = c.SetReadDeadline(time.Time{})
-			p.transparentHTTP(&prefixConn{Conn: c, r: br}, br, dstIP, dstPort)
+			p.transparentHTTP(&prefixConn{Conn: c, r: br}, br, dstIP, dstPort, counter)
 			return
 		}
 	}
 	_ = c.SetReadDeadline(time.Time{})
 	buffered, _ := br.Peek(br.Buffered())
 	rest := io.MultiReader(bytes.NewReader(append([]byte(nil), buffered...)), c)
-	p.transparentOpaque(&prefixConn{Conn: c, r: rest}, dstIP, dstPort)
+	p.transparentOpaque(&prefixConn{Conn: c, r: rest}, dstIP, dstPort, counter)
 }
 
-func (p *Proxy) transparentAllowed(host, target, kind string, allowed func() bool) bool {
-	return p.admit(context.Background(), host, target, kind, allowed)
+func (p *Proxy) transparentAllowed(rec *connRecord, host, target, kind string, allowed func() bool) bool {
+	return p.admit(context.Background(), rec, host, target, kind, allowed)
 }
 
-func (p *Proxy) transparentTLS(c net.Conn, sni, dstIP, dstPort string) {
+func (p *Proxy) transparentTLS(c net.Conn, sni, dstIP, dstPort string, counter *byteCounter) {
 	host := sni
 	if host == "" {
 		host = p.nameForIP(dstIP)
@@ -352,7 +356,9 @@ func (p *Proxy) transparentTLS(c net.Conn, sni, dstIP, dstPort string) {
 		host = dstIP
 	}
 	target := net.JoinHostPort(host, dstPort)
-	if !p.transparentAllowed(host, target, "TLS", func() bool { return p.connectAllowed(host, dstPort) }) {
+	rec := p.newRecord(host, dstPort, monitordb.SchemeTLS, counter)
+	defer rec.finish()
+	if !p.transparentAllowed(rec, host, target, "TLS", func() bool { return p.connectAllowed(host, dstPort) }) {
 		if sni != "" {
 			p.denyTLS(c, sni)
 		}
@@ -390,7 +396,7 @@ func (p *Proxy) writeDenyResponse(w io.Writer, host string) {
 	fmt.Fprintf(w, "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
 }
 
-func (p *Proxy) transparentHTTP(c net.Conn, br *bufio.Reader, dstIP, dstPort string) {
+func (p *Proxy) transparentHTTP(c net.Conn, br *bufio.Reader, dstIP, dstPort string, counter *byteCounter) {
 	req, err := http.ReadRequest(br)
 	if err != nil {
 		return
@@ -406,20 +412,24 @@ func (p *Proxy) transparentHTTP(c net.Conn, br *bufio.Reader, dstIP, dstPort str
 	if dstPort != "80" {
 		target = net.JoinHostPort(host, dstPort)
 	}
-	if !p.transparentAllowed(host, target, req.Method, func() bool { return p.plaintextAllowed(host) }) {
+	rec := p.newRecord(host, dstPort, monitordb.SchemeHTTP, counter)
+	defer rec.finish()
+	if !p.transparentAllowed(rec, host, target, req.Method, func() bool { return p.plaintextAllowed(host) }) {
 		p.writeDenyResponse(c, host)
 		return
 	}
 	p.serveRequests(c, br, req, "http", target, p.secretsFor(host))
 }
 
-func (p *Proxy) transparentOpaque(c net.Conn, dstIP, dstPort string) {
+func (p *Proxy) transparentOpaque(c net.Conn, dstIP, dstPort string, counter *byteCounter) {
 	host := p.nameForIP(dstIP)
 	if host == "" {
 		host = dstIP
 	}
 	target := net.JoinHostPort(host, dstPort)
-	if !p.transparentAllowed(host, target, "TCP", func() bool { return p.opaqueAllowed(host) }) {
+	rec := p.newRecord(host, dstPort, monitordb.SchemeTCP, counter)
+	defer rec.finish()
+	if !p.transparentAllowed(rec, host, target, "TCP", func() bool { return p.opaqueAllowed(host) }) {
 		return
 	}
 	log.Printf("TCP %s -> allowed (tunnel)", target)
@@ -431,7 +441,7 @@ func (p *Proxy) transparentOpaque(c net.Conn, dstIP, dstPort string) {
 }
 
 func (p *Proxy) opaqueAllowed(host string) bool {
-	return p.mode() != "none" && p.allowListed(host)
+	return p.plaintextAllowed(host)
 }
 
 func (p *Proxy) splice(c net.Conn, dial, target string) {

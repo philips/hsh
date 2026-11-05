@@ -42,30 +42,31 @@ ignored ([image trust](images.md#image-trust)).
 
 Every config has a top-level `"version"` integer: the seed file, the session's
 config copy, and the `org.ifup.hsh` image label. It is required. An hsh reads
-only the versions it understands (today, exactly `1`) and refuses anything
-else with a message that says what to do:
+only the versions it understands (today `1` through `3`; version 3 added
+the `report` network mode) and refuses anything else with a message that
+says what to do:
 
-- no `version`: `no "version" field (this hsh reads version 1)`
+- no `version`: `no "version" field (this hsh reads version 3)`
 - a newer version (an image or session from a newer hsh):
-  `config version N is newer than this hsh reads (version 1); update hsh (hsh update)`
+  `config version N is newer than this hsh reads (version 3); update hsh (hsh update)`
 - an older, unsupported version: `config version N is no longer supported
-  (this hsh reads version 1); regenerate it`, plus `rebuild the image` for a
+  (this hsh reads version 3); regenerate it`, plus `rebuild the image` for a
   label and `remove the session with: hsh rm ID` for a session. Nothing is
   migrated: configs are rewritten, images rebuilt, sessions recreated.
 
 After the version check the config is decoded strictly: a field hsh does not
 know is an error that names it (a typo such as `"approval_wiat"` never silently
 changes the policy). The commands that edit a session's config
-(`hsh proxy allow`, `hsh settings edit --session`, and the
-monitor) apply the same version check first and leave a file they cannot read
+(`hsh settings edit --session`, and `w` in the monitor) apply the same version check first and leave a file they cannot read
 untouched.
 
 A proxy that is running when its session config becomes unreadable (for
 example a newer hsh rewrote it) keeps enforcing the last config it could read
 and logs `configuration reload failed` with the reason.
 
-`internal/config`'s `Version` changes whenever the set of config fields
-changes (added, removed, renamed, or changed meaning); a test fails if the
+`internal/config`'s `Version` changes whenever the set of config fields or
+their accepted values changes (added, removed, renamed, or changed meaning);
+a test fails if the
 schema changes without a bump, so images and configs are regenerated on each
 bump.
 
@@ -78,7 +79,7 @@ bump.
 | `shell` | `/bin/sh` | shell to exec in the workspace |
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax); relative sources resolve against `WORKSPACE-DIR`, and none apply without one ([sessions without a workspace](#sessions-without-a-workspace)) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
-| `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
+| `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `report` (every host and port, logged), `none` (no egress) |
 | `network.approval_wait` | *(unset)* | how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)). Unset means the global `network_proxy_approval_wait` setting, then the builtin default `30s` |
 | `network.suspend_delay` | *(unset)* | how long a hold must last before the sandbox is suspended to wait out the approval (for example `"2s"`, at most `1m`); `off` never suspends. Unset means the global `network_proxy_approval_suspend_delay` setting, then the builtin default `3s` |
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
@@ -234,6 +235,11 @@ come from the user's provider descriptors.
 - `allowlist` - only hosts an allow rule matches, any port; DNS is gated
   by the same rules (a refused lookup is logged, not queued for review).
   The pre-built harness images use this mode.
+- `report` - every host on every port and scheme, unless a deny rule
+  matches; DNS resolves every name. Nothing is queued for review or held,
+  no network notice is written, and every connection lands in the
+  [connection log](#connection-log), so `hsh proxy report --format policy`
+  can draft a policy from what the agent used. Requires config version 3.
 - `none` - no egress; DNS is refused; rules are not consulted.
 
 A deny rule wins in every mode: a denied host is refused even for TLS on
@@ -672,6 +678,44 @@ The allow rules also gate DNS in `allowlist` mode: the workspace resolves
 names through a forwarder in the proxy that refuses any name no allow rule
 matches. A refused lookup is only logged: it is not recorded in the review
 queue, so a host becomes reviewable when something connects to it.
+
+## Connection log
+
+Every connection or plaintext request through the proxy (not DNS lookups)
+is a row in the session's `proxy/connections.db`, written by its proxy: the
+time, host, port, scheme (`tls` for CONNECT and TLS, `http`, or `tcp` for
+other transparent connections), access (`allow`/`deny`), log level
+(`record`, or `review` for a denial that was queued), the deciding rule's
+pattern and source, how long it was held, bytes up and down, and duration.
+An allowed connection is written when it ends; a denial is written at once,
+before any hold, and updated when the hold ends (to `allow` if you approved
+it). The newest 50,000 rows are kept; ids only increase.
+
+```
+hsh proxy report [--session ID]                    # per host: connections, ports, schemes, bytes, last seen, access
+hsh proxy report [--session ID] --format policy    # a draft policy of the allowed hosts, for review and hsh policy add
+hsh proxy report --wait [--session ID] [--since ID] [--denied] [--timeout DUR] [--format text|json]
+```
+
+`--wait` blocks until the log has entries newer than `--since ID` (default:
+newer than when it started), prints them (one per line; `json` adds the
+session), and exits 0. `--denied` waits for denials only. `--timeout DUR`
+exits with status 2 and prints nothing if nothing arrives in time. While
+waiting it counts as watching the session, so denials that need review are
+held (`network.approval_wait`) while an automated judge decides with `hsh
+proxy allow` or `hsh proxy deny`. A judge loop passes the last printed id
+back as `--since`:
+
+```sh
+since=()
+while out=$(hsh proxy report --wait --denied --session "$S" --format json "${since[@]}"); do
+  # judge each line, then: hsh proxy allow|deny --session "$S" HOST
+  since=(--since "$(tail -1 <<<"$out" | jq .id)")
+done
+```
+
+Piping `--format policy` straight into `hsh policy add` turns everything the
+agent contacted into a permanent allowlist; read the draft first.
 
 ## Tools that self-download
 

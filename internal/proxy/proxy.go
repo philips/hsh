@@ -31,6 +31,7 @@ type Options struct {
 	RootsPath    string
 	ProxyDB      string
 	MonitorDB    string
+	ConnLog      string
 	OAuthStore   string
 	NetworkMode  string
 	AttendedPath string
@@ -55,6 +56,7 @@ type Proxy struct {
 	roots     *x509.CertPool
 	transport *http.Transport
 	denials   *monitordb.Recorder
+	connLog   *monitordb.ConnLog
 	rules     *monitordb.RuleReader
 	store     *tokenStore
 	holds     holdState
@@ -106,11 +108,19 @@ func New(opts Options) (*Proxy, error) {
 			return nil, fmt.Errorf("open the denial record: %w", err)
 		}
 	}
+	var connLog *monitordb.ConnLog
+	if opts.ConnLog != "" {
+		var err error
+		connLog, err = monitordb.OpenConnLog(opts.ConnLog)
+		if err != nil {
+			return nil, fmt.Errorf("open the connection log: %w", err)
+		}
+	}
 	var rules *monitordb.RuleReader
 	if opts.MonitorDB != "" {
 		rules = monitordb.NewRuleReader(opts.MonitorDB, log.Printf)
 	}
-	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, denials: rec, rules: rules, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
+	return &Proxy{opts: opts, ca: ca, roots: roots, transport: transport, denials: rec, connLog: connLog, rules: rules, store: loadTokenStore(opts.OAuthStore), lastLocal: map[string]time.Time{}}, nil
 }
 
 func (p *Proxy) Run() error {
@@ -243,7 +253,14 @@ func (p *Proxy) allowListed(host string) bool {
 }
 
 func (p *Proxy) plaintextAllowed(host string) bool {
-	return p.mode() != "none" && p.allowListed(host)
+	switch p.mode() {
+	case "none":
+		return false
+	case "report":
+		return p.match(host).Access != monitordb.AccessDeny
+	default:
+		return p.allowListed(host)
+	}
 }
 
 func (p *Proxy) connectAllowed(host, port string) bool {
@@ -253,6 +270,8 @@ func (p *Proxy) connectAllowed(host, port string) bool {
 	case "https":
 		m := p.match(host)
 		return m.Access == monitordb.AccessAllow || (port == "443" && m.Access != monitordb.AccessDeny)
+	case "report":
+		return p.match(host).Access != monitordb.AccessDeny
 	default:
 		return p.allowListed(host)
 	}
@@ -284,7 +303,17 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host := r.URL.Hostname()
-	if !p.gate(w, r.Context(), host, r.URL.Host, r.Method, func() bool { return p.plaintextAllowed(host) }) {
+	port := r.URL.Port()
+	if port == "" {
+		port = "80"
+	}
+	rec := p.newRecord(host, port, monitordb.SchemeHTTP, nil)
+	defer rec.finish()
+	if r.Body != nil {
+		r.Body = &countingBody{ReadCloser: r.Body, n: &rec.bytes.up}
+	}
+	w = &countingResponseWriter{ResponseWriter: w, n: &rec.bytes.down}
+	if !p.gate(w, r.Context(), rec, host, r.URL.Host, r.Method, func() bool { return p.plaintextAllowed(host) }) {
 		return
 	}
 	if prov := p.oauthTokenEndpoint(host, r.URL.Path); prov != nil && r.Method == http.MethodPost {
@@ -321,7 +350,9 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 			port = p2
 		}
 	}
-	if !p.gate(w, r.Context(), host, r.Host, "CONNECT", func() bool { return p.connectAllowed(host, port) }) {
+	rec := p.newRecord(host, port, monitordb.SchemeTLS, nil)
+	defer rec.finish()
+	if !p.gate(w, r.Context(), rec, host, r.Host, "CONNECT", func() bool { return p.connectAllowed(host, port) }) {
 		return
 	}
 	hj, ok := w.(http.Hijacker)
@@ -335,6 +366,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer clientConn.Close()
+	clientConn = &countingConn{Conn: clientConn, n: rec.bytes}
 	upstream, err := net.DialTimeout("tcp", r.Host, 15*time.Second)
 	if err != nil {
 		log.Printf("CONNECT %s: upstream dial failed: %v", r.Host, err)
@@ -345,7 +377,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	secrets := p.secretsFor(host)
 	if len(secrets) == 0 && !p.oauthInvolved(host) {
 		log.Printf("CONNECT %s -> allowed (tunnel)", r.Host)
-		p.tunnel(clientConn, clientBuf, upstream)
+		p.tunnel(clientConn, clientBuf, upstream, rec.bytes)
 		return
 	}
 	upstream.Close()
@@ -360,7 +392,7 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	p.intercept(clientConn, clientBuf, host, r.Host, secrets)
 }
 
-func (p *Proxy) tunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, upstream net.Conn) {
+func (p *Proxy) tunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, upstream net.Conn, bytes *byteCounter) {
 	defer upstream.Close()
 	if _, err := clientBuf.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
 		return
@@ -370,7 +402,7 @@ func (p *Proxy) tunnel(clientConn net.Conn, clientBuf *bufio.ReadWriter, upstrea
 	}
 	done := make(chan struct{}, 2)
 	go func() {
-		_, _ = io.Copy(upstream, clientBuf)
+		_, _ = io.Copy(upstream, &countingReader{r: clientBuf, n: &bytes.up})
 		done <- struct{}{}
 	}()
 	go func() {

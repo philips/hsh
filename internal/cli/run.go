@@ -63,7 +63,7 @@ func runCommand() *ff.Command {
 	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point, or "+privateWorkspaceDir+" when there is no workspace)")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
 	fs.StringVar(&ro.tasksPath, 0, "tasks", "", "newline-delimited task file (or - for stdin); runs the agent headless")
-	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, or none")
+	fs.StringVar(&ro.networkMode, 0, "network", "", "network policy: https (default), allowlist, report, or none")
 	fs.StringVar(&ro.pull, 0, "pull", "newer", "image pull policy: always, missing, newer (default), or never")
 	fs.BoolVar(&ro.verbose, 0, "verbose", "print progress information to stderr (or set HSH_VERBOSE=1)")
 	fs.BoolVar(&ro.rm, 0, "rm", "temporary session: remove pod and state at exit")
@@ -97,9 +97,9 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		verbose = true
 	}
 	switch ro.networkMode {
-	case "", "https", "allowlist", "none":
+	case "", "https", "allowlist", "report", "none":
 	default:
-		return fmt.Errorf("invalid --network value %q (want https, allowlist, or none)", ro.networkMode)
+		return fmt.Errorf("invalid --network value %q (want https, allowlist, report, or none)", ro.networkMode)
 	}
 	switch ro.pull {
 	case "always", "missing", "newer", "never":
@@ -497,6 +497,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		"--ca-key", "/hsh-session/ca.key",
 		"--proxy-db", "/hsh-proxy-state/"+monitordb.ProxyDBFile,
 		"--monitor-db", "/hsh-session/"+monitordb.MonitorDBFile,
+		"--connection-log", "/hsh-proxy-state/"+monitordb.ConnLogFile,
 		"--oauth-store", "/hsh-proxy-state/oauth-tokens.json",
 		"--attended", "/hsh-session/attended",
 	)

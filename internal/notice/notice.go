@@ -27,7 +27,7 @@ mirrors, proxies, or DNS tricks.
 `
 
 func Enabled(notice bool, mode string) bool {
-	return notice && mode != "none"
+	return notice && mode != "none" && mode != "report"
 }
 
 func SessionDir(sessionDir string) string {
