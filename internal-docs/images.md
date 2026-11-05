@@ -28,11 +28,15 @@ Published to ghcr.io by two workflows:
 | `ghcr.io/<owner>/hsh-muse-code` | Meta Muse Code | `https://dev.meta.ai/install.sh` |
 
 The claude-code image ships `/home/hsh/.claude/settings.json` with
-`{"tui":"fullscreen"}`. Claude Code picks its renderer once at startup, and
+`tui: "fullscreen"` and an `env` block setting `DISABLE_TELEMETRY` and
+`DISABLE_ERROR_REPORTING`. Claude Code picks its renderer once at startup, and
 without the setting a fresh home (every new session) starts with the classic
 main-screen renderer, which has no in-app scrollback; only later launches,
 after remote flags are cached in `~/.claude.json`, would get the fullscreen
-renderer. Users can switch with `/tui`.
+renderer. Users can switch with `/tui`. The two env settings stop the
+usage analytics and the error reports to Datadog; `/feedback` and
+claude.ai plugin downloads keep working, which
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` would turn off.
 
 It also ships `/home/hsh/.claude.json` with `hasCompletedOnboarding`,
 `theme: "auto"`, and `projects["/workspace"].hasTrustDialogAccepted`, so a
@@ -215,8 +219,7 @@ sandbox. `--tasks -` reads the task list from stdin.
 - **vibe** — `hsh://mistral-api-key` (Bearer) to `api.mistral.ai`.
 - **claude-code** — `hsh://anthropic-api-key` (`x-api-key`) to
   `api.anthropic.com`; also allows `claude.ai`,
-  `downloads.claude.ai`, `github.com`,
-  `http-intake.logs.us5.datadoghq.com`, `mcp-proxy.anthropic.com`,
+  `downloads.claude.ai`, `github.com`, `mcp-proxy.anthropic.com`,
   `platform.claude.com`, `raw.githubusercontent.com`, and
   `statsig.anthropic.com`. Names the shipped `anthropic` OAuth provider,
   so a Claude Pro/Max login works over SSH: run `claude auth login`,
