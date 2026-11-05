@@ -239,22 +239,33 @@ come from the user's provider descriptors.
 A deny rule wins in every mode: a denied host is refused even for TLS on
 port 443 in `https` mode.
 
+`hsh run --network MODE` overrides the mode from the command line.
+In `https` mode a compromised agent can exfiltrate data to any TLS
+endpoint; for untrusted code use `--network allowlist`.
+
 ## Session rules
 
 Each session's decisions are rules in its `monitor.db`, written by the host
 and read by the proxy (it rereads them within ~0.2 s). A rule has a host
-pattern (`example.com` or `*.example.com`), a source, and an access:
+[pattern](#allowlist-matching), a source, an access (`allow` or `deny`),
+and a log level (`record` or `review`); a rule sets access, log, or both:
 
 | source | written by |
 | --- | --- |
 | `config` | session creation, one `allow` rule per `network.allow` entry |
 | `user` | the monitor, the inline review screen, `hsh proxy allow` and `hsh proxy deny`; one rule per pattern, the latest decision replaces the earlier one |
+| `policy:NAME` | `hsh policy apply NAME` ([network policies](#network-policies)) |
 
-- A host any `deny` rule matches is denied; otherwise a host any `allow`
-  rule matches is allowed; otherwise the network mode decides.
-- A denial the mode decides is queued for review and can be held. A denial
-  a `deny` rule decides is recorded but not queued or held, and its 403 says
-  the user decided and the agent should not ask again.
+- A host any `deny` rule matches is denied, whatever the source; otherwise
+  a host any `allow` rule matches is allowed; otherwise the network mode
+  decides.
+- A denial the mode decides is queued for review (`log: review`) and can
+  be held. A denial a `deny` rule decides is recorded but not queued or
+  held, and its 403 says the user decided and the agent should not ask
+  again. A `log: record` rule quiets a host the same way without denying
+  it: in `allowlist` mode a "quiet telemetry" policy only needs
+  `{"hosts": ["*.sentry.io"], "log": "record"}`. When several `log` rules
+  match, `record` wins.
 - Resuming a session copies nothing: the rules outlive later edits of the
   config copy's `network.allow`.
 - A proxy that cannot read the rules logs it and uses no rules, so only the
@@ -262,13 +273,53 @@ pattern (`example.com` or `*.example.com`), a source, and an access:
 - The standalone proxy (`hsh-proxy` without `--monitor-db`) uses the config's
   `network.allow` as its allow rules.
 
-`hsh proxy deny --session ID URL|PATTERN` denies a host, or every host under
-`*.domain`. Approving it again (`hsh proxy allow`, or enter on the row in the
-monitor's denied view) replaces the deny.
+`hsh proxy deny --session ID URL|PATTERN` denies a host, or every host a
+pattern matches. Approving it again (`hsh proxy allow`, or enter on the row
+in the monitor's denied view) replaces your deny. A deny from a policy
+cannot be approved away; the monitor says `denied by policy NAME; hsh policy
+unapply NAME to undo`. `hsh proxy rules [--session ID]` lists a session's
+rules with their source.
 
-`hsh run --network MODE` overrides the mode from the command line.
-In `https` mode a compromised agent can exfiltrate data to any TLS
-endpoint; for untrusted code use `--network allowlist`.
+## Network policies
+
+A network policy is a reusable set of rules in
+`$XDG_CONFIG_HOME/hsh/policy/network/NAME.json` (default
+`~/.config/hsh/policy/network/`). The name is the file name without
+`.json`: lowercase letters, digits, and `-`, at most 63 characters.
+
+```json
+{
+  "version": 1,
+  "description": "Go toolchain and module proxy",
+  "rules": [
+    {"hosts": ["go.dev", "proxy.golang.org", "sum.golang.org", "dl.google.com"], "access": "allow"},
+    {"hosts": ["*.sentry.io"], "log": "record"}
+  ]
+}
+```
+
+- `version` is required (1). Unknown fields are an error, as in the config.
+- `description` is optional. `recorded` is optional and describes how the
+  policy was recorded (`image`, `command`, `runs`, `at`, `hsh`).
+- `rules` is a non-empty list; each rule has a non-empty `hosts` list of
+  [patterns](#allowlist-matching) and at least one of `access`
+  (`allow`/`deny`) and `log` (`record`/`review`).
+
+```
+hsh policy ls                               # name, rule count, description
+hsh policy show NAME                        # the policy, pretty-printed
+hsh policy add [--force] NAME FILE|-        # validate and store; --force replaces
+hsh policy rm NAME                          # remove the file
+hsh policy apply [--session ID] NAME        # copy its rules into a session
+hsh policy unapply [--session ID] NAME      # remove them from a session
+```
+
+Applying copies the rules: editing or removing the file later does not
+change sessions that applied it, and applying again replaces the session's
+copy. A host listed in several rules of one policy becomes one session
+rule (`deny` over `allow`, `record` over `review`). `--session` defaults to
+this workspace's attached or only session. Configs and image labels cannot
+name policies; there are no built-in policies.
 
 ## Network notice
 
@@ -606,12 +657,15 @@ hsh proxy denied [--session ID] [--watch]   # list the review queue
 hsh proxy denied [--session ID] --all       # every recorded host and its state
 hsh proxy allow --all --session ID          # allow a session's pending hosts
 hsh proxy allow --session ID https://h      # allow one host
-hsh proxy deny --session ID https://h       # deny one host (or *.domain)
+hsh proxy deny --session ID https://h       # deny one host (or a pattern)
+hsh proxy rules --session ID                # the session's rules and their source
+hsh policy apply --session ID NAME          # apply a network policy
 hsh monitor                                 # command palette (TUI)
 ```
 
 `hsh proxy denied --all` shows each host's state: `pending`, `allowed`,
-or `denied by you`. `hsh proxy allow` on a host a deny rule still
+`denied by you`, `denied by policy NAME`, or `quiet` (only a `log: record`
+rule matches). `hsh proxy allow` on a host a deny rule still
 matches says it stays denied.
 
 The allow rules also gate DNS in `allowlist` mode: the workspace resolves

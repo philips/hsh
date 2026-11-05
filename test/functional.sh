@@ -344,6 +344,43 @@ CMDS
 grep -q '^curl-rc=0$' "$TMP/deny2.out" || fail "approving a denied host did not undo the deny: $(cat "$TMP/deny2.out")"
 pass "approving a host denied by you allows it again"
 
+echo "== step 3c: network policies — add, apply (a policy deny beats your approval), unapply"
+cat >"$TMP/corp-policy.json" <<'JSON'
+{
+  "version": 1,
+  "description": "functional test policy",
+  "rules": [
+    {"hosts": ["api.mistral.ai"], "access": "deny"},
+    {"hosts": ["*.policy-quiet.example.com"], "log": "record"}
+  ]
+}
+JSON
+OUT="$("$HSH" policy add corp "$TMP/corp-policy.json")" || fail "policy add failed: $OUT"
+echo "$OUT" | grep -q "deny .*api.mistral.ai" || fail "policy add did not print the rules it added: $OUT"
+[ -f "$XDG_CONFIG_HOME/hsh/policy/network/corp.json" ] || fail "policy add did not write the policy file"
+"$HSH" policy ls | grep -Eq '^corp +2 +functional test policy$' || fail "policy ls: $("$HSH" policy ls)"
+printf '%s\n' '{"version": 1, "rules": [{"hosts": ["*.com"], "access": "allow"}]}' >"$TMP/bad-policy.json"
+"$HSH" policy add bad "$TMP/bad-policy.json" >"$TMP/bad-policy.out" 2>&1 && fail "policy add accepted *.com"
+grep -q 'invalid host pattern "\*.com"' "$TMP/bad-policy.out" || fail "policy add did not explain: $(cat "$TMP/bad-policy.out")"
+OUT="$("$HSH" policy apply --session "$DB_SESSION" corp)" || fail "policy apply failed: $OUT"
+echo "$OUT" | grep -q "applied policy corp to session $DB_SESSION: 2 host rule(s)" || fail "policy apply: $OUT"
+"$HSH" proxy rules --session "$DB_SESSION" | grep -Eq '^api\.mistral\.ai +deny +- +policy:corp' || fail "proxy rules: $("$HSH" proxy rules --session "$DB_SESSION")"
+"$HSH" proxy denied --all --session "$DB_SESSION" | grep -Eq '^https://api\.mistral\.ai +denied by policy corp' || fail "the policy deny does not beat the approval: $("$HSH" proxy denied --all --session "$DB_SESSION")"
+"$HSH" resume "$DB_SESSION" >"$TMP/policy1.out" 2>&1 <<'CMDS' || true
+curl -sS --max-time 8 http://api.mistral.ai/ 2>&1
+CMDS
+grep -q "denied by the user's policy for this session" "$TMP/policy1.out" || fail "a policy deny did not block the host: $(cat "$TMP/policy1.out")"
+"$HSH" policy rm corp >/dev/null || fail "policy rm failed"
+"$HSH" proxy rules --session "$DB_SESSION" | grep -q "policy:corp" || fail "removing the policy file changed the session"
+OUT="$("$HSH" policy unapply --session "$DB_SESSION" corp)" || fail "policy unapply failed: $OUT"
+[ "$OUT" = "removed 2 rule(s) of policy corp from session $DB_SESSION" ] || fail "policy unapply: $OUT"
+"$HSH" resume "$DB_SESSION" >"$TMP/policy2.out" 2>&1 <<'CMDS' || true
+curl -sS -o /dev/null -w 'code=%{http_code}\n' https://api.mistral.ai
+echo "curl-rc=$?"
+CMDS
+grep -q '^curl-rc=0$' "$TMP/policy2.out" || fail "unapplying the policy did not restore the approval: $(cat "$TMP/policy2.out")"
+pass "a policy is validated and stored, applying copies its rules (a policy deny beats your approval, removing the file changes nothing), unapplying removes them"
+
 echo "== step 4: standalone proxy — allowlist and secret injection"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -keyout "$TMP/ca.key" -out "$TMP/ca.crt" -days 1 -nodes -subj "/CN=hsh-test" >/dev/null 2>&1
 cat >"$TMP/proxy-config.hsh" <<'EOF'

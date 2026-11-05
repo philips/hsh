@@ -394,7 +394,7 @@ CREATE TABLE IF NOT EXISTS denied (       -- proxy.db
 );
 CREATE TABLE IF NOT EXISTS rules (        -- monitor.db, schema version 2
     pattern    TEXT NOT NULL,               -- a host pattern (config.md#allowlist-matching)
-    source     TEXT NOT NULL,               -- config | user
+    source     TEXT NOT NULL,               -- config | user | policy:<name>
     access     TEXT,                        -- allow | deny | NULL
     log        TEXT,                        -- record | review | NULL
     decided_at TEXT NOT NULL,
@@ -407,10 +407,15 @@ CREATE TABLE IF NOT EXISTS rules (        -- monitor.db, schema version 2
 `hsh resume` inserts nothing (the file exists), so the proxy never reads
 `network.allow` from the config copy. `user` rules are the decisions made in
 the monitor, the inline review, and `hsh proxy allow`/`deny`: one row per
-pattern, so the latest decision replaces the previous one. Evaluation
+pattern, so the latest decision replaces the previous one. `policy:<name>`
+rules are copied from a policy file by `hsh policy apply` (which replaces
+the rows of that source in one transaction; `internal/policy` parses and
+validates the file and merges a host listed in several of its rules into
+one row) and removed by `hsh policy unapply`. Evaluation
 (`monitordb.Evaluate`, matching with `config.HostMatches`; patterns are
 validated and stored in canonical form by `config.CanonicalPattern`): any
-matching `deny` wins, then any matching `allow`,
+matching `deny` wins (a policy's deny is reported over a user's), then any
+matching `allow`,
 otherwise the mode decides; a matching `log: record` rule quiets a denial
 (recorded, not queued or held). A proxy started without `--monitor-db` (the
 standalone `hsh-proxy`) uses the config's `network.allow` as its allow rules.
@@ -501,6 +506,8 @@ hsh proxy denied [--session ID] [--workspace PATH] --all       every recorded ho
 hsh proxy allow --all --session ID [--watch]                   allow every pending host
 hsh proxy allow --session ID https://example.com [--watch]    allow one host
 hsh proxy deny --session ID https://example.com|*.domain       deny a host
+hsh proxy rules [--session ID]                                 list the session's rules
+hsh policy ls|show|add|rm|apply|unapply                        network policy files
 hsh monitor [--session ID] [--workspace PATH] [--all]         command palette (TUI)
 ```
 

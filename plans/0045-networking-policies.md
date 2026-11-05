@@ -1,6 +1,6 @@
 # Network policies
 
-> **Status:** draft. Phases 1 and 2 implemented.
+> **Status:** draft. Phases 1, 2 and 3 implemented.
 
 ## Goal
 

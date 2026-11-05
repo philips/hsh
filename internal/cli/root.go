@@ -79,6 +79,7 @@ func Root() *ff.Command {
 			renameCommand(),
 			secretCommand(),
 			proxyCommand(),
+			policyCommand(),
 			monitorCommand(),
 			oauthCommand(),
 			sshCommand(),

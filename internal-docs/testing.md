@@ -41,6 +41,12 @@ proxy, the monitor database, and the example image:
   with the session switched to `https` mode a TLS request to the denied host
   on 443 gets a 403 whose body says the user decided and not to ask again;
   `hsh proxy allow` approves it again and the request succeeds
+- **step 3c**: `hsh policy add` validates (an invalid pattern is refused
+  with the reason) and stores a policy, `hsh policy ls` lists it, `hsh
+  policy apply` copies its rules into the session where its deny beats your
+  approval (shown by `hsh proxy rules` and `hsh proxy denied --all`, and a
+  request gets the user-decided 403), `hsh policy rm` leaves the session's
+  copy alone, and `hsh policy unapply` restores the approval
 - **step 4**: a standalone `hsh proxy` forwards to an allowlisted host,
   injects the configured secret header (observed in the dummy endpoint's
   request log), and denies a non-allowlisted host with 403
@@ -263,7 +269,12 @@ change without a `Version` bump (update it with `go test ./internal/config
 reload with a newer config keeping the old policy, session rules using the
 pattern grammar for requests and DNS, and a standalone proxy using the
 config's `network.allow`; `internal/cli` covers `hsh proxy deny`/`allow`/
-`denied --all` writing and showing session rules; `internal/cli`
+`denied --all` writing and showing session rules, and the `hsh policy`
+commands (add, `--force`, ls, show, apply and reapply, a policy deny beating
+a user allow, unapply, rm, refusing bad names, files, and sessions);
+`internal/policy` covers parsing (version rules, unknown fields, empty or
+invalid rules, the `recorded` block), names, merging a host's rules, and
+storing, listing, loading, and removing files; `internal/cli`
 covers `secret add`/`allow`/`disallow`/`edit`/`rm`/`ls` behavior via
 `--value-stdin` and a scripted `$VISUAL`, and the launch prompt for
 unapproved hosts and its warning text.

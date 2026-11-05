@@ -140,26 +140,79 @@ func (s *Store) Deny(session string, patterns []string) error {
 	return s.setUser(session, patterns, AccessDeny)
 }
 
+func PolicySource(name string) string { return policyPrefix + name }
+
+func (s *Store) openSession(session string) (*sql.DB, error) {
+	if !validSession(session) {
+		return nil, fmt.Errorf("invalid session id %q", session)
+	}
+	dir := s.sessionDir(session)
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("session %s has no state directory at %s", session, dir)
+	}
+	return openWritable(MonitorDBPath(dir), MonitorDBFile, MonitorSchemaV, monitorSchema)
+}
+
 func (s *Store) setUser(session string, patterns []string, access string) error {
 	if len(patterns) == 0 {
 		return nil
 	}
-	if !validSession(session) {
-		return fmt.Errorf("invalid session id %q", session)
-	}
 	if _, err := canonicalPatterns(patterns); err != nil {
 		return err
 	}
-	dir := s.sessionDir(session)
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return fmt.Errorf("session %s has no state directory at %s", session, dir)
-	}
-	db, err := openWritable(MonitorDBPath(dir), MonitorDBFile, MonitorSchemaV, monitorSchema)
+	db, err := s.openSession(session)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	return insertRules(db, patterns, SourceUser, access)
+}
+
+func (s *Store) ApplyPolicy(session, name string, rules []Rule) error {
+	source := PolicySource(name)
+	for _, r := range rules {
+		if r.Source != source {
+			return fmt.Errorf("rule for %s has source %q, not %q", r.Pattern, r.Source, source)
+		}
+		if _, err := config.CanonicalPattern(r.Pattern); err != nil {
+			return err
+		}
+	}
+	db, err := s.openSession(session)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM rules WHERE source = ?`, source); err != nil {
+		return err
+	}
+	t := now()
+	for _, r := range rules {
+		p, _ := config.CanonicalPattern(r.Pattern)
+		if _, err := tx.Exec(`INSERT INTO rules (pattern, source, access, log, decided_at) VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?)`, p, source, r.Access, r.Log, t); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) UnapplyPolicy(session, name string) (int, error) {
+	db, err := s.openSession(session)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+	res, err := db.Exec(`DELETE FROM rules WHERE source = ?`, PolicySource(name))
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func canonicalPatterns(patterns []string) ([]string, error) {
