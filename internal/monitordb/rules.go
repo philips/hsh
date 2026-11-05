@@ -147,6 +147,9 @@ func (s *Store) setUser(session string, patterns []string, access string) error 
 	if !validSession(session) {
 		return fmt.Errorf("invalid session id %q", session)
 	}
+	if _, err := canonicalPatterns(patterns); err != nil {
+		return err
+	}
 	dir := s.sessionDir(session)
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("session %s has no state directory at %s", session, dir)
@@ -159,7 +162,23 @@ func (s *Store) setUser(session string, patterns []string, access string) error 
 	return insertRules(db, patterns, SourceUser, access)
 }
 
+func canonicalPatterns(patterns []string) ([]string, error) {
+	out := make([]string, 0, len(patterns))
+	for _, p := range patterns {
+		c, err := config.CanonicalPattern(p)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
 func insertRules(db *sql.DB, patterns []string, source, access string) error {
+	patterns, err := canonicalPatterns(patterns)
+	if err != nil {
+		return err
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err

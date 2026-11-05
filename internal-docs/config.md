@@ -339,10 +339,35 @@ fails with the same 403.
 
 ## Allowlist matching
 
-- exact hostname match, case-insensitive, trailing dot ignored
-- `*.example.com` matches any subdomain (one or more labels)
-- IP addresses match literally
+The same host patterns are used by `network.allow`, the session's
+[rules](#session-rules), DNS gating, the monitor's "add new allowlist/deny
+item", and `hsh proxy allow`/`deny` (grammar after
+[smokescreen](https://github.com/stripe/smokescreen)). A pattern is a
+hostname in Punycode with at most one `*`; matching is case-insensitive and
+ignores a trailing dot:
+
+- `example.com` matches that host only
+- a leading `*.` matches one or more labels: `*.example.com` matches
+  `api.example.com` and `a.b.example.com`, not `example.com`
+- a `*` label elsewhere matches exactly one label:
+  `access-analyzer.*.amazonaws.com` matches
+  `access-analyzer.us-west-2.amazonaws.com`, not
+  `access-analyzer.a.b.amazonaws.com`
+- a `*` after a literal prefix inside a label matches one or more characters
+  of that label: `api*.example.com` matches `api-east.example.com`, not
+  `api.example.com` or `a.api-east.example.com`; `web*-canary.example.com`
+  also works
+- the wildcard label needs at least two literal labels after it, so
+  `*.com`, `login.*.com`, and `example.*` are rejected (patterns under a
+  public suffix such as `foo*.github.io` are accepted)
+- IP addresses (IPv4, IPv6 with or without brackets) match exactly
+- `*example.com`, `*-canary.example.com`, two wildcards, and non-ASCII names
+  (`éxämple.com`; write `xn--...`) are rejected
 - the port is not part of matching; any port on an allowed host is allowed
+
+An invalid `network.allow` entry is a config load error that names the
+entry. Secret hosts keep their own, narrower syntax (an exact name or `*.`;
+[host binding](#host-binding)).
 
 ## Hot reload
 

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
+
 	"hsh/internal/config"
 )
 
@@ -94,4 +96,24 @@ func TestStartupRefusesAnUnreadableConfig(t *testing.T) {
 			t.Fatalf("%s: reload accepted the config", name)
 		}
 	}
+}
+
+func TestSessionRulesUseTheHostPatternGrammar(t *testing.T) {
+	e := startHoldProxy(t, "allowlist", "off", false)
+	e.allow("access.*.svc.test", "api*.svc.test")
+	waitFor(t, "the rules to load", func() bool { return e.proxy.allowListed("access.eu.svc.test") })
+	for host, want := range map[string]bool{
+		"access.eu.svc.test":  true,
+		"access.a.b.svc.test": false,
+		"api-east.svc.test":   true,
+		"api.svc.test":        false,
+		"x.api-east.svc.test": false,
+		"ACCESS.EU.svc.test.": true,
+	} {
+		if got := e.proxy.allowListed(host); got != want {
+			t.Errorf("%s: %v want %v", host, got, want)
+		}
+	}
+	addr := startDNS(t, e)
+	e.assertRefusedQuietly(addr, "api.svc.test", dns.TypeA)
 }

@@ -393,7 +393,7 @@ CREATE TABLE IF NOT EXISTS denied (       -- proxy.db
     holding    INTEGER NOT NULL DEFAULT 0   -- requests currently held
 );
 CREATE TABLE IF NOT EXISTS rules (        -- monitor.db, schema version 2
-    pattern    TEXT NOT NULL,               -- example.com or *.example.com
+    pattern    TEXT NOT NULL,               -- a host pattern (config.md#allowlist-matching)
     source     TEXT NOT NULL,               -- config | user
     access     TEXT,                        -- allow | deny | NULL
     log        TEXT,                        -- record | review | NULL
@@ -408,7 +408,9 @@ CREATE TABLE IF NOT EXISTS rules (        -- monitor.db, schema version 2
 `network.allow` from the config copy. `user` rules are the decisions made in
 the monitor, the inline review, and `hsh proxy allow`/`deny`: one row per
 pattern, so the latest decision replaces the previous one. Evaluation
-(`monitordb.Evaluate`): any matching `deny` wins, then any matching `allow`,
+(`monitordb.Evaluate`, matching with `config.HostMatches`; patterns are
+validated and stored in canonical form by `config.CanonicalPattern`): any
+matching `deny` wins, then any matching `allow`,
 otherwise the mode decides; a matching `log: record` rule quiets a denial
 (recorded, not queued or held). A proxy started without `--monitor-db` (the
 standalone `hsh-proxy`) uses the config's `network.allow` as its allow rules.

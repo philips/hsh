@@ -137,12 +137,12 @@ func TestTheLatestUserDecisionWins(t *testing.T) {
 func TestInitSessionCopiesTheAllowlistOnce(t *testing.T) {
 	e := newEnv(t)
 	e.record("s1", "a.example")
-	e.record("s1", "b.test")
-	if err := InitSession(e.dir("s1"), []string{"a.example", "*.test"}); err != nil {
+	e.record("s1", "x.b.test")
+	if err := InitSession(e.dir("s1"), []string{"A.example.", "*.b.test"}); err != nil {
 		t.Fatal(err)
 	}
 	rules, _ := e.store().Rules("s1")
-	if len(rules) != 2 || rules[0].Source != SourceConfig || rules[0].Access != AccessAllow {
+	if len(rules) != 2 || rules[0].Source != SourceConfig || rules[0].Access != AccessAllow || rules[0].Pattern != "a.example" {
 		t.Fatalf("rules = %+v", rules)
 	}
 	if pending, _ := e.store().Pending(Filter{}); len(pending) != 0 {
@@ -160,6 +160,26 @@ func TestInitSessionCopiesTheAllowlistOnce(t *testing.T) {
 	}
 	if denied, _ := e.store().Denied(Filter{}); hosts(denied) != "a.example@s1" {
 		t.Fatalf("a user deny beats the config allow: %s", hosts(denied))
+	}
+}
+
+func TestRulesAreValidated(t *testing.T) {
+	e := newEnv(t)
+	e.record("s1", "a.example")
+	for _, bad := range []string{"*.com", "login.*.com", "a b.example"} {
+		if err := e.store().Deny("s1", []string{bad}); err == nil {
+			t.Errorf("%q was stored", bad)
+		}
+	}
+	e.session("s2", "")
+	if err := InitSession(e.dir("s2"), []string{"ok.example", "*.com"}); err == nil || !strings.Contains(err.Error(), "*.com") {
+		t.Error("InitSession stored an invalid pattern")
+	}
+	if err := e.store().Allow("s1", []string{"API*.Example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if rules, _ := e.store().Rules("s1"); len(rules) != 1 || rules[0].Pattern != "api*.example.com" {
+		t.Fatalf("rules = %+v", rules)
 	}
 }
 

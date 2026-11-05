@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -39,6 +40,9 @@ func proxyCommand() *ff.Command {
 }
 
 func hostURL(h string) string {
+	if strings.Contains(h, "*") {
+		return h
+	}
 	return "https://" + h
 }
 
@@ -250,7 +254,7 @@ func proxyDenyCommand() *ff.Command {
 func proxyAllowCommand() *ff.Command {
 	var session string
 	var all, watch bool
-	return newCommand("allow", "hsh proxy allow [FLAGS] [--all | URL]", "allow a session's denied hosts (TOFU)", func(fs *ff.FlagSet) {
+	return newCommand("allow", "hsh proxy allow [FLAGS] [--all | URL|PATTERN]", "allow a session's denied hosts (TOFU)", func(fs *ff.FlagSet) {
 		fs.StringVar(&session, 0, "session", "", "the session the hosts are allowed in")
 		fs.BoolVar(&all, 0, "all", "allow every host currently denied for the session")
 		fs.BoolVar(&watch, 0, "watch", "continuously approve new denied requests")
@@ -276,9 +280,9 @@ func proxyAllowCommand() *ff.Command {
 			defer watchSessions(monitordb.Filter{Session: session})()
 		}
 		if !all {
-			host := config.HostFromRef(args[0])
-			if host == "" {
-				return fmt.Errorf("could not extract a host from %q", args[0])
+			host, err := config.HostPattern(args[0])
+			if err != nil {
+				return err
 			}
 			if err := allowHosts(db, session, []string{host}); err != nil {
 				return err
@@ -287,9 +291,9 @@ func proxyAllowCommand() *ff.Command {
 				return nil
 			}
 		}
-		var onlyHost string
+		var only string
 		if !all {
-			onlyHost = config.HostFromRef(args[0])
+			only, _ = config.HostPattern(args[0])
 		}
 		approved := map[string]bool{}
 		approve := func() error {
@@ -299,7 +303,7 @@ func proxyAllowCommand() *ff.Command {
 			}
 			var fresh []string
 			for _, r := range pending {
-				if onlyHost != "" && r.Host != onlyHost {
+				if only != "" && !config.HostMatches([]string{only}, r.Host) {
 					continue
 				}
 				if !approved[r.Host] {

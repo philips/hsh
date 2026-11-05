@@ -820,7 +820,7 @@ func (m Model) View() string {
 			"",
 			m.host.View(),
 			"",
-			noteStyle.Render("example.com matches that host; *.example.com matches every subdomain; a URL is reduced to its host"),
+			noteStyle.Render("example.com matches that host; *.example.com every subdomain; api*.example.com or a.*.example.com one label; a URL is reduced to its host"),
 			m.statusView(),
 			helpStyle.Render("  enter add • esc back"),
 		}

@@ -124,6 +124,15 @@ func (n Network) ValidateApprovalWait() error {
 	return err
 }
 
+func (n Network) ValidateAllow() error {
+	for _, h := range n.Allow {
+		if _, err := CanonicalPattern(h); err != nil {
+			return fmt.Errorf("network.allow: %w", err)
+		}
+	}
+	return nil
+}
+
 func (n Network) ValidateMode() error {
 	switch n.Mode {
 	case "", "https", "allowlist", "none":
@@ -399,6 +408,9 @@ func decode(data []byte, source string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateApprovalWait(); err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
+	}
+	if err := cfg.Network.ValidateAllow(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.validateSecretRefs(); err != nil {

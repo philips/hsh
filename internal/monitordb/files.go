@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"hsh/internal/config"
 	"hsh/internal/dbschema"
 )
 
@@ -44,10 +45,9 @@ CREATE TABLE IF NOT EXISTS rules (
 );
 `
 
-var hostPattern = regexp.MustCompile(`^[A-Za-z0-9._\-:]{1,253}$`)
 var targetPattern = regexp.MustCompile(`^[A-Za-z0-9._\-:\[\]]{1,262}$`)
 
-func ValidHost(host string) bool { return hostPattern.MatchString(host) }
+func ValidHost(host string) bool { return config.ValidHostname(host) }
 
 func validTarget(target string) bool { return targetPattern.MatchString(target) }
 

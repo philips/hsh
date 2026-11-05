@@ -1,6 +1,6 @@
 # Network policies
 
-> **Status:** draft. Phase 1 implemented.
+> **Status:** draft. Phases 1 and 2 implemented.
 
 ## Goal
 
@@ -249,7 +249,10 @@ trailing dot removed.
 - The wildcard label needs at least two literal labels after it. This rejects
   `login.*.com` and `example.*` without the public suffix list; patterns
   under a public suffix such as `foo*.github.io` are accepted.
-- IP literals (IPv4, or IPv6 in brackets or bare) are exact only.
+- IP literals (IPv4, or IPv6 in brackets or bare) are exact only, and a
+  wildcard pattern cannot end in a numeric label (`*.0.0.1`).
+- Patterns are stored in canonical form (`config.CanonicalPattern`):
+  lowercase, no trailing dot, IPv6 without brackets.
 
 | pattern                           | valid |
 | --------------------------------- | ----- |

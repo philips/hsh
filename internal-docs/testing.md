@@ -251,12 +251,19 @@ store getting the column); `internal/config` covers secret reference
 parsing (`env://`, `hsh://`, bare, unknown schemes), environment references
 refused in labels and files, resolution through a fake store, the host
 binding (exact hosts, wildcards, narrowing, a store without approvals
-injecting nothing), host normalization, the version rules (missing,
+injecting nothing), host normalization, the host pattern grammar
+(`host_test.go`: the valid/invalid table, matching for each wildcard form,
+IP literals, canonical form, concrete hostnames for recorded denials, the
+CLI/palette input parser, and an invalid `network.allow` entry failing the
+load), the version rules (missing,
 newer, older, unknown fields, editors refusing unreadable versions), and a
 schema test (`testdata/schema-v<N>.txt`) that fails when the config fields
 change without a `Version` bump (update it with `go test ./internal/config
 -run TestSchemaMatchesVersion -update-schema`); `internal/proxy` covers a
-reload with a newer config keeping the old policy; `internal/cli`
+reload with a newer config keeping the old policy, session rules using the
+pattern grammar for requests and DNS, and a standalone proxy using the
+config's `network.allow`; `internal/cli` covers `hsh proxy deny`/`allow`/
+`denied --all` writing and showing session rules; `internal/cli`
 covers `secret add`/`allow`/`disallow`/`edit`/`rm`/`ls` behavior via
 `--value-stdin` and a scripted `$VISUAL`, and the launch prompt for
 unapproved hosts and its warning text.
