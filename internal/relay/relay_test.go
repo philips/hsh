@@ -261,7 +261,7 @@ func (h *harness) emulatorLines() []string {
 func withoutStatus(lines []string) []string {
 	var out []string
 	for _, l := range lines {
-		if strings.Contains(l, " hsh |") {
+		if strings.Contains(l, " hsh ") {
 			continue
 		}
 		out = append(out, l)

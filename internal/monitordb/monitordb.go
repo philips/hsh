@@ -3,6 +3,7 @@ package monitordb
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+
+	"hsh/internal/config"
 	"hsh/internal/state"
 )
 
@@ -160,6 +163,22 @@ func readDecisions(sessionDir string) (map[string]decision, error) {
 	return out, rows.Err()
 }
 
+func readAllowList(sessionDir string) []string {
+	data, err := os.ReadFile(filepath.Join(sessionDir, "config.json"))
+	if err != nil {
+		return nil
+	}
+	var doc struct {
+		Network struct {
+			Allow []string `json:"allow"`
+		} `json:"network"`
+	}
+	if json.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	return doc.Network.Allow
+}
+
 func (s *Store) rows(f Filter) ([]DeniedHost, error) {
 	var out []DeniedHost
 	for _, id := range s.sessions(f) {
@@ -176,6 +195,7 @@ func (s *Store) rows(f Filter) ([]DeniedHost, error) {
 		if err != nil {
 			return nil, fmt.Errorf("session %s: %w", id, err)
 		}
+		allow := readAllowList(dir)
 		for _, d := range den {
 			if !ValidHost(d.host) {
 				continue
@@ -188,11 +208,13 @@ func (s *Store) rows(f Filter) ([]DeniedHost, error) {
 				Host: d.host, Session: id, Workspace: ws, Target: target,
 				Count: d.count, FirstSeen: d.firstSeen, LastSeen: d.lastSeen, Holding: d.holding,
 			}
-			if c, ok := dec[d.host]; ok {
+			if config.HostMatches(allow, d.host) {
 				h.Allowed = true
+				h.Holding = 0
+			}
+			if c, ok := dec[d.host]; ok {
 				h.AllowedAt = c.at
 				h.Ignored = c.ignored
-				h.Holding = 0
 			}
 			out = append(out, h)
 		}
@@ -207,7 +229,7 @@ func (s *Store) Pending(f Filter) ([]DeniedHost, error) {
 	}
 	var out []DeniedHost
 	for _, r := range rows {
-		if !r.Allowed {
+		if !r.Allowed && !r.Ignored {
 			out = append(out, r)
 		}
 	}

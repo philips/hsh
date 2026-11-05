@@ -86,6 +86,8 @@ func Root() *ff.Command {
 			lsCommand(),
 			rmCommand(),
 			detachCommand(),
+			suspendCommand(),
+			settingsCommand(),
 			versionCommand(),
 			updateCommand(),
 			wipeCommand(),

@@ -28,6 +28,8 @@ type holdEnv struct {
 	store    *monitordb.Store
 }
 
+var holdTestWaitDefault time.Duration
+
 func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 	t.Helper()
 	root := t.TempDir()
@@ -63,6 +65,7 @@ func startHoldProxy(t *testing.T, mode, wait string, attended bool) *holdEnv {
 		CACertPath: filepath.Join(dir, "ca.crt"), CAKeyPath: filepath.Join(dir, "ca.key"),
 		ProxyDB: monitordb.ProxyDBPath(dir), MonitorDB: monitordb.MonitorDBPath(dir),
 		OAuthStore: filepath.Join(dir, "proxy", "tokens.json"), AttendedPath: e.attended,
+		ApprovalWaitDefault: holdTestWaitDefault,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +180,27 @@ func (e *holdEnv) ignore(host string) {
 }
 
 func (e *holdEnv) activeHolds() int64 { return e.proxy.holds.active.Load() }
+
+func TestApprovalWaitDefaultHoldsWhenTheConfigIsSilent(t *testing.T) {
+	old := holdTestWaitDefault
+	holdTestWaitDefault = 30 * time.Second
+	t.Cleanup(func() { holdTestWaitDefault = old })
+	e := startHoldProxy(t, "allowlist", "", true)
+	up := upstreamListener(t)
+	host, _, _ := net.SplitHostPort(up)
+	req := e.send(connectTo(up))
+	if line, done := req.within(t, 700*time.Millisecond); done {
+		t.Fatalf("the request was answered while the default should hold it: %q", line)
+	}
+	if e.activeHolds() != 1 {
+		t.Fatalf("active holds = %d", e.activeHolds())
+	}
+	e.allow(host)
+	line, done := req.within(t, 4*time.Second)
+	if !done || !strings.Contains(line, "200") {
+		t.Fatalf("the approved request did not go through: %q (answered=%v)", line, done)
+	}
+}
 
 func TestHeldConnectIsReleasedByAnApproval(t *testing.T) {
 	e := startHoldProxy(t, "allowlist", "10s", true)

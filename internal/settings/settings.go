@@ -10,7 +10,9 @@ import (
 )
 
 type Settings struct {
-	MonitorKey string `json:"monitor_key,omitempty"`
+	MonitorKey   string `json:"monitor_key,omitempty"`
+	ApprovalWait string `json:"approval_wait,omitempty"`
+	FreezeDelay  string `json:"freeze_delay,omitempty"`
 }
 
 func Dir() string {

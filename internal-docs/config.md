@@ -77,7 +77,7 @@ bump.
 | `mounts` | `[".:/workspace"]` | list of `src:dst[:opts]` bind mounts (podman volume syntax); relative sources resolve against `WORKSPACE-DIR`, and none apply without one ([sessions without a workspace](#sessions-without-a-workspace)) |
 | `secrets` | `{}` | map of secret name -> secret definition (below) |
 | `network.mode` | `https` | network policy: `https` (TLS to any host on 443), `allowlist` (only `network.allow`, any port), `none` (no egress) |
-| `network.approval_wait` | `off` | opt-in: how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)) |
+| `network.approval_wait` | *(unset)* | how long a denied request is held for the user's approval before it fails (for example `"30s"`, at most `5m`); `off` or `0s` fails it at once (see [holding denied requests](#holding-denied-requests)). Unset means the global `approval_wait` setting, then the builtin default `30s` |
 | `network.notice` | `true` | tell the agent about the network restrictions ([network notice](#network-notice)); `false` disables it |
 | `network.allow` | `[]` | egress allowlist; in `https` mode it is an overlay (plaintext and non-443 ports), in `allowlist` mode it is the whole policy |
 | `oauth` | `{}` | `oauth.providers`: OAuth provider descriptors to load by name; `oauth.api_hosts`: optional per-provider subset of their API hosts ([sandboxed OAuth logins](oauth.md)) |
@@ -281,9 +281,10 @@ By default a denied request fails at once with a `403 Forbidden` whose message
 tells the agent that the block is on purpose, that you have been notified, and
 to tell you which host it needs and why instead of looking for workarounds.
 
-If you would rather the request wait for you, set `network.approval_wait` (for
-example `"30s"`, at most `5m`). Then a request the policy would deny (a CONNECT,
-or a plaintext HTTP request) is *held* for
+Holding is on by default (`30s`, from the global `approval_wait` setting or
+the builtin default; set `network.approval_wait` per session to change it —
+for example `"45s"`, at most `5m`, `off` to fail at once). A request the
+policy would deny (a CONNECT, or a plaintext HTTP request) is *held* for
 that long while you decide: if you approve the host in time the request just
 succeeds, if you ignore the host it fails at once, and if nobody decides it
 fails with the same 403.
@@ -507,17 +508,23 @@ single `nothing to review` line. Ctrl+C closes it from any screen.
 ### Global settings
 
 `$XDG_CONFIG_HOME/hsh/settings.json` (default `~/.config/hsh/settings.json`)
-holds user preferences that apply to every session, written by the monitor:
+holds user preferences that apply to every session unless a session's config
+overrides them; edit it with `hsh settings edit`:
 
 ```json
 {
-  "monitor_key": "ctrl-a"
+  "monitor_key": "ctrl-a",
+  "approval_wait": "45s",
+  "freeze_delay": "2s"
 }
 ```
 
 `monitor_key`, when set, overrides `monitor.key` from the session config.
+`approval_wait` and `freeze_delay` are the global defaults for the session
+config's `network.approval_wait` and `network.freeze_delay` (hold and
+freeze-on-hold timing; builtin defaults `30s` and `3s`, `off` disables).
 Unknown fields are an error; an unreadable file is ignored with a warning
-and the config's key is used.
+and the builtin defaults are used.
 
 ## Managing the allowlist
 

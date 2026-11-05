@@ -124,11 +124,11 @@ func TestSessionDenialsWithoutARecord(t *testing.T) {
 
 func TestInlineMonitorIsOffWhenDisabledOrNotInteractive(t *testing.T) {
 	cfg := config.Default()
-	if im, _ := newInlineMonitor(cfg, "s", "cfg", false); im != nil {
+	if im, _ := newInlineMonitor(cfg, "s", "cfg", false, nil); im != nil {
 		t.Fatal("non-interactive session got a relay")
 	}
 	cfg.Monitor.Enabled = false
-	if im, warn := newInlineMonitor(cfg, "s", "cfg", true); im != nil || warn != "" {
+	if im, warn := newInlineMonitor(cfg, "s", "cfg", true, nil); im != nil || warn != "" {
 		t.Fatalf("disabled monitor: %v %q", im, warn)
 	}
 }

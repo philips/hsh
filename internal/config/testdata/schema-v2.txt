@@ -17,6 +17,7 @@ network object
 network.allow array
 network.allow[] string
 network.approval_wait string
+network.freeze_delay string
 network.mode string
 network.notice bool
 oauth object

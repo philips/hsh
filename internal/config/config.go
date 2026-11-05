@@ -27,6 +27,7 @@ type Network struct {
 	Mode         string   `json:"mode"`
 	Allow        []string `json:"allow"`
 	ApprovalWait string   `json:"approval_wait,omitempty"`
+	FreezeDelay  string   `json:"freeze_delay,omitempty"`
 	Notice       *bool    `json:"notice,omitempty"`
 }
 
@@ -35,10 +36,45 @@ func (n Network) NoticeEnabled() bool {
 }
 
 const (
-	DefaultApprovalWait   time.Duration = 0
+	DefaultApprovalWait   time.Duration = 30 * time.Second
 	SuggestedApprovalWait               = 30 * time.Second
 	MaxApprovalWait                     = 5 * time.Minute
+	DefaultFreezeDelay                  = 3 * time.Second
+	MaxFreezeDelay                      = time.Minute
 )
+
+func ParseFreezeDelay(v string) (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return DefaultFreezeDelay, nil
+	case "off", "0", "0s":
+		return 0, nil
+	}
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil {
+		return 0, fmt.Errorf("invalid network.freeze_delay %q (want a duration such as \"1s\", or \"off\" to freeze immediately)", v)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid network.freeze_delay %q: negative", v)
+	}
+	if d > MaxFreezeDelay {
+		return 0, fmt.Errorf("invalid network.freeze_delay %q: more than %s", v, MaxFreezeDelay)
+	}
+	return d, nil
+}
+
+func (n Network) FreezeDelayDuration() time.Duration {
+	d, err := ParseFreezeDelay(n.FreezeDelay)
+	if err != nil {
+		return DefaultFreezeDelay
+	}
+	return d
+}
+
+func (n Network) ValidateFreezeDelay() error {
+	_, err := ParseFreezeDelay(n.FreezeDelay)
+	return err
+}
 
 func ParseApprovalWait(v string) (time.Duration, error) {
 	switch strings.ToLower(strings.TrimSpace(v)) {
@@ -148,7 +184,7 @@ func (o OAuth) validate() error {
 }
 
 const (
-	Version    = 1
+	Version    = 2
 	MinVersion = 1
 )
 
@@ -357,6 +393,9 @@ func decode(data []byte, source string) (*Config, error) {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateMode(); err != nil {
+		return nil, fmt.Errorf("%s: %w", source, err)
+	}
+	if err := cfg.Network.ValidateFreezeDelay(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}
 	if err := cfg.Network.ValidateApprovalWait(); err != nil {

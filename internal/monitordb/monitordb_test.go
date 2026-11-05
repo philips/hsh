@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -47,6 +48,17 @@ func (e *env) session(id, workspace string) *Recorder {
 	}
 	e.recs[id] = r
 	return r
+}
+
+func (e *env) allowConfig(id string, hosts ...string) {
+	e.t.Helper()
+	data, err := json.Marshal(map[string]any{"network": map[string]any{"allow": hosts}})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.dir(id), "config.json"), data, 0o644); err != nil {
+		e.t.Fatal(err)
+	}
 }
 
 func (e *env) record(id, host string) {
@@ -104,7 +116,7 @@ func TestMarkIgnored(t *testing.T) {
 		t.Errorf("ignored host still pending: %+v", pending)
 	}
 	ignored, _ := e.store().Ignored(Filter{})
-	if len(ignored) != 1 || !ignored[0].Ignored || !ignored[0].Allowed || ignored[0].AllowedAt == "" {
+	if len(ignored) != 1 || !ignored[0].Ignored || ignored[0].AllowedAt == "" {
 		t.Fatalf("ignored = %+v", ignored)
 	}
 	e.record("s1", "a.example")
@@ -116,6 +128,7 @@ func TestMarkIgnored(t *testing.T) {
 func TestMarkAllowedClearsIgnored(t *testing.T) {
 	e := newEnv(t)
 	e.record("s1", "a.example")
+	e.allowConfig("s1", "a.example")
 	if err := e.store().MarkIgnored("s1", []string{"a.example"}); err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +141,11 @@ func TestMarkAllowedClearsIgnored(t *testing.T) {
 	all, _ := e.store().All(Filter{})
 	if len(all) != 1 || !all[0].Allowed || all[0].Ignored {
 		t.Errorf("unexpected row after approve: %+v", all)
+	}
+	e.allowConfig("s1")
+	pending, _ := e.store().Pending(Filter{})
+	if len(pending) != 1 || pending[0].Allowed {
+		t.Fatalf("removing the host from the config must put it back in the review list: %+v", pending)
 	}
 }
 

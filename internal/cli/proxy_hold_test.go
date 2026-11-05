@@ -12,6 +12,7 @@ import (
 
 func TestProxyHoldCommand(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	dir := state.SessionDir("s1")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -34,8 +35,8 @@ func TestProxyHoldCommand(t *testing.T) {
 	}
 
 	out, err := run()
-	if err != nil || !strings.Contains(out, "holding is off, the default") || wait() != "holding: off" {
-		t.Fatalf("status: %q %v", out, err)
+	if err != nil || !strings.Contains(out, "held for up to 30s") || !strings.Contains(out, "the default from") || wait() != "holding: 30s" {
+		t.Fatalf("status: %q %v %s", out, err, wait())
 	}
 	if out, err = run("45s"); err != nil || !strings.Contains(out, "45s") || wait() != "holding: 45s" {
 		t.Fatalf("45s: %q %v %s", out, err, wait())
@@ -46,8 +47,18 @@ func TestProxyHoldCommand(t *testing.T) {
 	if out, err = run("on"); err != nil || !strings.Contains(out, "30s") || wait() != "holding: 30s" {
 		t.Fatalf("on: %q %v %s", out, err, wait())
 	}
-	if out, err = run("default"); err != nil || !strings.Contains(out, "the default") || wait() != "holding: off" {
+	if out, err = run("default"); err != nil || !strings.Contains(out, "the default from") || wait() != "holding: 30s" {
 		t.Fatalf("default: %q %v %s", out, err, wait())
+	}
+	settingsDir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "hsh")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"approval_wait":"45s"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err = run("default"); err != nil || !strings.Contains(out, "45s") || wait() != "holding: 30s" {
+		t.Fatalf("global default: %q %v %s", out, err, wait())
 	}
 	if _, err = run("forever"); err == nil {
 		t.Fatal("an invalid duration was accepted")

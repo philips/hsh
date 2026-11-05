@@ -40,8 +40,6 @@ curl -X POST https://infinitelogic.app/o/hsh-home/hooks/bug_report \
 
 
 
-## add monitor subcommand for oauth callback
-
 ## add monitor subcommand to add/remove secrets from 
 
 # First run experience from README

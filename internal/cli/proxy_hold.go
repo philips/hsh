@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/peterbourgon/ff/v4"
 
 	"hsh/internal/config"
+	"hsh/internal/settings"
 )
 
 func proxyHoldCommand() *ff.Command {
@@ -52,19 +54,22 @@ func proxyHoldCommand() *ff.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("session %s: %s\n", session, describeHold(cfg.Network))
+			fmt.Printf("session %s: %s\n", session, describeHold(cfg.Network, effectiveApprovalWaitForSession(cfgPath)))
 			return nil
 		})
 }
 
-func describeHold(n config.Network) string {
-	d := n.ApprovalWaitDuration()
+func describeHold(n config.Network, effective time.Duration) string {
 	switch {
-	case d == 0 && n.ApprovalWait == "":
-		return "denied requests fail immediately (holding is off, the default)"
-	case d == 0:
-		return "denied requests fail immediately (holding is off)"
+	case n.ApprovalWait != "":
+		if d := n.ApprovalWaitDuration(); d == 0 {
+			return "denied requests fail immediately (holding is off)"
+		} else {
+			return fmt.Sprintf("denied requests are held for up to %s while someone is watching", d)
+		}
+	case effective == 0:
+		return fmt.Sprintf("denied requests fail immediately (holding is off; the default from %s)", settings.Path())
 	default:
-		return fmt.Sprintf("denied requests are held for up to %s while someone is watching", d)
+		return fmt.Sprintf("denied requests are held for up to %s while someone is watching (the default from %s)", effective, settings.Path())
 	}
 }

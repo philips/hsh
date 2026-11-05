@@ -101,6 +101,8 @@ func sessionStatus(p podInfo) string {
 		return p.Status
 	}
 	switch ws {
+	case "paused":
+		return "Suspended"
 	case "running":
 		if clientAttached(sessionDirFor(p.Name)) {
 			return "Attached"

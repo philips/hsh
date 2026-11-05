@@ -193,6 +193,12 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if !podExists(podName) {
 			return fmt.Errorf("session %s has no pod (remove orphaned session state with: hsh rm --garbage)", sessionID)
 		}
+		if containerPaused(podName + "-ws") {
+			infof("hsh: resuming suspended session %s\n", sessionID)
+			if err := unpausePod(podName); err != nil {
+				return fmt.Errorf("unpause suspended session: %w", err)
+			}
+		}
 		mounts, err = cfg.ParsedMounts(sessionDir)
 		if err != nil {
 			return err
@@ -477,8 +483,13 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		proxyArgs = append(proxyArgs, "-v", gv.sockDir+":"+netstackTarget)
 		listenArgs = []string{"--netstack-socket", netstackTarget + "/sock"}
 	}
+	waitDefault, waitErr := globalApprovalWait()
+	if waitErr != nil {
+		fmt.Fprintf(os.Stderr, "hsh: warning: the global approval wait: %v; using %s\n", waitErr, config.DefaultApprovalWait)
+	}
 	proxyArgs = append(proxyArgs, cfg.Image)
 	proxyArgs = append(proxyArgs, listenArgs...)
+	proxyArgs = append(proxyArgs, "--approval-wait-default", waitDefault.String())
 	proxyArgs = append(proxyArgs,
 		"--config", "/hsh-session/config.json",
 		"--secrets", "/hsh-session/secrets.json",
@@ -567,6 +578,11 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 	}
 	failureCleanup = false
+
+	freezeCtx, stopFreeze := context.WithCancel(ctx)
+	defer stopFreeze()
+	fstate := &freezeState{}
+	go watchHoldFreeze(freezeCtx, sessionDir, wsName, fstate)
 
 	stopSession := func() { stopSessionPod(podName, sessionDir) }
 	cleanup := stopSession
@@ -659,7 +675,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	var inline *inlineMonitor
 	if detachable {
 		var warn string
-		inline, warn = newInlineMonitor(cfg, sessionID, sessionConfig, interactive)
+		inline, warn = newInlineMonitor(cfg, sessionID, sessionConfig, interactive, fstate)
 		if warn != "" {
 			fmt.Fprintln(os.Stderr, warn)
 		}

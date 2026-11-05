@@ -21,6 +21,7 @@ func Proxy(args []string) error {
 	networkMode := fs.String("network-mode", "", "network policy override: https, allowlist, or none (default: the config's network.mode)")
 	attended := fs.String("attended", "", "marker file whose recent modification time means someone can approve denied requests (enables holding them)")
 	netstack := fs.String("netstack-socket", "", "serve a gVisor sandbox's network over this SOCK_SEQPACKET socket (runsc --network-proxy-path) instead of listening for proxy clients")
+	approvalWaitDefault := fs.Duration("approval-wait-default", 0, "how long to hold denied requests for approval when the session config does not set network.approval_wait (the global default from hsh settings)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -37,6 +38,8 @@ func Proxy(args []string) error {
 		NetworkMode:  *networkMode,
 		AttendedPath: *attended,
 		NetstackPath: *netstack,
+
+		ApprovalWaitDefault: *approvalWaitDefault,
 	})
 	if err != nil {
 		return err

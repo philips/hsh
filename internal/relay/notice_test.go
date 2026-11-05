@@ -19,7 +19,7 @@ func TestStatusLineShowsTheSessionNotice(t *testing.T) {
 	notice = "login a failed: \x1b]0;evil\x07log in again"
 	r.pollLocked()
 	got := r.statusLineLocked()
-	if !strings.HasPrefix(got, sgrRed) || !strings.Contains(got, " hsh | unit | login a failed: ]0;evillog in again") {
+	if !strings.HasPrefix(got, sgrRed) || !strings.Contains(got, " hsh unit | login a failed: ]0;evillog in again") {
 		t.Fatalf("notice: %q", got)
 	}
 	if strings.Count(got, "\x1b") != 2 {
@@ -34,5 +34,30 @@ func TestStatusLineShowsTheSessionNotice(t *testing.T) {
 	r.pollLocked()
 	if got := r.statusLineLocked(); !strings.HasPrefix(got, sgrBlue) || strings.Contains(got, "login") {
 		t.Fatalf("after the notice cleared: %q", got)
+	}
+}
+
+func TestStatusLineShowsTheFreezeNote(t *testing.T) {
+	frozen, pending := "", 1
+	r := &Relay{cols: 160, cfg: Config{
+		Name:       "unit",
+		Count:      func() (int, int, error) { return pending, 1, nil },
+		FreezeNote: func() string { return frozen },
+	}}
+	r.pollLocked()
+	if got := r.statusLineLocked(); !strings.Contains(got, "needs review") {
+		t.Fatalf("before the freeze: %q", got)
+	}
+	frozen = "SUSPENDED: proxy approval"
+	r.pollLocked()
+	got := r.statusLineLocked()
+	if !strings.HasPrefix(got, sgrYellow) || !strings.Contains(got, " hsh unit | SUSPENDED: proxy approval | * 1 to review (1 held) | Ctrl+Space") {
+		t.Fatalf("frozen: %q", got)
+	}
+	frozen = ""
+	pending = 0
+	r.pollLocked()
+	if got := r.statusLineLocked(); !strings.Contains(got, "nothing to review") || strings.Contains(got, "frozen") {
+		t.Fatalf("after the thaw: %q", got)
 	}
 }

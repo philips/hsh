@@ -18,10 +18,10 @@ func TestLoadVersionAndStrictDecoding(t *testing.T) {
 		body string
 		want string
 	}{
-		{"current", `{"version":1,"network":{"mode":"allowlist"}}`, ""},
-		{"missing", `{"network":{"mode":"allowlist"}}`, `no "version" field (this hsh reads version 1)`},
-		{"newer", fmt.Sprintf(`{"version":%d}`, future), fmt.Sprintf("config version %d is newer than this hsh reads (version 1); update hsh (hsh update)", future)},
-		{"older", `{"version":0}`, "config version 0 is no longer supported (this hsh reads version 1); regenerate it"},
+		{"current", `{"version":2,"network":{"mode":"allowlist"}}`, ""},
+		{"missing", `{"network":{"mode":"allowlist"}}`, `no "version" field (this hsh reads version 2)`},
+		{"newer", fmt.Sprintf(`{"version":%d}`, future), fmt.Sprintf("config version %d is newer than this hsh reads (version 2); update hsh (hsh update)", future)},
+		{"older", `{"version":0}`, "config version 0 is no longer supported (this hsh reads version 2); regenerate it"},
 		{"string version", `{"version":"1"}`, `"version" must be an integer, got "1"`},
 		{"float version", `{"version":1.5}`, `"version" must be an integer, got 1.5`},
 		{"unknown top-level", `{"version":1,"allw":["a"]}`, `unknown field "allw"`},
@@ -97,7 +97,7 @@ func TestDefaultCarriesVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"version": 1`) {
+	if !strings.Contains(string(data), `"version": 2`) {
 		t.Fatalf("a marshalled config has no version: %s", data)
 	}
 	path := filepath.Join(t.TempDir(), "c.json")

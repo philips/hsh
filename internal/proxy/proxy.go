@@ -35,6 +35,8 @@ type Options struct {
 	NetworkMode  string
 	AttendedPath string
 	NetstackPath string
+
+	ApprovalWaitDefault time.Duration
 }
 
 type state struct {
@@ -167,7 +169,10 @@ func (p *Proxy) reload() error {
 	}
 	p.mu.Lock()
 	p.st.allow = cfg.Network.Allow
-	p.st.approvalWait = cfg.Network.ApprovalWaitDuration()
+	p.st.approvalWait = p.opts.ApprovalWaitDefault
+	if cfg.Network.ApprovalWait != "" {
+		p.st.approvalWait = cfg.Network.ApprovalWaitDuration()
+	}
 	p.st.mode = p.opts.NetworkMode
 	if p.st.mode == "" {
 		p.st.mode = cfg.Network.ModeOrDefault()

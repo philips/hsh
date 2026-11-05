@@ -303,11 +303,11 @@ injection applied when the host matches a secret.
 
 An agent that is refused can start working around the refusal, which costs
 tokens. The 403 body and the network notice therefore tell it to stop and
-ask. hsh can also **hold** a request the policy would deny until the user decides. Holding
-is **off by default** (a held request looks like a hung network, which is
-often a worse experience than a fast failure with instructions) and is
-enabled per session with `network.approval_wait` (for example `"30s"`; at most
-`5m`; `off`/`0s` disables):
+ask. hsh can also **hold** a request the policy would deny until the user decides.
+Holding is on by default (`30s`) and resolves session over global over
+builtin: `network.approval_wait` in the session config (for example `"30s"`;
+at most `5m`; `off`/`0s` disables), then the global `approval_wait` setting
+in `~/.config/hsh/settings.json`, then the builtin default:
 
 - The denial is recorded first, so the host shows up in `hsh monitor` and
   the inline status line at once, and the `holding` column of the session's

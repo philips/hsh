@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	sgrGreen = "\x1b[0;30;42m"
-	sgrBlue  = "\x1b[0;97;44m"
-	sgrRed   = "\x1b[0;97;41m"
+	sgrGreen  = "\x1b[0;30;42m"
+	sgrBlue   = "\x1b[0;97;44m"
+	sgrRed    = "\x1b[0;97;41m"
+	sgrYellow = "\x1b[0;30;43m"
 )
 
 type reviewState struct {
@@ -58,6 +59,12 @@ func (r *Relay) pollLocked() {
 	if r.cfg.Notice != nil {
 		if nt := printable(r.cfg.Notice()); nt != r.notice {
 			r.notice = nt
+			r.dirty = true
+		}
+	}
+	if r.cfg.FreezeNote != nil {
+		if fn := printable(r.cfg.FreezeNote()); fn != r.freezeNote {
+			r.freezeNote = fn
 			r.dirty = true
 		}
 	}
@@ -233,30 +240,37 @@ func (r *Relay) statusLineLocked() string {
 	switch {
 	case r.review.crash != "":
 		sgr = sgrRed
-		text = " hsh | the monitor crashed; details in " + r.review.crash + " | " + r.keyName() + " reopens"
+		text = " hsh " + name + " | the monitor crashed; details in " + r.review.crash + " | " + r.keyName() + " reopens"
 	case r.review.open:
 		sgr = sgrRed
-		text = " hsh | MONITOR | Esc goes back | " + r.keyName() + " closes"
+		text = " hsh " + name + " | MONITOR | Esc goes back | " + r.keyName() + " closes"
 	default:
 		sgr = sgrGreen
-		if r.pending > 0 {
+		if r.freezeNote != "" {
+			sgr = sgrYellow
+		} else if r.pending > 0 {
 			sgr = sgrBlue
 		}
 		heldNote := ""
 		if r.heldReqs > 0 {
 			heldNote = fmt.Sprintf(" (%d held)", r.heldReqs)
 		}
-		switch n := r.pending; {
-		case n == 0:
-			text = " hsh | " + name + " | proxy: nothing to review"
-		case n == 1:
-			text = " hsh | " + name + " | * 1 proxy request needs review" + heldNote + " | " + r.keyName() + " to review"
+		switch {
+		case r.freezeNote != "":
+			text = " hsh " + name + " | " + r.freezeNote
+			if n := r.pending; n > 0 {
+				text += fmt.Sprintf(" | * %d to review%s | %s", n, heldNote, r.keyName())
+			}
+		case r.pending == 0:
+			text = " hsh " + name + " | proxy: nothing to review"
+		case r.pending == 1:
+			text = " hsh " + name + " | * 1 proxy request needs review" + heldNote + " | " + r.keyName() + " to review"
 		default:
-			text = fmt.Sprintf(" hsh | %s | * %d proxy requests need review%s | %s to review", name, n, heldNote, r.keyName())
+			text = fmt.Sprintf(" hsh %s | * %d proxy requests need review%s | %s to review", name, r.pending, heldNote, r.keyName())
 		}
 		if r.notice != "" {
 			sgr = sgrRed
-			text = " hsh | " + name + " | " + r.notice
+			text = " hsh " + name + " | " + r.notice
 			if n := r.pending; n > 0 {
 				text += fmt.Sprintf(" | * %d to review%s | %s", n, heldNote, r.keyName())
 			}
