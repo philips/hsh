@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+import os
+import shutil
+import sys
+
+self = os.path.realpath(__file__)
+real = None
+for d in os.environ.get("PATH", "").split(os.pathsep):
+    cand = os.path.join(d, "ffmpeg")
+    if os.path.isfile(cand) and os.access(cand, os.X_OK) and os.path.realpath(cand) != self:
+        real = cand
+        break
+if real is None:
+    for cand in ("/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"):
+        if os.path.exists(cand):
+            real = cand
+            break
+if real is None:
+    sys.stderr.write("ffmpeg-fast: real ffmpeg not found on PATH\n")
+    sys.exit(127)
+
+args = sys.argv[1:]
+
+frames_dir = os.environ.get("DEMO_FRAMES")
+if frames_dir:
+    inputs = [args[j + 1] for j in range(len(args)) if args[j] == "-i" and j + 1 < len(args)]
+    os.makedirs(frames_dir, exist_ok=True)
+    copied = 0
+    for pat in inputs:
+        d = os.path.dirname(pat) or "."
+        if "%" not in os.path.basename(pat) or not os.path.isdir(d):
+            continue
+        dest = os.path.join(frames_dir, os.path.basename(d)) if len(inputs) > 1 else frames_dir
+        os.makedirs(dest, exist_ok=True)
+        for f in sorted(os.listdir(d)):
+            src = os.path.join(d, f)
+            if os.path.isfile(src):
+                shutil.copy2(src, os.path.join(dest, f))
+                copied += 1
+    out = args[-1]
+    try:
+        open(out, "ab").close()
+    except OSError:
+        pass
+    sys.stderr.write(f"ffmpeg-fast: exported {copied} frames to {frames_dir}; skipped encode\n")
+    sys.exit(0)
+
+SPEED = ["-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1"]
+
+out = []
+i = 0
+injected = False
+while i < len(args):
+    out.append(args[i])
+    if not injected and args[i] in ("-c:v", "-vcodec", "-codec:v") and i + 1 < len(args):
+        out.append(args[i + 1])
+        i += 1
+        if "libvpx" in args[i]:
+            out.extend(SPEED)
+        injected = True
+    i += 1
+
+os.execv(real, [real] + out)
