@@ -162,16 +162,30 @@ func matchPods(arg string, pods []podInfo) ([]podInfo, error) {
 	if arg == "" {
 		return nil, nil
 	}
-	if abs, err := filepath.Abs(arg); err == nil {
-		if st, err := os.Stat(abs); err == nil && st.IsDir() {
-			var matched []podInfo
-			for _, p := range pods {
-				if p.Workspace() == abs || p.Workspace() == arg {
-					matched = append(matched, p)
-				}
-			}
-			return matched, nil
+	if abs, ok := isDirectory(arg); ok {
+		if err := nameDirectoryConflict(arg, pods); err != nil {
+			return nil, err
 		}
+		var matched []podInfo
+		for _, p := range pods {
+			if p.Workspace() == abs || p.Workspace() == arg {
+				matched = append(matched, p)
+			}
+		}
+		return matched, nil
+	}
+	return matchSessionRef(arg, pods)
+}
+
+func matchSessionRef(arg string, pods []podInfo) ([]podInfo, error) {
+	if named := podsNamed(arg, pods); len(named) == 1 {
+		return named, nil
+	} else if len(named) > 1 {
+		var ids []string
+		for _, p := range named {
+			ids = append(ids, p.Session())
+		}
+		return nil, fmt.Errorf("session name %q matches sessions %s; use an id", arg, strings.Join(ids, " and "))
 	}
 	var matched []podInfo
 	for _, p := range pods {

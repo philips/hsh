@@ -26,6 +26,9 @@ func monitorCommand() *ff.Command {
 		if len(args) > 0 {
 			return fmt.Errorf("monitor takes no positional arguments")
 		}
+		if err := resolveFilterSession(&filter); err != nil {
+			return err
+		}
 		if fi, err := os.Stdout.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 			return errors.New("monitor requires a terminal; use 'hsh proxy denied' for a plain list")
 		}

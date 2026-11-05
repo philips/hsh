@@ -20,7 +20,7 @@ import (
 func connectSession(sessionID string) (*ssh.Client, error) {
 	wsName := "hsh-" + sessionID + "-ws"
 	if !containerRunning(wsName) {
-		return nil, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
+		return nil, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionLabel(sessionID), sessionLabel(sessionID))
 	}
 	sshArgs, err := sessionSSHArgs(sessionID)
 	if err != nil {
@@ -71,7 +71,7 @@ func forwardCommand() *ff.Command {
 			if list && len(specs) > 0 {
 				return fmt.Errorf("--list takes no ports")
 			}
-			sessionID, err := resolveSession(session, "hsh forward --session <id>")
+			sessionID, err := resolveSession(session, "hsh forward --session <name or id>")
 			if err != nil {
 				return err
 			}

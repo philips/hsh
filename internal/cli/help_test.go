@@ -30,6 +30,8 @@ func TestHelpEverywhere(t *testing.T) {
 		{"run", "-h"},
 		{"resume", "--help"},
 		{"resume", "-h"},
+		{"rename", "--help"},
+		{"rename", "-h"},
 		{"secret", "--help"},
 		{"secret"},
 		{"proxy", "--help"},

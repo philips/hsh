@@ -792,12 +792,13 @@ operate on pods whose name contains `hsh-` and follow the flags and
 semantics of `podman pod ls` / `podman pod rm`:
 
 ```
-hsh ls                                    # SESSION first (usable with --session, resume, rm), then status and WORKSPACE
+hsh ls                                    # SESSION first (usable with --session, resume, rm), then NAME, status, and WORKSPACE
 hsh ls -q --sort name                     # session ids only, sorted
 hsh ls --workspace ~/repo                 # the sandbox for one workspace
 hsh rm 53bd3fc7e5ba                       # remove a leftover by session id (refuses if running)
 hsh rm -f hsh-53bd3fc7e5ba                # stop running containers, then remove
 hsh rm 53bd                               # a unique session id prefix is enough
+hsh rm auth-refactor                      # a session name works wherever an id does
 hsh rm ~/repo                             # remove via the workspace path
 hsh rm --exited                           # remove every exited session
 hsh rm --garbage                          # remove session state whose pod is gone
@@ -811,8 +812,8 @@ running containers is refused without `--force`, exactly like
 directory, and `rm --all` sweeps everything. `--exited` removes every
 exited sandbox (forcing the stop of a proxy left running after its shell
 exited), and `--garbage` removes session state directories whose pod is
-already gone. A SANDBOX argument may be the full pod name, a session id,
-or a unique prefix of one. Pods that are not hsh sandboxes are never
+already gone. A SANDBOX argument may be a session name, the full pod name,
+a session id, or a unique prefix of an id. Pods that are not hsh sandboxes are never
 touched.
 
 During the alpha period config and state schemas can change between
@@ -839,6 +840,7 @@ session id) plus its state directory
 config.json   the session's config copy — the only writable config
 ca.crt ca.key the session's MITM CA, stable across re-entries
 workspace     file with the absolute path of the workspace
+name          optional session name, one line (absent for an unnamed session)
 session.db    append-only event log: the hsh version of every entry
 ```
 
@@ -851,6 +853,30 @@ below replaces the binary in place while sessions may outlive (and be
 resumed by) different versions, this log answers after the fact which
 versions created and re-entered a session. Writes are best-effort: a
 failure is a warning, never a failed session.
+
+A **name** is an optional alias for the session id, set with
+`hsh run --name NAME` (or `HSH_SESSION_NAME`, which `hsh run` reads when
+`--name` is absent; an empty value counts as unset) and changed with
+`hsh rename SESSION NAME` or `hsh rename --clear SESSION`. It lives in the
+`name` file rather than a pod label so the monitor palette, which lists
+sessions from the state directory without calling podman, can show it and
+so it can be changed after creation. The id stays the identity: pod,
+state directory, container names, and proxy state all use it. A name
+matches `[a-z0-9][a-z0-9._-]{0,62}`, is unique among sessions that still
+have a pod, and cannot be 12 hex characters (an id) or start with `hsh-`
+(a pod name). Only `hsh run` reads `HSH_SESSION_NAME`; it is not passed
+into the sandbox. A session without a name is addressed by id as before.
+
+Wherever a session is named on the command line (`hsh resume`, `rm`,
+`rename`, `detach`, `--session`, and the `ssh` host argument), the
+argument resolves in this order: an exact name, an exact id or pod name,
+then a unique id prefix. A name beats an id prefix, so a deliberate name
+is never shadowed by a prefix that happens to match. `resume` and `rm`
+also accept a workspace directory; an argument that is both an existing
+directory and a session name is an error that points at `./NAME` for the
+workspace and the session id for the session, since guessing would risk
+removing the wrong sandbox. Messages that tell the user how to re-enter a
+session print its name when it has one.
 
 A **workspace** is the host directory the first mount sources from
 (recorded as the pod label `hsh.workspace`); there may be several
@@ -932,14 +958,15 @@ workspace container.
   `hsh rm --exited` cleans up).
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
-- `hsh resume [SESSION | WORKSPACE-DIR]` re-enters an existing session;
-  `hsh run` only creates sessions. With no argument it uses the current
-  directory as the workspace. An existing directory argument selects the
-  sessions of that workspace; anything else is a session id, the full pod
-  name, or a unique prefix of either (a directory wins over an id of the
-  same name). A workspace with one session resumes it directly; with
-  several, `hsh resume` lists their ids, status, and creation time and
-  asks for one. `hsh resume` takes no `--config`, `--runtime`, `--network`,
+- `hsh resume [NAME | SESSION | WORKSPACE-DIR]` re-enters an existing
+  session; `hsh run` only creates sessions. With no argument it uses the
+  current directory as the workspace. An existing directory argument
+  selects the sessions of that workspace; anything else is a session name,
+  an id, the full pod name, or a unique id prefix (a directory wins over an
+  id of the same name; a directory that is also a session name is an
+  error, see Sessions and workspaces). A workspace with one session
+  resumes it directly; with several, `hsh resume` lists their names, ids,
+  status, and creation time and asks for one. `hsh resume` takes no `--config`, `--runtime`, `--network`,
   or `--tasks`: the session keeps its stored config, runtime, and network
   mode. Re-entry reattaches to the
   **same container**, so state inside the workspace container (pi's

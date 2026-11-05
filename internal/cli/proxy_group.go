@@ -104,6 +104,9 @@ func proxyDeniedCommand() *ff.Command {
 		if len(args) > 0 {
 			return fmt.Errorf("proxy denied takes no positional arguments")
 		}
+		if err := resolveFilterSession(&filter); err != nil {
+			return err
+		}
 		db := monitordb.DefaultStore()
 		printRows := func(rows []monitordb.DeniedHost) {
 			if filter.Session != "" || filter.Workspace != "" {
@@ -174,6 +177,10 @@ func proxyAllowCommand() *ff.Command {
 	}, func(ctx context.Context, args []string) error {
 		if session == "" {
 			return errors.New("proxy allow requires --session: which session's config should the hosts be allowed in?")
+		}
+		session, err := resolveSessionRef(session)
+		if err != nil {
+			return err
 		}
 		if all && len(args) > 0 {
 			return errors.New("proxy allow takes either --all or a single URL, not both")

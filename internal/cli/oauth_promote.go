@@ -157,7 +157,7 @@ func oauthPromoteCommand() *ff.Command {
 			if len(args) == 2 {
 				name = args[1]
 			}
-			sessionID, err := resolveSession(session, "hsh oauth promote --session <id> [PROVIDER [NAME]]")
+			sessionID, err := resolveSession(session, "hsh oauth promote --session <name or id> [PROVIDER [NAME]]")
 			if err != nil {
 				return err
 			}

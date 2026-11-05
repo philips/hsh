@@ -56,7 +56,7 @@ func oauthCallbackCommand() *ff.Command {
 			if port == "" {
 				port = "80"
 			}
-			sessionID, err := resolveSession(session, "hsh oauth callback --session <id> URL")
+			sessionID, err := resolveSession(session, "hsh oauth callback --session <name or id> URL")
 			if err != nil {
 				return err
 			}
@@ -96,7 +96,10 @@ func oauthStatusCommand() *ff.Command {
 				return printOAuthStore(store)
 			}
 			if session != "" {
-				id := strings.TrimPrefix(session, "hsh-")
+				id, err := resolveSessionRef(session)
+				if err != nil {
+					return err
+				}
 				return printOAuthStore(sessionOAuthStore(id))
 			}
 			entries, err := os.ReadDir(state.SessionsDir())

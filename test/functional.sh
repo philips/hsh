@@ -415,6 +415,50 @@ CMDS
 grep -qx 'resume-marker' "$TMP/resume-prefix.out" || fail "resume <id prefix> did not re-enter the chosen session: $(cat "$TMP/resume-prefix.out")"
 pass "hsh resume <id prefix> works from any directory"
 
+"$HSH" rename "$RESUME_SESSION" fn-named >"$TMP/rename.out" 2>&1 || fail "hsh rename failed: $(cat "$TMP/rename.out")"
+"$HSH" ls --workspace "$TMP/workspace" | grep -E "^$RESUME_SESSION +fn-named " >/dev/null || fail "hsh ls does not show the session name"
+[ "$("$HSH" ls -q --workspace "$TMP/workspace" | grep -c "^$RESUME_SESSION\$")" = "1" ] || fail "hsh ls -q must stay ids only"
+(cd "$TMP" && "$HSH" resume fn-named) >"$TMP/resume-name.out" 2>&1 <<'CMDS' || true
+cat /home/hsh/marker.txt
+exit
+CMDS
+grep -qx 'resume-marker' "$TMP/resume-name.out" || fail "resume <name> did not re-enter the named session: $(cat "$TMP/resume-name.out")"
+pass "hsh rename names a session; hsh resume NAME works from any directory"
+
+PODS_BEFORE="$(podman pod ls --format '{{.Name}}' | sort)"
+if (cd "$TMP/workspace" && "$HSH" run --name fn-named --config config.hsh localhost/hsh-example:latest .) >"$TMP/name-taken.out" 2>&1 </dev/null; then
+	fail "run --name with a taken name unexpectedly succeeded"
+fi
+grep -q "is taken by session $RESUME_SESSION" "$TMP/name-taken.out" || fail "the taken-name error does not name the holder: $(cat "$TMP/name-taken.out")"
+if (cd "$TMP/workspace" && HSH_SESSION_NAME='Bad Name' "$HSH" run --config config.hsh localhost/hsh-example:latest .) >"$TMP/name-bad.out" 2>&1 </dev/null; then
+	fail "run with an invalid HSH_SESSION_NAME unexpectedly succeeded"
+fi
+grep -q "HSH_SESSION_NAME" "$TMP/name-bad.out" || fail "the invalid-name error does not name the variable: $(cat "$TMP/name-bad.out")"
+[ "$PODS_BEFORE" = "$(podman pod ls --format '{{.Name}}' | sort)" ] || fail "a rejected name must not create a pod"
+pass "run rejects a taken or invalid session name before creating a pod"
+
+(cd "$TMP/workspace" && HSH_SESSION_NAME=fn-env "$HSH" run --runtime "$RUNTIME" --config config.hsh localhost/hsh-example:latest .) >"$TMP/name-env.out" 2>&1 <<'CMDS' || true
+exit
+CMDS
+"$HSH" ls | grep -E " fn-env " >/dev/null || fail "HSH_SESSION_NAME did not name the session: $(cat "$TMP/name-env.out")"
+(cd "$TMP/workspace" && HSH_SESSION_NAME=fn-env2 "$HSH" run --runtime "$RUNTIME" --name fn-flag --config config.hsh localhost/hsh-example:latest .) >"$TMP/name-flag.out" 2>&1 <<'CMDS' || true
+exit
+CMDS
+"$HSH" ls | grep -E " fn-flag " >/dev/null || fail "--name did not name the session: $(cat "$TMP/name-flag.out")"
+if "$HSH" ls | grep -q " fn-env2 "; then
+	fail "--name must override HSH_SESSION_NAME"
+fi
+pass "HSH_SESSION_NAME names a run; --name overrides it"
+
+"$HSH" rm fn-env >"$TMP/rm-name.out" 2>&1 || fail "hsh rm NAME failed: $(cat "$TMP/rm-name.out")"
+if "$HSH" ls | grep -q " fn-env "; then
+	fail "hsh rm NAME left the session behind"
+fi
+"$HSH" rename --clear fn-named >/dev/null || fail "hsh rename --clear failed"
+"$HSH" ls --workspace "$TMP/workspace" | grep -E "^$RESUME_SESSION +- " >/dev/null || fail "hsh rename --clear did not clear the name"
+"$HSH" rm fn-flag >/dev/null 2>&1 || fail "hsh rm fn-flag failed"
+pass "hsh rm NAME removes the named session; hsh rename --clear removes a name"
+
 ORPHAN="deadsession01"
 mkdir -p "$XDG_STATE_HOME/hsh/sessions/$ORPHAN"
 echo '{}' >"$XDG_STATE_HOME/hsh/sessions/$ORPHAN/config.json"

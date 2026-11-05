@@ -110,7 +110,7 @@ func detachClient(sessionDir string, wait time.Duration) (bool, error) {
 
 func resolveSessionArg(args []string) (string, error) {
 	if len(args) == 1 {
-		return strings.TrimPrefix(args[0], "hsh-"), nil
+		return resolveSessionRef(args[0])
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -130,17 +130,17 @@ func resolveSessionArg(args []string) (string, error) {
 	case len(attached) == 1:
 		return attached[0], nil
 	case len(attached) > 1:
-		return "", fmt.Errorf("several attached sessions for this workspace:\n  %s\ndetach one with: hsh detach <session id>", strings.Join(attached, "\n  "))
+		return "", fmt.Errorf("several attached sessions for this workspace:\n  %s\ndetach one with: hsh detach <name or session id>", strings.Join(attached, "\n  "))
 	case len(pods) == 1:
 		return pods[0].Session(), nil
 	}
-	return "", fmt.Errorf("no attached session for this workspace; name one with: hsh detach <session id>")
+	return "", fmt.Errorf("no attached session for this workspace; name one with: hsh detach <name or session id>")
 }
 
 func detachCommand() *ff.Command {
 	return newCommand("detach", "hsh detach [SESSION]", "detach the terminal attached to a session; the session keeps running", nil, func(ctx context.Context, args []string) error {
 		if len(args) > 1 {
-			return fmt.Errorf("detach takes at most one session id")
+			return fmt.Errorf("detach takes at most one session name or id")
 		}
 		id, err := resolveSessionArg(args)
 		if err != nil {
@@ -157,7 +157,7 @@ func detachCommand() *ff.Command {
 			fmt.Printf("session %s is not attached\n", id)
 			return nil
 		}
-		fmt.Printf("detached session %s; re-enter with: hsh resume %s\n", id, id)
+		fmt.Printf("detached session %s; re-enter with: hsh resume %s\n", sessionLabel(id), sessionLabel(id))
 		return nil
 	})
 }

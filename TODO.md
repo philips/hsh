@@ -132,3 +132,12 @@ An image's built-in hsh config (its `org.ifup.hsh` label) is untrusted until the
 Replace the flag with a review on the first `hsh run` of an image id: show what the built-in config asks for (allowlist, mode, secret routes, OAuth providers, mounts, agent command), let the user accept it (or parts of it) in the terminal, and for a new id of a repository that was trusted before, show the diff against the last trusted config. Also add a way to list and revoke trusted images (`hsh image trust ls`/`rm`, or an edit command like `hsh secret edit`).
 
 See plan 0043, section 3.
+
+## Document session names in Documentation/sessions.md
+
+Plan 0051 added `hsh run --name NAME` (or `HSH_SESSION_NAME`), `hsh rename SESSION NAME` / `hsh rename --clear SESSION`, and a NAME column in `hsh ls`. A name works wherever a session id does (`hsh resume`, `rm`, `detach`, `--session`). Document in `Documentation/sessions.md` (user-facing, so keep it practical):
+
+- Name a session when starting it and re-enter it with `hsh resume NAME`, instead of looking up the id in `hsh ls`.
+- Names are lowercase letters, digits, `.`, `_`, `-` (up to 63), unique per user, and cannot look like a session id.
+- A name that is also a directory name is ambiguous for `resume` and `rm`; use `./NAME` for the directory or the session id.
+- `HSH_SESSION_NAME` seeds the name for scripted runs; `--name` overrides it.

@@ -38,6 +38,7 @@ type runOptions struct {
 	configPath  string
 	workdir     string
 	sessionID   string
+	name        string
 	secretDB    string
 	tasksPath   string
 	networkMode string
@@ -57,6 +58,7 @@ func runCommand() *ff.Command {
 		pull:     "newer",
 	}
 	fs := ff.NewFlagSet("run")
+	fs.StringVar(&ro.name, 0, "name", "", "name the session so it can be re-entered with hsh resume NAME (default: $"+sessionNameEnv+")")
 	fs.StringVar(&ro.configPath, 0, "config", "", "config file that seeds the session's config copy (default: config from the image label)")
 	fs.StringVar(&ro.workdir, 0, "workdir", "", "directory the shell starts in inside the container (default: the workspace mount point, or "+privateWorkspaceDir+" when there is no workspace)")
 	fs.StringVar(&ro.secretDB, 0, "secret-db", secretstore.DefaultPath(), "secret store for hsh:// secret references")
@@ -106,6 +108,14 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	if err := validRuntime(ro.runtime); err != nil {
 		return err
+	}
+	sessionName := ""
+	if !ro.resume {
+		var err error
+		sessionName, err = initialSessionName(ro.name)
+		if err != nil {
+			return err
+		}
 	}
 	forwardSpecs, err := forward.ParseSpecs(ro.forwards)
 	if err != nil {
@@ -269,6 +279,11 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		if err := os.WriteFile(filepath.Join(sessionDir, "workspace"), []byte(workspaceSource+"\n"), 0o644); err != nil {
 			return err
+		}
+		if sessionName != "" {
+			if err := state.WriteName(sessionID, sessionName); err != nil {
+				return fmt.Errorf("write the session name: %w", err)
+			}
 		}
 		mode := cfg.Network.ModeOrDefault()
 		if ro.networkMode != "" {
@@ -526,7 +541,11 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 			infof("hsh: resuming session %s\n", sessionID)
 		}
 	} else {
-		infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
+		if sessionName != "" {
+			infof("hsh: creating session %s (%s, image %s)\n", sessionName, sessionID, cfg.Image)
+		} else {
+			infof("hsh: creating session %s (image %s)\n", sessionID, cfg.Image)
+		}
 		podCreateArgs := []string{"pod", "create", "--name", podName}
 		if workspaceSource != "" {
 			podCreateArgs = append(podCreateArgs, "--label", "hsh.workspace="+workspaceSource)
@@ -651,7 +670,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 	}
 	exitWith := func(code int) error {
 		if reason := exitReason.Load(); reason != nil {
-			fmt.Fprintf(os.Stderr, "hsh: exited session %s (requested by %s); start it again with: hsh resume %s\n", sessionID, *reason, sessionID)
+			fmt.Fprintf(os.Stderr, "hsh: exited session %s (requested by %s); start it again with: hsh resume %s\n", sessionLabel(sessionID), *reason, sessionLabel(sessionID))
 			code = 0
 		}
 		if code != 0 {
@@ -667,7 +686,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		if reason := detachReason.Load(); reason != nil {
 			by = " (requested by " + *reason + ")"
 		}
-		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh resume %s\n", sessionID, by, sessionID)
+		fmt.Fprintf(os.Stderr, "hsh: detached from session %s%s; re-enter with: hsh resume %s\n", sessionLabel(sessionID), by, sessionLabel(sessionID))
 		return true
 	}
 	if reattach {
@@ -677,7 +696,7 @@ func run(ctx context.Context, ro runOptions, positional, workspaceArg string) er
 		}
 		if running && clientAttached(sessionDir) {
 			if !ro.takeOver {
-				return fmt.Errorf("session %s is attached from another terminal (hsh, pid %d); detach it with: hsh detach %s, or take it over with: hsh resume --take-over %s", sessionID, readClientPID(sessionDir), sessionID, sessionID)
+				return fmt.Errorf("session %s is attached from another terminal (hsh, pid %d); detach it with: hsh detach %s, or take it over with: hsh resume --take-over %s", sessionLabel(sessionID), readClientPID(sessionDir), sessionLabel(sessionID), sessionLabel(sessionID))
 			}
 			if _, err := detachClient(sessionDir, 10*time.Second); err != nil {
 				return err

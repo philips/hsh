@@ -9,6 +9,8 @@ import (
 
 	"github.com/dustin/go-humanize"
 	"github.com/peterbourgon/ff/v4"
+
+	"hsh/internal/state"
 )
 
 func lsCommand() *ff.Command {
@@ -114,18 +116,22 @@ func lsCommand() *ff.Command {
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 		if !noHeading {
-			fmt.Fprintln(w, "SESSION\tSTATUS\tCREATED\t# OF CONTAINERS\tWORKSPACE")
+			fmt.Fprintln(w, "SESSION\tNAME\tSTATUS\tCREATED\t# OF CONTAINERS\tWORKSPACE")
 		}
 		for _, p := range pods {
 			ws := p.Workspace()
 			if ws == "" {
 				ws = "-"
 			}
+			name := state.ReadName(p.Session())
+			if name == "" {
+				name = "-"
+			}
 			created := p.Created
 			if t := p.CreatedTime(); !t.IsZero() {
 				created = humanize.Time(t)
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", p.Session(), sessionStatus(p), created, p.NumContainers(), ws)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", p.Session(), name, sessionStatus(p), created, p.NumContainers(), ws)
 		}
 		return w.Flush()
 	})

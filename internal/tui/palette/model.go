@@ -675,6 +675,20 @@ func (m Model) submitEntry() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func sessionLabel(id string) string {
+	if n := state.ReadName(id); n != "" {
+		return n
+	}
+	return id
+}
+
+func sessionText(id string) string {
+	if n := state.ReadName(id); n != "" {
+		return n + "  " + id
+	}
+	return id
+}
+
 func listSessions() []item {
 	entries, err := os.ReadDir(state.SessionsDir())
 	if err != nil {
@@ -689,7 +703,7 @@ func listSessions() []item {
 		if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
 			continue
 		}
-		text := e.Name()
+		text := sessionText(e.Name())
 		if ws, err := os.ReadFile(filepath.Join(dir, "workspace")); err == nil {
 			if w := strings.TrimSpace(string(ws)); w != "" {
 				text += "  " + w
@@ -827,10 +841,10 @@ func (m Model) View() string {
 		}
 	case viewConfirmExit:
 		sections = []string{
-			titleStyle.Render("Session: exit session " + m.target + "?"),
+			titleStyle.Render("Session: exit session " + sessionLabel(m.target) + "?"),
 			"",
 			"Its shell and everything running in it stop. The session's state is kept;",
-			"hsh resume " + m.target + " starts a new shell.",
+			"hsh resume " + sessionLabel(m.target) + " starts a new shell.",
 			"",
 			m.statusView(),
 			helpStyle.Render("  enter exit the session • esc cancel"),

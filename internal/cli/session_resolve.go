@@ -5,11 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"hsh/internal/state"
 )
 
 func resolveSession(explicit, retry string) (string, error) {
 	if explicit != "" {
-		id := strings.TrimPrefix(explicit, "hsh-")
+		id, err := resolveSessionRef(explicit)
+		if err != nil {
+			return "", err
+		}
 		if !podExists("hsh-" + id) {
 			return "", fmt.Errorf("session %s does not exist", id)
 		}
@@ -31,7 +36,11 @@ func resolveSession(explicit, retry string) (string, error) {
 	default:
 		var ids []string
 		for _, p := range pods {
-			ids = append(ids, strings.TrimPrefix(p.Name, "hsh-"))
+			id := strings.TrimPrefix(p.Name, "hsh-")
+			if n := state.ReadName(id); n != "" {
+				id += " (" + n + ")"
+			}
+			ids = append(ids, id)
 		}
 		return "", fmt.Errorf("multiple sessions for workspace %s:\n  %s\npick one with: %s", cwd, strings.Join(ids, "\n  "), retry)
 	}

@@ -147,7 +147,7 @@ func (r *forwardRegistry) start(session string, remote int) (palette.Managed, er
 		return palette.Managed{}, fmt.Errorf("already forwarding session %s's port %d", session, remote)
 	}
 	if !forwardSessionRunning("hsh-" + session + "-ws") {
-		return palette.Managed{}, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", session, session)
+		return palette.Managed{}, fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionLabel(session), sessionLabel(session))
 	}
 	if err := forward.CheckLocal("127.0.0.1", []forward.Spec{{Local: remote, Remote: remote}}); err != nil {
 		return palette.Managed{}, fmt.Errorf("local port %d is already in use; forward it under a different local port with: hsh forward <other>:%d", remote, remote)

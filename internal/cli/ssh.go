@@ -47,13 +47,13 @@ func sshProxyCommand() *ff.Command {
 				}
 				session = args[0]
 			}
-			sessionID, err := resolveSession(session, "hsh ssh proxy --session <id>")
+			sessionID, err := resolveSession(session, "hsh ssh proxy --session <name or id>")
 			if err != nil {
 				return err
 			}
 			wsName := "hsh-" + sessionID + "-ws"
 			if !containerRunning(wsName) {
-				return fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionID, sessionID)
+				return fmt.Errorf("session %s has no running workspace container; start it with: hsh resume %s", sessionLabel(sessionID), sessionLabel(sessionID))
 			}
 			sshArgs, err := sessionSSHArgs(sessionID)
 			if err != nil {

@@ -26,7 +26,10 @@ func proxyHoldCommand() *ff.Command {
 				}
 				session = id
 			}
-			session = strings.TrimPrefix(session, "hsh-")
+			session, err := resolveSessionRef(session)
+			if err != nil {
+				return err
+			}
 			cfgPath, err := sessionConfigPath(session)
 			if err != nil {
 				return err

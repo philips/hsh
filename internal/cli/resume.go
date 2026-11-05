@@ -10,6 +10,7 @@ import (
 	"github.com/peterbourgon/ff/v4"
 
 	"hsh/internal/secretstore"
+	"hsh/internal/state"
 )
 
 func resumeCommand() *ff.Command {
@@ -25,12 +26,12 @@ func resumeCommand() *ff.Command {
 	fs.Value(0, "forward", &ro.forwards, "while attached, make the session's port reachable on 127.0.0.1: PORT or LOCAL:PORT (repeatable; see hsh forward)")
 	return &ff.Command{
 		Name:      "resume",
-		Usage:     "hsh resume [FLAGS] [SESSION | WORKSPACE-DIR]",
+		Usage:     "hsh resume [FLAGS] [NAME | SESSION | WORKSPACE-DIR]",
 		ShortHelp: "re-enter an existing session (attach to its shell, or restart it if it exited)",
 		Flags:     fs,
 		Exec: func(ctx context.Context, args []string) error {
 			if len(args) > 1 {
-				return fmt.Errorf("unexpected arguments %v: at most one positional (a session id or a workspace directory) is accepted, and flags must come before it", args)
+				return fmt.Errorf("unexpected arguments %v: at most one positional (a session name or id, or a workspace directory) is accepted, and flags must come before it", args)
 			}
 			arg := ""
 			if len(args) == 1 {
@@ -71,6 +72,9 @@ func resolveResumeTarget(arg, cwd string, pods []podInfo) (string, error) {
 	if arg == "" {
 		workspace = cwd
 	} else if abs, ok := isDirectory(arg); ok {
+		if err := nameDirectoryConflict(arg, pods); err != nil {
+			return "", err
+		}
 		workspace = abs
 	}
 	if workspace != "" {
@@ -93,9 +97,13 @@ func resolveResumeTarget(arg, cwd string, pods []podInfo) (string, error) {
 			if t := p.CreatedTime(); !t.IsZero() {
 				created = t.Local().Format("2006-01-02 15:04")
 			}
-			fmt.Fprintf(&b, "\n  %s  %s  %s", p.Session(), sessionStatus(p), created)
+			name := state.ReadName(p.Session())
+			if name == "" {
+				name = "-"
+			}
+			fmt.Fprintf(&b, "\n  %s  %s  %s  %s", name, p.Session(), sessionStatus(p), created)
 		}
-		b.WriteString("\npick one with: hsh resume <session id>")
+		b.WriteString("\npick one with: hsh resume <name or session id>")
 		return "", fmt.Errorf("%s", b.String())
 	}
 	matched, err := matchPods(arg, pods)

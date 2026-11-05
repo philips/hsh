@@ -28,7 +28,7 @@ func TestResolveResumeTarget(t *testing.T) {
 		{name: "directory argument", arg: ws2, cwd: empty, want: "9f0000000000"},
 		{name: "cwd with no session", cwd: empty, errHas: []string{"no session for workspace " + empty, "hsh run IMAGE"}},
 		{name: "directory with no session", arg: empty, cwd: ws1, errHas: []string{"no session for workspace " + empty}},
-		{name: "cwd with several sessions", cwd: ws1, errHas: []string{"multiple sessions for workspace " + ws1, "53bd3fc7e5ba", "53cc00000000", "hsh resume <session id>"}},
+		{name: "cwd with several sessions", cwd: ws1, errHas: []string{"multiple sessions for workspace " + ws1, "53bd3fc7e5ba", "53cc00000000", "hsh resume <name or session id>"}},
 		{name: "exact id", arg: "9f0000000000", cwd: empty, want: "9f0000000000"},
 		{name: "pod name", arg: "hsh-9f0000000000", cwd: empty, want: "9f0000000000"},
 		{name: "unique prefix", arg: "53bd", cwd: empty, want: "53bd3fc7e5ba"},
@@ -60,6 +60,17 @@ func TestResolveResumeTargetDirectoryWinsOverID(t *testing.T) {
 	pods := []podInfo{{ID: "a", Name: "hsh-" + ws, Labels: map[string]string{"hsh.workspace": "/elsewhere"}}}
 	if _, err := resolveResumeTarget(ws, t.TempDir(), pods); err == nil || !strings.Contains(err.Error(), "no session for workspace") {
 		t.Fatalf("a directory argument must be treated as a workspace, got %v", err)
+	}
+}
+
+func TestRunAcceptsNameOnly(t *testing.T) {
+	if err := Root().Parse([]string{"run", "--name", "x", "pi"}); err != nil {
+		t.Errorf("run --name: %v", err)
+	}
+	for _, args := range [][]string{{"resume", "--name", "x"}, {"rename", "--name", "x"}} {
+		if err := Root().Parse(args); err == nil {
+			t.Errorf("%v: parsed without error", args)
+		}
 	}
 }
 

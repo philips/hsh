@@ -76,6 +76,7 @@ func Root() *ff.Command {
 		Subcommands: []*ff.Command{
 			runCommand(),
 			resumeCommand(),
+			renameCommand(),
 			secretCommand(),
 			proxyCommand(),
 			monitorCommand(),
@@ -180,8 +181,20 @@ func helpCommand(root *ff.Command) *ff.Command {
 }
 
 func sessionFilterFlags(fs *ff.FlagSet, f *monitordb.Filter) {
-	fs.StringVar(&f.Session, 0, "session", "", "only this session (session id)")
+	fs.StringVar(&f.Session, 0, "session", "", "only this session (session name or id)")
 	fs.StringVar(&f.Workspace, 0, "workspace", "", "only this workspace (directory path)")
+}
+
+func resolveFilterSession(f *monitordb.Filter) error {
+	if f.Session == "" {
+		return nil
+	}
+	id, err := resolveSessionRef(f.Session)
+	if err != nil {
+		return err
+	}
+	f.Session = id
+	return nil
 }
 
 func secretDBFlag(fs *ff.FlagSet) *string {

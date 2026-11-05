@@ -43,7 +43,11 @@ proxy, the monitor database, and the example image:
   state, proxy, and DNS intact; `--rm` runs remove themselves; a second
   session makes bare `hsh resume` list the ids; `hsh resume <id>` and
   `hsh resume <id prefix>` pick one; `hsh resume DIR` resolves the workspace
-  from another directory;
+  from another directory; `hsh rename` names a session, `hsh ls` shows the
+  name (and `-q` stays ids only), `hsh resume NAME` works from any
+  directory, a taken or invalid `--name`/`HSH_SESSION_NAME` fails before a
+  pod is created, `--name` overrides `HSH_SESSION_NAME`, and `hsh rm NAME`
+  and `hsh rename --clear` work;
   `hsh rm --garbage` collects orphaned session state
 - **step 6**: `hsh ls` / `hsh rm` list and clean up sandboxes
 - **step 7**: `hsh monitor` refuses to run without a terminal, and the
