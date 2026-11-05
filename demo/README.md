@@ -93,9 +93,15 @@ demo/encode.sh demo/out/tape-example-frames demo/out/preview.gif
 demo/encode.sh demo/out/webserver.gif demo/out/webserver.webm
 ```
 
-Set `FRAMERATE=` to match the take's framerate when encoding from frames
-(default 24). Frames give the best quality; a GIF source is capped by its
-256-color palette.
+Set `FRAMERATE=` to match the take's framerate when encoding from frames. If
+the tape has no `Set Framerate`, VHS captured at 50fps, so use `FRAMERATE=50`
+for real-time playback. `SCALE=640` shrinks a GIF preview. Frames give the best
+quality; a GIF source is capped by its 256-color palette.
+
+GIF encoding uses a two-pass palette to keep memory flat. Do not switch it to
+the common one-pass `palettegen/paletteuse` split filter — it buffers the whole
+video in RAM (a ~4900-frame take at 1134x570 needs ~12GB) and the kernel OOM
+killer will take down the entire session, tmux included.
 
 ## Skip ffmpeg entirely — export raw frames
 
