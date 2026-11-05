@@ -10,5 +10,5 @@ ENV HOME=/home/hsh
 RUN dnf install -y bash curl git fd-find ripgrep && dnf clean all
 RUN mkdir -p /home/hsh && curl -fsSL https://claude.ai/install.sh | bash
 RUN mkdir -p /home/hsh/.claude && echo '{"tui":"fullscreen"}' > /home/hsh/.claude/settings.json
-RUN echo '{"hasCompletedOnboarding":true,"theme":"dark","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' > /home/hsh/.claude.json
+RUN echo '{"hasCompletedOnboarding":true,"theme":"auto","projects":{"/workspace":{"hasTrustDialogAccepted":true}}}' > /home/hsh/.claude.json
 ENV PATH="/home/hsh/.local/bin:${PATH}"
