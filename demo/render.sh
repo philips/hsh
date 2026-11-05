@@ -24,6 +24,7 @@ Args:
 
 Env:
   FRAMERATE   override framerate for fast/frames/final (default: tape's own)
+  HUMAN       set to 1 for human-like typing (varied speed, pauses, typos)
 
 Examples:
   demo/render.sh preview demo/tape-example.md
@@ -45,7 +46,9 @@ mkdir -p "$OUT"
 base="$(basename "${MD%.*}")"
 tape="$OUT/$base.tape"
 
-gen() { python3 "$MD2TAPE" "$MD" "$@" -o "$tape"; }
+hu=()
+[ -n "${HUMAN:-}" ] && hu=(--human)
+gen() { python3 "$MD2TAPE" "$MD" "${hu[@]}" "$@" -o "$tape"; }
 fr=()
 [ -n "${FRAMERATE:-}" ] && fr=(--framerate "$FRAMERATE")
 

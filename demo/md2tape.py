@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import argparse
+import hashlib
 import os
+import random
 import re
 import sys
 
@@ -25,7 +27,42 @@ def esc(s):
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def convert(text):
+def parse_ms(s, default=60.0):
+    s = str(s).strip().lower()
+    try:
+        if s.endswith("ms"):
+            return float(s[:-2])
+        if s.endswith("s"):
+            return float(s[:-1]) * 1000
+        return float(s)
+    except ValueError:
+        return default
+
+
+def humanize(cmdline, base_ms):
+    rng = random.Random(int(hashlib.md5(cmdline.encode()).hexdigest(), 16))
+    out = []
+    words = cmdline.split(" ")
+    n = len(words)
+    for i, word in enumerate(words):
+        seg = word + (" " if i < n - 1 else "")
+        spd = max(25, base_ms * rng.uniform(0.65, 1.45))
+        at = f"{int(round(spd))}ms"
+        if len(word) >= 3 and rng.random() < 0.07:
+            stray = rng.choice("asdfghjklqwertyuiop")
+            out.append(f'Type@{at} "{esc(stray)}"')
+            out.append(f"Sleep {rng.randint(110, 240)}ms")
+            out.append("Backspace")
+        out.append(f'Type@{at} "{esc(seg)}"')
+        r = rng.random()
+        if r < 0.08:
+            out.append(f"Sleep {rng.randint(300, 650)}ms")
+        elif r < 0.33:
+            out.append(f"Sleep {rng.randint(70, 190)}ms")
+    return out
+
+
+def convert(text, human=False):
     lines = text.splitlines()
     out = []
     i = 0
@@ -103,15 +140,21 @@ def convert(text):
             i += 1
 
             speed = kv.get("typingspeed")
-            if speed:
+            human_this = "human" in flags or (human and "nohuman" not in flags)
+            if speed and not human_this:
                 emit(f"Set TypingSpeed {speed}")
+            base_ms = parse_ms(speed, 60.0) if speed else 60.0
             for cmdline in block:
                 if not cmdline.strip():
                     continue
-                emit(f'Type "{esc(cmdline)}"')
+                if human_this:
+                    for c in humanize(cmdline, base_ms):
+                        emit(c)
+                else:
+                    emit(f'Type "{esc(cmdline)}"')
                 if "noenter" not in flags:
                     emit("Enter")
-            if speed:
+            if speed and not human_this:
                 emit("Set TypingSpeed 60ms")
             sleep = kv.get("sleep", "2s")
             if sleep.lower() != "none":
@@ -215,6 +258,7 @@ def main():
     ap.add_argument("--framerate", type=int, default=None, help="force Set Framerate (fewer frames = faster encode); independent of sleeps")
     ap.add_argument("--format", help="override output extension (e.g. gif, webm, mp4)")
     ap.add_argument("--script", action="store_true", help="emit a runnable bash script of the typed commands (for live debugging) instead of a tape")
+    ap.add_argument("--human", action="store_true", help="vary typing speed, add word pauses and occasional typo+backspace (deterministic/seeded)")
     args = ap.parse_args()
 
     with open(args.input) as f:
@@ -234,7 +278,7 @@ def main():
             sys.stdout.write(tape)
         return
 
-    tape = convert(src)
+    tape = convert(src, human=args.human)
 
     speed = args.speed
     if args.fast and speed == 1.0:

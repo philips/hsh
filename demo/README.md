@@ -135,6 +135,23 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 | `<!-- tape:raw Ctrl+L -->` | passthrough | emit any raw VHS line |
 | `<!-- tape:say ... -->` | nothing | voiceover-only note, ignored by VHS |
 
+## Human-like typing
+
+VHS types at a constant robotic rate. `--human` rewrites typed commands with
+varied per-word speed, short thinking pauses, and the occasional typo that gets
+backspaced and corrected. It is seeded from the command text, so the output is
+deterministic and diff-friendly in git.
+
+```sh
+python3 demo/md2tape.py demo/tape-example.md --human -o demo/out/webserver.tape
+# or via render.sh:
+HUMAN=1 demo/render.sh final demo/tape-example.md
+```
+
+Per-block overrides: `<!-- tape:run human -->` forces it on for one block,
+`<!-- tape:run nohuman -->` forces it off. The base speed comes from the
+block's `typingspeed=` (default 60ms) and is jittered around that.
+
 ## Light terminal (white background)
 
 VHS defaults to a dark theme. Set a light one with a `tape:set Theme`
