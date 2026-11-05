@@ -34,6 +34,12 @@ main-screen renderer, which has no in-app scrollback; only later launches,
 after remote flags are cached in `~/.claude.json`, would get the fullscreen
 renderer. Users can switch with `/tui`.
 
+It also ships `/home/hsh/.claude.json` with `hasCompletedOnboarding`,
+`theme: "dark"`, and `projects["/workspace"].hasTrustDialogAccepted`, so a
+fresh session skips the theme picker, the security notes, and the folder
+trust dialog. A session whose `mounts` put the workspace elsewhere still
+gets the trust dialog.
+
 Build one locally with the helper, which reads `hsh.json`, compacts it
 with `jq`, and passes it as the `HSH_LABEL` build arg:
 
