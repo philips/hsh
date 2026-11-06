@@ -16,12 +16,15 @@ forwards the port to try the server from the host.
 
 <!-- tape START -->
 
-<!-- tape:run -->
+<!-- tape:run sleep=none -->
 ```sh
 # ensure the session is clean
 export HSH_SESSION_NAME=forward-example
-hsh rm -f $HSH_SESSION_NAME
+hsh rm -f $HSH_SESSION_NAME && echo CLEANUP-FI""NISHED
+clear
 ```
+
+<!-- tape:wait /CLEANUP-FINISHED/ -->
 
 ## Step 1 — launch Claude Code in a sandbox
 
@@ -32,7 +35,7 @@ hsh run claude-code .
 
 ## Step 2 — ask the agent to build a web server
 
-We let the agent type its own task. It will try to reach `go.dev`, which the
+The agent will try to reach `go.dev`, which the
 proxy holds for approval.
 
 <!-- tape:run sleep=none -->
@@ -75,21 +78,28 @@ Open the monitor again, start a forward, and point it at port 8080.
 <!-- tape:wait /1 shell still running/ -->
 
 <!-- tape:monitor -->
-<!-- tape:type start a forward -->
+<!-- tape:type forward start -->
 <!-- tape:key Enter -->
 <!-- tape:sleep 500ms -->
 <!-- tape:type 8080 -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
-<!-- tape:sleep 3s -->
+<!-- tape:sleep 500ms -->
 <!-- tape:type detatch session -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
+<!-- tape:sleep 3000ms -->
 
 ## Step 5 — hit the server from the host
 
+<!-- tape:run -->
 ```sh
-# this is on the host outside the hsh sandbox session
+clear && sleep 1
+```
+
+<!-- tape:run -->
+```sh
+# now outside hsh sandbox
 curl http://localhost:8080
 ```
 
