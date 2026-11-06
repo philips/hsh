@@ -20,16 +20,15 @@ forwards the port to try the server from the host.
 ```sh
 # ensure the session is clean
 export HSH_SESSION_NAME=forward-example
-hsh rm -f $HSH_SESSION_NAME && echo CLEANUP-FI""NISHED
-clear
+hsh rm -f $HSH_SESSION_NAME; echo CLEANUP-FI""NISHED
 ```
-
 <!-- tape:wait /CLEANUP-FINISHED/ -->
 
 ## Step 1 — launch Claude Code in a sandbox
 
 <!-- tape:run sleep=10s -->
 ```sh
+clear
 hsh run claude-code .
 ```
 
@@ -57,9 +56,9 @@ Bring up the monitor, approve the pending requests to connect to Fedora mirrors,
 <!-- tape:type a -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
-<!-- tape:sleep 3s -->
+<!-- tape:sleep 1s -->
 <!-- tape:monitor -->
-<!-- tape:sleep 8s -->
+<!-- tape:sleep 1s -->
 
 <!-- tape:wait /SUSPENDED: proxy approval/ -->
 
@@ -68,7 +67,7 @@ Bring up the monitor, approve the pending requests to connect to Fedora mirrors,
 <!-- tape:type a -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
-<!-- tape:sleep 3s -->
+<!-- tape:sleep 1s -->
 <!-- tape:monitor -->
 
 ## Step 4 — forward the port and try the web server
@@ -80,12 +79,13 @@ Open the monitor again, start a forward, and point it at port 8080.
 <!-- tape:monitor -->
 <!-- tape:type forward start -->
 <!-- tape:key Enter -->
+<!-- tape:wait /8080/ -->
 <!-- tape:sleep 500ms -->
 <!-- tape:type 8080 -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
 <!-- tape:sleep 500ms -->
-<!-- tape:type detatch session -->
+<!-- tape:type detach session -->
 <!-- tape:sleep 500ms -->
 <!-- tape:key Enter -->
 <!-- tape:sleep 3000ms -->
