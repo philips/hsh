@@ -110,6 +110,12 @@ def type_line(fd, line, marker):
     expect(fd, marker, since=start)
 
 
+def read_session_config(sid):
+    import json
+    with open(os.path.join(state, "sessions", sid, "config.json")) as f:
+        return json.load(f)
+
+
 def allowed_patterns(sid):
     import sqlite3
     db = sqlite3.connect(os.path.join(state, "sessions", sid, "monitor.db"))
