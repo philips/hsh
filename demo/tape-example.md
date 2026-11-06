@@ -35,10 +35,14 @@ hsh run claude-code .
 We let the agent type its own task. It will try to reach `go.dev`, which the
 proxy holds for approval.
 
-<!-- tape:run sleep=15s -->
+<!-- tape:run sleep=none -->
 ```text
 install the latest go from go.dev and build a hello world web server on port 8080
 ```
+
+Wait until the go.dev denial actually pops up, then bring up the monitor.
+
+<!-- tape:wait timeout=180s hsh proxy denied | grep -q go.dev -->
 
 ## Step 3 — approve the proxy requests to go.dev
 
@@ -77,7 +81,8 @@ Bring up the monitor, approve the pending request, and confirm.
 ```text
 dl.google.com access via egress proxy approved
 ```
-<!-- tape:sleep 30s -->
+
+<!-- tape:wait timeout=180s hsh proxy denied | grep -q dl.google.com -->
 
 ## Step 4 — forward the port and try the web server
 

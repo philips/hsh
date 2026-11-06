@@ -146,14 +146,18 @@ happens. VHS's `Exec` runs a command outside the recorded terminal and blocks
 the tape until it exits, so `tape:wait` polls your event every 0.5s:
 
 ```
-<!-- tape:wait timeout=120s sqlite3 ~/.local/state/hsh/monitor.db "select 1 from events where kind='egress-approval'" -->
+<!-- tape:wait timeout=180s hsh proxy denied | grep -q go.dev -->
 ```
 
-The tape pauses until the query returns a row (exit 0), then continues;
-`timeout=` (anywhere in the directive, default 60s) fails the run instead of
-hanging forever. Any shell predicate works: `curl -sf localhost:8080`,
-`hsh exec my-session test -f /app/built`, `grep -q pattern file`, etc. The
-`--script` debug output includes the same wait loop, so live repro matches.
+advances the moment `go.dev` shows up in `hsh proxy denied` (the pending
+egress denials) — no guessing how long the agent takes. Any shell predicate
+works: `sqlite3 ... "select ..."`, `curl -sf localhost:8080`,
+`hsh exec my-session test -f /app/built`, `grep -q pattern file`, etc.
+
+The tape pauses until the predicate exits 0, then continues; `timeout=`
+(anywhere in the directive, default 60s) fails the run instead of hanging
+forever. The `--script` debug output includes the same wait loop, so live repro
+matches.
 
 
 ## Markup
