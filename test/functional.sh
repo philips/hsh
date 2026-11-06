@@ -383,7 +383,7 @@ pass "a policy is validated and stored, applying copies its rules (a policy deny
 
 echo "== step 3d: the connection log, hsh proxy report, --wait, and report mode"
 REPORT="$("$HSH" proxy report --session "$DB_SESSION")"
-echo "$REPORT" | grep -Eq '^api\.mistral\.ai +[0-9]+ +443 ' || fail "proxy report does not list api.mistral.ai: $REPORT"
+echo "$REPORT" | grep -Eq '^api\.mistral\.ai +[0-9]+ +([0-9]+,)*443[ ,]' || fail "proxy report does not list api.mistral.ai: $REPORT"
 echo "$REPORT" | grep -Eq '^api\.mistral\.ai .*allowed, denied$' || fail "proxy report does not show api.mistral.ai as both allowed and denied: $REPORT"
 "$HSH" proxy report --session "$DB_SESSION" --format policy >"$TMP/draft.json" || fail "proxy report --format policy failed"
 "$HSH" policy add draft "$TMP/draft.json" >/dev/null || fail "the draft policy does not load: $(cat "$TMP/draft.json")"
