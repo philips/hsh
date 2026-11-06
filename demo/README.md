@@ -165,6 +165,35 @@ work with a `tape:set`:
 <!-- tape:set WaitTimeout 3m -->
 ```
 
+### Waiting for a command to complete
+
+VHS has no wait-for-exit primitive, and often you do not need one: commands
+typed while the shell is busy are buffered by the pty and run in order
+(type-ahead). A wait only matters when the next line must be typed at a fresh
+prompt for visual cleanliness.
+
+Then wait on the command's completion output — either its real final line
+(`hsh rm` prints `removed <name>`) or a marker you append. Because `Wait`
+also matches typed text, build the marker so the typed line does not contain
+it — split it with quotes:
+
+```
+<!-- tape:run sleep=none -->
+```sh
+hsh rm -f $HSH_SESSION_NAME && echo CLEANUP-FI""NISHED
+```
+<!-- tape:wait /CLEANUP-FINISHED/ -->
+```
+
+The screen shows the typed `CLEANUP-FI""NISHED` but the output is
+`CLEANUP-FINISHED`, so the wait matches only completion. Do not wait on
+`removed` in pre-take cleanup — `hsh rm -f` prints nothing when the session
+does not exist, and the wait would time out and fail the render.
+
+Notes: `Wait+ Line` does not work reliably in this vhs build (it misses real
+output lines — verified), so stick to the `Screen` form. Waiting on the bare
+prompt also does not work (the screen matcher never sees it cleanly).
+
 **Shell form (needs a shell prompt):** VHS (v0.11) has no host-side command
 execution, so the wait is typed into the terminal: it prefixes an
 `until <cmd>; do sleep 0.5; done; ` loop onto the next `tape:run` command,
