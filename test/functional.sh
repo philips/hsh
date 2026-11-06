@@ -1215,7 +1215,7 @@ cat >"$TMP/hold.config.hsh" <<EOF
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "mounts": ["$HOLD_WS:/workspace"],
-  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "30s" }
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "30s", "suspend_delay": "off" }
 }
 EOF
 cat >"$TMP/hold-off.config.hsh" <<EOF
@@ -1224,7 +1224,7 @@ cat >"$TMP/hold-off.config.hsh" <<EOF
   "image": "localhost/hsh-example:latest",
   "shell": "/bin/bash",
   "mounts": ["$HOLD_WS:/workspace"],
-  "network": { "mode": "allowlist", "allow": ["host.containers.internal"] }
+  "network": { "mode": "allowlist", "allow": ["host.containers.internal"], "approval_wait": "off", "suspend_delay": "off" }
 }
 EOF
 
@@ -1294,11 +1294,16 @@ OFF_TIME="$(sed -n 's/.*optout-result code=403 time=\([0-9.]*\).*/\1/p' "$TMP/ho
 [ -n "$OFF_TIME" ] || fail "an opted-out session did not answer 403: $(cat "$TMP/hold-off.out")"
 awk -v t="$OFF_TIME" 'BEGIN { exit !(t < 10) }' || fail "an opted-out session still waited ($OFF_TIME s)"
 grep -q "blocked on purpose" "$TMP/hold-off.out" || fail "the denial text does not tell the agent what to do: $(cat "$TMP/hold-off.out")"
-pass "holding is off by default: a denied request fails at once, with a message aimed at the agent"
+pass "approval_wait off opts out: a denied request fails at once, with a message aimed at the agent"
 
 OFF_SESSION="$(for id in $(session_ids); do case " $BEFORE_IDS " in *" $id "*) ;; *) echo "$id" ;; esac; done | head -1)"
-"$HSH" proxy hold --session "$OFF_SESSION" | grep -q "holding is off, the default" || fail "hsh proxy hold did not report that holding is off by default"
-"$HSH" proxy hold --session "$OFF_SESSION" 4s | grep -q "up to 4s" || fail "hsh proxy hold 4s did not apply"
+cat >"$TMP/edit-session-doc.sh" <<SEOF
+#!/bin/sh
+cat "$TMP/session-doc.json" > "\$1"
+SEOF
+chmod +x "$TMP/edit-session-doc.sh"
+printf '%s\n' '{"approval_wait": "4s", "suspend_delay": "off"}' >"$TMP/session-doc.json"
+EDITOR="$TMP/edit-session-doc.sh" "$HSH" settings edit --session "$OFF_SESSION" </dev/null | grep -q "approval_wait 4s (session override)" || fail "hsh settings edit --session did not apply the 4s override"
 (cd "$HOLD_WS" && "$HSH" resume "$OFF_SESSION") >"$TMP/hold-4s.out" 2>&1 <<'CMDS' &
 sleep 3
 curl -s -m 30 -w '\nfourgs-result code=%{http_code} time=%{time_total}\n' http://blocked-four.example.test/ 2>&1
@@ -1311,7 +1316,7 @@ kill "$ATTENDED_PID" 2>/dev/null || true
 FOUR_TIME="$(sed -n 's/.*fourgs-result code=403 time=\([0-9.]*\).*/\1/p' "$TMP/hold-4s.out" | head -1)"
 [ -n "$FOUR_TIME" ] || fail "the 4s hold did not end in a 403: $(cat "$TMP/hold-4s.out")"
 awk -v t="$FOUR_TIME" 'BEGIN { exit !(t >= 3.5 && t < 20) }' || fail "an unanswered hold should last about 4s, got $FOUR_TIME s"
-pass "hsh proxy hold 4s turns holding on live; an unapproved request is held about 4s, then denied"
+pass "hsh settings edit --session turns holding on live; an unapproved request is held about 4s, then denied"
 
 echo "== step 19b: each proxy sees only its own session"
 ISO_WS="$TMP/iso-ws"

@@ -116,6 +116,17 @@ def read_session_config(sid):
         return json.load(f)
 
 
+def disable_holding(session):
+    sid = session[len("hsh-"):] if session.startswith("hsh-") else session
+    cfg = read_session_config(sid)
+    cfg.setdefault("network", {})["approval_wait"] = "off"
+    cfg["network"]["suspend_delay"] = "off"
+    with open(os.path.join(state, "sessions", sid, "config.json"), "w") as f:
+        import json
+        json.dump(cfg, f, indent=2)
+    time.sleep(1.5)
+
+
 before = pods()
 pid, fd = spawn("run", "--runtime", os.environ.get("HSH_TEST_RUNTIME", "container"), "--pull=never", image, ".")
 expect(fd, "# ", 60)
@@ -124,6 +135,7 @@ session = new_pod(before)
 sid = session[len("hsh-"):]
 expect(fd, "nothing to review", 10)
 print("PASS: the green status line is drawn with the session")
+disable_holding(session)
 
 type_line(fd, "curl -s -m 8 https://blocked.example.test >/dev/null 2>&1; echo curl-done-$((6*7))", "curl-done-42")
 expect(fd, "1 proxy request needs review", 20)

@@ -40,7 +40,7 @@ const (
 	SuggestedApprovalWait               = 30 * time.Second
 	MaxApprovalWait                     = 5 * time.Minute
 	DefaultSuspendDelay                 = 3 * time.Second
-	MaxSuspendDelay                    = time.Minute
+	MaxSuspendDelay                     = time.Minute
 )
 
 func ParseSuspendDelay(v string) (time.Duration, error) {

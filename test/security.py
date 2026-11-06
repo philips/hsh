@@ -107,6 +107,22 @@ session = new_pod(before)
 expect(fd, "nothing to review", 10)
 print("PASS: the session starts with the green status line")
 
+
+def disable_holding(session):
+    import json
+    sid = session[len("hsh-"):] if session.startswith("hsh-") else session
+    path = os.path.join(state, "sessions", sid, "config.json")
+    with open(path) as f:
+        cfg = json.load(f)
+    cfg.setdefault("network", {})["approval_wait"] = "off"
+    cfg["network"]["suspend_delay"] = "off"
+    with open(path, "w") as f:
+        json.dump(cfg, f, indent=2)
+    time.sleep(1.5)
+
+
+disable_holding(session)
+
 # 1. the agent sprays every query that can make the user terminal reply on
 #    the input path; the harness answers as a real terminal would.
 mark = len(transcript)

@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-
 	"hsh/internal/config"
 	"hsh/internal/state"
 )

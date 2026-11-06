@@ -109,9 +109,13 @@ func describeSettings(s settings.Settings, out *strings.Builder) {
 }
 
 func describeSessionSettings(session, cfgPath string, out *strings.Builder) {
-	wait, waitNote := effectiveApprovalWaitForSession(cfgPath).String(), "builtin default"
+	wait := effectiveApprovalWaitForSession(cfgPath)
+	waitText, waitNote := wait.String(), "builtin default"
 	if cfg, err := config.Load(cfgPath); err == nil && cfg.Network.ApprovalWait != "" {
 		waitNote = "session override"
+		if wait <= 0 {
+			waitText = "off"
+		}
 	}
 	delay := effectiveSuspendDelayForSession(cfgPath)
 	delayText, delayNote := delay.String(), "builtin default"
@@ -121,7 +125,7 @@ func describeSessionSettings(session, cfgPath string, out *strings.Builder) {
 			delayText = "off"
 		}
 	}
-	fmt.Fprintf(out, "session %s: approval_wait %s (%s), suspend_delay %s (%s)\n", session, wait, waitNote, delayText, delayNote)
+	fmt.Fprintf(out, "session %s: approval_wait %s (%s), suspend_delay %s (%s)\n", session, waitText, waitNote, delayText, delayNote)
 }
 
 func editSettingsOnce(path string) (settings.Settings, error) {
@@ -249,10 +253,10 @@ func settingsCommand() *ff.Command {
 		})
 	var cmd *ff.Command
 	cmd = &ff.Command{
-		Name:         "settings",
-		Usage:        "hsh settings SUBCOMMAND",
-		ShortHelp:    "global hsh settings, and per-session overrides (apply everywhere unless overridden)",
-		Flags:        ff.NewFlagSet("settings"),
+		Name:        "settings",
+		Usage:       "hsh settings SUBCOMMAND",
+		ShortHelp:   "global hsh settings, and per-session overrides (apply everywhere unless overridden)",
+		Flags:       ff.NewFlagSet("settings"),
 		Subcommands: []*ff.Command{edit},
 	}
 	cmd.Exec = groupExec(&cmd)

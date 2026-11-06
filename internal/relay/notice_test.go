@@ -40,8 +40,8 @@ func TestStatusLineShowsTheSessionNotice(t *testing.T) {
 func TestStatusLineShowsTheSuspendNote(t *testing.T) {
 	suspended, pending := "", 1
 	r := &Relay{cols: 160, cfg: Config{
-		Name:       "unit",
-		Count:      func() (int, int, error) { return pending, 1, nil },
+		Name:        "unit",
+		Count:       func() (int, int, error) { return pending, 1, nil },
 		SuspendNote: func() string { return suspended },
 	}}
 	r.pollLocked()

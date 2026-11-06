@@ -21,18 +21,18 @@ const (
 )
 
 type Config struct {
-	In         io.Reader
-	Out        io.Writer
-	Pty        *os.File
-	Cols, Rows int
-	StatusLine bool
-	Key        Key
-	Count      func() (pending, held int, err error)
-	Notice     func() string
+	In          io.Reader
+	Out         io.Writer
+	Pty         *os.File
+	Cols, Rows  int
+	StatusLine  bool
+	Key         Key
+	Count       func() (pending, held int, err error)
+	Notice      func() string
 	SuspendNote func() string
-	Overlay    func(cols, rows int) tea.Model
-	Name       string
-	PollEvery  time.Duration
+	Overlay     func(cols, rows int) tea.Model
+	Name        string
+	PollEvery   time.Duration
 }
 
 type Relay struct {
