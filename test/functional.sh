@@ -1871,7 +1871,7 @@ printf '%s\n' '{ "version": 99, "image": "localhost/hsh-example:latest", "shell"
 printf '%s\n' '{ "version": 1, "image": "localhost/hsh-example:latest", "network": { "alow": [] } }' >"$TMP/ver-typo.hsh"
 ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 2)' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-missing.hsh"
-ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 1); update hsh' \
+ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 2); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-newer.hsh"
 ver_expect_failure "a seed config with an unknown field" 'unknown field "alow"' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-typo.hsh"
@@ -1887,7 +1887,7 @@ FROM localhost/hsh-example:latest
 LABEL org.ifup.hsh='{"shell":"/bin/bash"}'
 EOF
 podman build -q -t localhost/hsh-ver-missing:latest -f "$TMP/ver-label2.Containerfile" "$TMP" >/dev/null || fail "could not build the unversioned-label image"
-ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 1); update hsh' \
+ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 2); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-newer:latest
 ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 2); rebuild the image' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-missing:latest
@@ -1934,7 +1934,7 @@ grep -Eq 'before:.*(response 403|code=403)' "$TMP/ver-live.out" || fail "example
 printf '%s\n' '{ "version": 99, "network": { "mode": "allowlist", "allow": ["example.com", "host.containers.internal"] } }' >"$VER_CFG"
 cp "$VER_CFG" "$TMP/ver-cfg.saved"
 "$HSH" proxy allow --session "$VER_SESSION" https://other.example >"$TMP/ver.out" 2>&1 && fail "proxy allow edited a config from a newer hsh"
-grep -q "config version 99 is newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "proxy allow did not explain: $(cat "$TMP/ver.out")"
+grep -q "config version 99 is newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "proxy allow did not explain: $(cat "$TMP/ver.out")"
 cmp -s "$VER_CFG" "$TMP/ver-cfg.saved" || fail "a refused proxy allow modified the config"
 touch "$VER_WS/edited"
 wait "$VER_PID" || true
@@ -1944,7 +1944,7 @@ grep -q "configuration reload failed.*newer than this hsh reads" <<<"$VER_PROXY_
 pass "a running proxy keeps its last readable policy when the session config becomes unreadable, and logs why"
 
 "$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config is from a newer hsh"
-grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 1); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
+grep -q "session $VER_SESSION: .*config version 99 is newer than this hsh reads (version 2); update hsh" "$TMP/ver.out" || fail "resume did not explain: $(cat "$TMP/ver.out")"
 printf '%s\n' '{ "image": "localhost/hsh-example:latest" }' >"$VER_CFG"
 "$HSH" resume "$VER_SESSION" >"$TMP/ver.out" 2>&1 </dev/null && fail "resumed a session whose config has no version"
 grep -q "remove the session with: hsh rm $VER_SESSION" "$TMP/ver.out" || fail "resume did not say how to remove the stale session: $(cat "$TMP/ver.out")"
