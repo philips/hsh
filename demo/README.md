@@ -158,6 +158,13 @@ that was *typed* on screen, so pick a pattern that only appears in the output
 you are waiting for. Append `line` (`/pattern/ line`) to match new output
 lines instead of the composited screen.
 
+`Wait` has a built-in timeout (the default is short); raise it for slow agent
+work with a `tape:set`:
+
+```
+<!-- tape:set WaitTimeout 3m -->
+```
+
 **Shell form (needs a shell prompt):** VHS (v0.11) has no host-side command
 execution, so the wait is typed into the terminal: it prefixes an
 `until <cmd>; do sleep 0.5; done; ` loop onto the next `tape:run` command,
