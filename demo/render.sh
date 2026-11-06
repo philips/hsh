@@ -26,6 +26,7 @@ Env:
   FRAMERATE   override framerate for fast/frames/final (default: tape's own)
   HUMAN       set to 1 for human-like typing (varied speed, pauses, typos)
   PROMPT      shell prompt for the recorded terminal (default: vhs's purple '> ')
+  FORCE       set to 1 to run even if the target file/directory already exists
 
 Examples:
   demo/render.sh preview demo/tape-example.md
@@ -33,6 +34,18 @@ Examples:
   demo/render.sh frames  demo/tape-example.md
   demo/render.sh final   Documentation/sessions.md
 EOF
+}
+
+require_absent() {
+  if [ -e "$1" ] && [ -z "${FORCE:-}" ]; then
+    echo "refusing to run: $2 already exists: $1" >&2
+    echo "remove it first (rm -rf '$1') or set FORCE=1 to overwrite" >&2
+    exit 1
+  fi
+}
+
+tape_output() {
+  grep -m1 '^Output' "$tape" | sed -e 's/^Output "//' -e 's/"$//'
 }
 
 [ $# -ge 2 ] || { usage; exit 1; }
@@ -57,17 +70,20 @@ fr=()
 case "$MODE" in
   preview)
     gen --format gif --framerate "${FRAMERATE:-24}"
+    require_absent "$(tape_output)" "output file"
     echo "==> preview (GIF, real sleeps)"
     vhs "$tape"
     ;;
   fast)
     gen "${fr[@]}"
+    require_absent "$(tape_output)" "output file"
     echo "==> fast VP9 encode"
     PATH="$WRAPDIR:$PATH" vhs "$tape"
     ;;
   frames)
     gen "${fr[@]}"
     framesdir="$OUT/${base}-frames"
+    require_absent "$framesdir" "frames dir"
     mkdir -p "$framesdir"
     stub="$framesdir/.vhs-stub"
     sed -i "s|^Output .*|Output \"$stub\"|" "$tape"
@@ -78,11 +94,14 @@ case "$MODE" in
     ;;
   final)
     gen "${fr[@]}"
+    require_absent "$(tape_output)" "output file"
     echo "==> final render"
     vhs "$tape"
     ;;
   debug)
     gen "${fr[@]}"
+    framesdir="$OUT/${base}-frames"
+    require_absent "$framesdir" "frames dir"
     script="$OUT/${base}.live.sh"
     python3 "$MD2TAPE" "$MD" --script -o "$script"
     txt="$OUT/${base}-final.txt"
@@ -90,11 +109,11 @@ case "$MODE" in
       awk -v t="$txt" 'NR==1&&/^Output /{print; print "Output \"" t "\""; next} {print}' "$tape" > "$tape.tmp" && mv "$tape.tmp" "$tape"
     fi
     echo "==> debug: frames + final-screen text; no encode"
-    DEMO_FRAMES="$OUT/${base}-frames" PATH="$WRAPDIR:$PATH" vhs "$tape" || true
+    DEMO_FRAMES="$framesdir" PATH="$WRAPDIR:$PATH" vhs "$tape" || true
     echo
     echo "live-repro script : $script   (run in a real terminal to watch it fail)"
     echo "final screen text : $txt"
-    echo "frames            : $OUT/${base}-frames"
+    echo "frames            : $framesdir"
     ;;
   -h|--help|help)
     usage
