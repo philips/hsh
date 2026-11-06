@@ -25,6 +25,7 @@ Args:
 Env:
   FRAMERATE   override framerate for fast/frames/final (default: tape's own)
   HUMAN       set to 1 for human-like typing (varied speed, pauses, typos)
+  PROMPT      shell prompt for the recorded terminal (default: vhs's purple '> ')
 
 Examples:
   demo/render.sh preview demo/tape-example.md
@@ -46,6 +47,7 @@ mkdir -p "$OUT"
 base="$(basename "${MD%.*}")"
 tape="$OUT/$base.tape"
 
+[ -n "${PROMPT:-}" ] && export PS1="$PROMPT"
 hu=()
 [ -n "${HUMAN:-}" ] && hu=(--human)
 gen() { python3 "$MD2TAPE" "$MD" "${hu[@]}" "$@" -o "$tape"; }

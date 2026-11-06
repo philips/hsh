@@ -227,6 +227,20 @@ Per-block overrides: `<!-- tape:run human -->` forces it on for one block,
 `<!-- tape:run nohuman -->` forces it off. The base speed comes from the
 block's `typingspeed=` (default 60ms) and is jittered around that.
 
+## The `> ` prompt
+
+VHS injects its own prompt, `PS1=\[\e[38;2;90;86;224m\]> \[\e[0m\]` (a purple
+`> `), into the recorded shell's environment, and runs bash with `--noprofile
+--norc` so no rc file overrides it. Every typed line therefore renders prefixed
+with `> ` — that is VHS's built-in look, not a shell error.
+
+To use your own prompt, export `PS1` before vhs runs (VHS only injects its
+default when none is set). `render.sh` exposes this as `PROMPT`:
+
+```sh
+PROMPT='philips $ ' demo/render.sh frames demo/tape-example.md
+```
+
 ## Light terminal (white background)
 
 VHS defaults to a dark theme. Set a light one with a `tape:set Theme`
