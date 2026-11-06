@@ -80,7 +80,7 @@ case "$MODE" in
     python3 "$MD2TAPE" "$MD" --script -o "$script"
     txt="$OUT/${base}-final.txt"
     if grep -qiE "^Output .*\\.txt" "$tape"; then :; else
-      awk -v t="$txt" 'NR==1&&/^Output /{print; print "Output " t; next} {print}' "$tape" > "$tape.tmp" && mv "$tape.tmp" "$tape"
+      awk -v t="$txt" 'NR==1&&/^Output /{print; print "Output \"" t "\""; next} {print}' "$tape" > "$tape.tmp" && mv "$tape.tmp" "$tape"
     fi
     echo "==> debug: frames + final-screen text; no encode"
     DEMO_FRAMES="$OUT/${base}-frames" PATH="$WRAPDIR:$PATH" vhs "$tape" || true

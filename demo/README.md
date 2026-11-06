@@ -141,23 +141,32 @@ Also useful: `vhs validate <tape>` catches syntax errors before any render.
 
 ## Waiting on events instead of sleeping
 
-`Sleep` guesses how long something takes; `tape:wait` advances when it actually
-happens. VHS's `Exec` runs a command outside the recorded terminal and blocks
-the tape until it exits, so `tape:wait` polls your event every 0.5s:
+`Sleep` guesses how long something takes; `tape:wait` runs a poll loop in the
+recorded shell. VHS (v0.11) has no host-side command execution, so the wait is
+typed into the terminal: it prefixes an `until <cmd>; do sleep 0.5; done; `
+loop onto the next `tape:run` command, which then executes only after the
+event fires:
 
 ```
 <!-- tape:wait timeout=180s hsh proxy denied | grep -q go.dev -->
+<!-- tape:run sleep=3s -->
+```sh
+hsh resume
+```
 ```
 
-advances the moment `go.dev` shows up in `hsh proxy denied` (the pending
-egress denials) — no guessing how long the agent takes. Any shell predicate
-works: `sqlite3 ... "select ..."`, `curl -sf localhost:8080`,
-`hsh exec my-session test -f /app/built`, `grep -q pattern file`, etc.
+The wait gates the shell, not the tape: keep a generous `sleep=` after the
+command (its output appears only once the event fired; trim idle time in the
+editor). `timeout=` (default 60s) breaks the loop instead of hanging forever.
 
-The tape pauses until the predicate exits 0, then continues; `timeout=`
-(anywhere in the directive, default 60s) fails the run instead of hanging
-forever. The `--script` debug output includes the same wait loop, so live repro
-matches.
+Caveats:
+
+- Requires a shell prompt at that point in the tape — not inside an attached
+  agent TUI (there, keep paced `tape:sleep` beats).
+- The vhs tape parser cannot represent double quotes or `\"` escapes in typed
+  text, so `tape:wait` commands and `tape:run` blocks must use single quotes.
+- The `--script` debug output includes the same wait loop, so live repro
+  matches.
 
 
 ## Markup
@@ -176,7 +185,7 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 | `<!-- tape:run noenter -->` | type without pressing Enter | for interactive prompts |
 | `<!-- tape:type Thanks! -->` | `Type "Thanks!"` | literal text, no Enter |
 | `<!-- tape:key Ctrl+C -->` | `Ctrl+C` | any key: `Enter`, `Tab`, `Ctrl+L`, ... |
-| `<!-- tape:wait <shell cmd> -->` | `Exec sh -c 'until <cmd>; do sleep 0.5; done'` | block until cmd exits 0 (e.g. a sqlite row appearing); `timeout=` (default 60s) caps it |
+| `<!-- tape:wait <shell cmd> -->` | typed `until <cmd>; do sleep 0.5; done; ` prefixed onto the next command | block until cmd exits 0 (e.g. a denied host appearing); `timeout=` (default 60s) caps it |
 | `<!-- tape:monitor -->` | `Sleep 1s` + `Ctrl+Space` + `Sleep 1s` | opens the hsh monitor; tune with `sleep=`/`after=` (or `none`) |
 | `<!-- tape:hide -->` / `<!-- tape:show -->` | `Hide` / `Show` | run setup off-camera |
 | `<!-- tape:raw Ctrl+L -->` | passthrough | emit any raw VHS line |

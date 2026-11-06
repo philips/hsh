@@ -24,11 +24,8 @@ def parse_kv(args):
 
 
 def esc(s):
-    return s.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def shq(s):
-    return "'" + s.replace("'", "'\\\"'\\\"'") + "'"
+    s = s.replace('"', "'")
+    return s.replace("\\", "\\\\")
 
 
 def split_wait(args):
@@ -43,13 +40,12 @@ def split_wait(args):
     return " ".join(cmd), timeout
 
 
-def wait_exec(args, kv):
+def wait_prefix(args, kv):
     cmd, timeout = split_wait(args)
     if not cmd:
         return None
     tries = max(1, int(parse_ms(timeout, 60000) / 500))
-    loop = f'i=0; until {cmd} >/dev/null 2>&1; do i=$((i+1)); [ "$i" -ge {tries} ] && exit 1; sleep 0.5; done'
-    return f"Exec sh -c {shq(loop)}"
+    return f'i=0; until {cmd} >/dev/null 2>&1; do i=$((i+1)); [ $i -ge {tries} ] && break; sleep 0.5; done; '
 
 
 def parse_ms(s, default=60.0):
@@ -95,6 +91,7 @@ def convert(text, human=False):
     have_region = any(REGION.search(l) for l in lines)
     active = not have_region
     pending_run = None
+    pending_wait = None
 
     def emit(s):
         out.append(s)
@@ -117,8 +114,16 @@ def convert(text, human=False):
                 i += 1
                 continue
 
+            if pending_wait and cmd != "run":
+                w = pending_wait
+                pending_wait = None
+                emit(f'Type "{esc(w)}"')
+                emit("Enter")
+                emit("Sleep 500ms")
+
             if cmd == "output":
-                emit(f'Output {m.group("args").strip()}')
+                path = m.group("args").strip().strip('"')
+                emit(f'Output "{path}"')
             elif cmd == "set":
                 emit(f'Set {m.group("args").strip()}')
             elif cmd == "require":
@@ -142,9 +147,7 @@ def convert(text, human=False):
             elif cmd == "show":
                 emit("Show")
             elif cmd == "wait":
-                line_out = wait_exec(m.group("args"), kv)
-                if line_out:
-                    emit(line_out)
+                pending_wait = wait_prefix(m.group("args"), kv)
             elif cmd == "raw":
                 emit(m.group("args").strip())
             elif cmd == "say":
@@ -167,6 +170,10 @@ def convert(text, human=False):
                 block.append(lines[i])
                 i += 1
             i += 1
+
+            if pending_wait:
+                block[0] = pending_wait + block[0]
+                pending_wait = None
 
             speed = kv.get("typingspeed")
             human_this = "human" in flags or (human and "nohuman" not in flags)
