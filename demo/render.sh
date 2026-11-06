@@ -67,9 +67,14 @@ case "$MODE" in
     ;;
   frames)
     gen "${fr[@]}"
-    echo "==> frame export (no encode)"
-    DEMO_FRAMES="$OUT/${base}-frames" PATH="$WRAPDIR:$PATH" vhs "$tape"
-    echo "frames in: $OUT/${base}-frames"
+    framesdir="$OUT/${base}-frames"
+    mkdir -p "$framesdir"
+    stub="$framesdir/.vhs-stub"
+    sed -i "s|^Output .*|Output \"$stub\"|" "$tape"
+    echo "==> frame export (no encode, no video file)"
+    DEMO_FRAMES="$framesdir" PATH="$WRAPDIR:$PATH" vhs "$tape"
+    rm -f "$stub"
+    echo "frames in: $framesdir"
     ;;
   final)
     gen "${fr[@]}"

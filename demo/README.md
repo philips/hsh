@@ -83,7 +83,7 @@ captured, switching formats is just an ffmpeg transcode. `demo/encode.sh` turns
 an existing frames directory (best) or GIF into any format:
 
 ```sh
-# capture once, lossless:
+# capture once, lossless (no video file is produced):
 demo/render.sh frames demo/tape-example.md
 # then produce outputs from the SAME take, no re-record:
 demo/encode.sh demo/out/tape-example-frames demo/out/final.webm
@@ -92,6 +92,10 @@ demo/encode.sh demo/out/tape-example-frames demo/out/preview.gif
 # or salvage an old preview GIF into a webm:
 demo/encode.sh demo/out/webserver.gif demo/out/webserver.webm
 ```
+
+In `frames` mode the tape's `tape:output` is retargeted to a temporary stub
+inside the frames directory and removed after the run, so no fake
+`webserver.webm` appears next to the frames.
 
 Set `FRAMERATE=` to match the take's framerate when encoding from frames. If
 the tape has no `Set Framerate`, VHS captured at 50fps, so use `FRAMERATE=50`
