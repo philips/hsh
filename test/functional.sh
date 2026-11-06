@@ -1869,7 +1869,7 @@ ver_expect_failure() {
 printf '%s\n' '{ "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }' >"$TMP/ver-missing.hsh"
 printf '%s\n' '{ "version": 99, "image": "localhost/hsh-example:latest", "shell": "/bin/bash" }' >"$TMP/ver-newer.hsh"
 printf '%s\n' '{ "version": 1, "image": "localhost/hsh-example:latest", "network": { "alow": [] } }' >"$TMP/ver-typo.hsh"
-ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 1)' \
+ver_expect_failure "a seed config without a version" 'no "version" field (this hsh reads version 2)' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-missing.hsh"
 ver_expect_failure "a seed config from a newer hsh" 'config version 99 is newer than this hsh reads (version 1); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --config "$TMP/ver-newer.hsh"
@@ -1889,7 +1889,7 @@ EOF
 podman build -q -t localhost/hsh-ver-missing:latest -f "$TMP/ver-label2.Containerfile" "$TMP" >/dev/null || fail "could not build the unversioned-label image"
 ver_expect_failure "an image label from a newer hsh" 'org.ifup.hsh image label: config version 99 is newer than this hsh reads (version 1); update hsh' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-newer:latest
-ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 1); rebuild the image' \
+ver_expect_failure "an image label without a version" 'no "version" field (this hsh reads version 2); rebuild the image' \
 	"$HSH" run --runtime "$RUNTIME" --pull=never localhost/hsh-ver-missing:latest
 pass "image labels without a version or from a newer hsh are refused with what to do"
 
