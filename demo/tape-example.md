@@ -40,9 +40,10 @@ proxy holds for approval.
 install the latest go from go.dev and build a hello world web server on port 8080
 ```
 
-The agent works and hsh prints a notice when the go.dev denial pops up.
+The agent works. When the go.dev request is held, hsh suspends the agent and
+the status line shows the suspension — the tape waits for exactly that:
 
-<!-- tape:sleep 15s -->
+<!-- tape:wait /SUSPENDED: proxy approval/ -->
 
 ## Step 3 — approve the proxy requests to go.dev
 
@@ -82,7 +83,7 @@ Bring up the monitor, approve the pending request, and confirm.
 dl.google.com access via egress proxy approved
 ```
 
-<!-- tape:sleep 30s -->
+<!-- tape:wait /SUSPENDED: proxy approval/ -->
 
 ## Step 4 — forward the port and try the web server
 

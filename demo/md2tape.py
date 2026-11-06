@@ -147,7 +147,15 @@ def convert(text, human=False):
             elif cmd == "show":
                 emit("Show")
             elif cmd == "wait":
-                pending_wait = wait_prefix(m.group("args"), kv)
+                wargs = m.group("args").strip()
+                if wargs.startswith("/"):
+                    end = wargs.rfind("/")
+                    pattern = wargs[1:end] if end > 0 else wargs[1:]
+                    rest = wargs[end + 1 :].split() if end > 0 else []
+                    mode = "Line" if "line" in rest else "Screen"
+                    emit(f"Wait+ {mode} /{pattern}/")
+                else:
+                    pending_wait = wait_prefix(wargs, kv)
             elif cmd == "raw":
                 emit(m.group("args").strip())
             elif cmd == "say":

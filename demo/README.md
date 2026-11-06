@@ -141,11 +141,27 @@ Also useful: `vhs validate <tape>` catches syntax errors before any render.
 
 ## Waiting on events instead of sleeping
 
-`Sleep` guesses how long something takes; `tape:wait` runs a poll loop in the
-recorded shell. VHS (v0.11) has no host-side command execution, so the wait is
-typed into the terminal: it prefixes an `until <cmd>; do sleep 0.5; done; `
-loop onto the next `tape:run` command, which then executes only after the
-event fires:
+`Sleep` guesses how long something takes; `tape:wait` blocks until the event
+actually happens. Two forms.
+
+**Regex form (preferred, works anywhere including inside an agent TUI):**
+
+```
+<!-- tape:wait /SUSPENDED: proxy approval/ -->
+```
+
+emits `Wait+ Screen /SUSPENDED: proxy approval/` — VHS pauses the tape until
+the regex shows up on the rendered terminal. This is the right tool for the
+hsh status line (`hsh <id> | SUSPENDED: proxy approval | * 1 to review (1
+held) | Ctrl+Space`) and for agent output. Caveat: the regex also matches text
+that was *typed* on screen, so pick a pattern that only appears in the output
+you are waiting for. Append `line` (`/pattern/ line`) to match new output
+lines instead of the composited screen.
+
+**Shell form (needs a shell prompt):** VHS (v0.11) has no host-side command
+execution, so the wait is typed into the terminal: it prefixes an
+`until <cmd>; do sleep 0.5; done; ` loop onto the next `tape:run` command,
+which then executes only after the event fires:
 
 ```
 <!-- tape:wait timeout=180s hsh proxy denied | grep -q go.dev -->
@@ -159,14 +175,9 @@ The wait gates the shell, not the tape: keep a generous `sleep=` after the
 command (its output appears only once the event fired; trim idle time in the
 editor). `timeout=` (default 60s) breaks the loop instead of hanging forever.
 
-Caveats:
-
-- Requires a shell prompt at that point in the tape — not inside an attached
-  agent TUI (there, keep paced `tape:sleep` beats).
-- The vhs tape parser cannot represent double quotes or `\"` escapes in typed
-  text, so `tape:wait` commands and `tape:run` blocks must use single quotes.
-- The `--script` debug output includes the same wait loop, so live repro
-  matches.
+The vhs tape parser cannot represent double quotes in typed text, so shell-form
+waits and `tape:run` blocks must use single quotes. The `--script` debug output
+includes the same wait loop, so live repro matches.
 
 
 ## Markup
@@ -185,7 +196,8 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 | `<!-- tape:run noenter -->` | type without pressing Enter | for interactive prompts |
 | `<!-- tape:type Thanks! -->` | `Type "Thanks!"` | literal text, no Enter |
 | `<!-- tape:key Ctrl+C -->` | `Ctrl+C` | any key: `Enter`, `Tab`, `Ctrl+L`, ... |
-| `<!-- tape:wait <shell cmd> -->` | typed `until <cmd>; do sleep 0.5; done; ` prefixed onto the next command | block until cmd exits 0 (e.g. a denied host appearing); `timeout=` (default 60s) caps it |
+| `<!-- tape:wait /regex/ -->` | `Wait+ Screen /regex/` | block until the regex appears on the terminal (e.g. the hsh suspend status line); add `line` before the closing `/` to match new output lines instead |
+| `<!-- tape:wait <shell cmd> -->` | typed `until <cmd>; do sleep 0.5; done; ` prefixed onto the next command | block until cmd exits 0 (needs a shell prompt); `timeout=` (default 60s) caps it |
 | `<!-- tape:monitor -->` | `Sleep 1s` + `Ctrl+Space` + `Sleep 1s` | opens the hsh monitor; tune with `sleep=`/`after=` (or `none`) |
 | `<!-- tape:hide -->` / `<!-- tape:show -->` | `Hide` / `Show` | run setup off-camera |
 | `<!-- tape:raw Ctrl+L -->` | passthrough | emit any raw VHS line |
