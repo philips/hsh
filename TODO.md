@@ -1,3 +1,34 @@
+## sign container with cosign
+
+https://raw.githubusercontent.com/sigstore/cosign/refs/heads/main/README.md
+
+## sign with minisign
+
+need to get infrastructure in place to sign releases with minisign
+
+## Use official libghostty release
+
+We publish two builds of the WebAssembly module, and both have every feature enabled:
+
+ghostty-vt-VERSION-small.wasm: optimized for size. Use this one on the web unless you've measured a reason not to.
+ghostty-vt-VERSION.wasm: optimized for speed. It's 10-20% faster on workloads heavy in escape sequences, and somewhat larger.
+
+Release Files
+
+libghostty-vt is released separately from Ghostty, with its own version numbers and its own vt-X.Y.Z tags. Each release is published to one directory:
+
+https://release.files.ghostty.org/libghostty-vt/VERSION/
+VERSION is the version number with no prefix, such as 1.0.0. The directory has the following files:
+
+File	Contents
+libghostty-vt-VERSION.tar.gz	Source tarball
+libghostty-vt-VERSION-deps.tar.gz	Zig packages for building with no network
+libghostty-vt-VERSION-docs.zip	This documentation as HTML
+ghostty-vt-VERSION.xcframework.zip	Static libraries for macOS and iOS
+ghostty-vt-VERSION.wasm	WebAssembly module, optimized for speed
+ghostty-vt-VERSION-small.wasm	WebAssembly module, optimized for size
+SHA256SUMS	Checksums of all of the above
+
 ## Review all console and TUI messages for terseness and accuracy
 
 Some messages are chatty. Run `./internal-docs/find-messages.sh > /tmp/hsh-messages.txt` then `nvim -q /tmp/hsh-messages.txt` and walk the quickfix (it indexes every user-facing message: CLI prints, error strings surfaced by main.go, verbose progress, and the monitor TUI — palette status lines, proxywatch help text, relay status bar) with the review checklist in `internal-docs/messages.md`. Reword for terseness and accuracy; check that suggested commands, key names, and counts are still right, and that warnings are on stderr and progress is in `infof`. Error-string rewording can break tests — run the suite after each pass.
