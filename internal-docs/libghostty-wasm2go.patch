@@ -1,0 +1,32 @@
+--- a/code_simd.go
++++ b/code_simd.go
+@@ -211,8 +211,12 @@
+ 		fn.uniHelper("i16x8_extend_low_i8x16_u")
+ 	case 0x8a: // i16x8.extend_high_i8x16_u
+ 		fn.uniHelper("i16x8_extend_high_i8x16_u")
++	case 0x90: // i16x8.add_sat_u
++		fn.binHelper("i16x8_add_sat_u")
+ 	case 0x97: // i16x8.min_u
+ 		fn.binHelper("i16x8_min_u")
++	case 0x99: // i16x8.max_u
++		fn.binHelper("i16x8_max_u")
+ 	case 0xa3: // i32x4.all_true
+ 		fn.uniHelper("i32x4_all_true")
+ 	case 0xa4: // i32x4.bitmask
+--- a/helpers/simd.go
++++ b/helpers/simd.go
+@@ -508,6 +508,14 @@
+ 	return fromU16(asU16(x).Min(asU16(y)))
+ }
+ 
++func i16x8_add_sat_u(x, y v128) v128 {
++	return fromU16(asU16(x).AddSaturated(asU16(y)))
++}
++
++func i16x8_max_u(x, y v128) v128 {
++	return fromU16(asU16(x).Max(asU16(y)))
++}
++
+ func i32x4_all_true(x v128) int32 {
+ 	b := v128_bytes(x)
+ 	for i := range 4 {

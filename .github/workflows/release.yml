@@ -23,7 +23,7 @@ jobs:
           go-version-file: go.mod
 
       - name: vet
-        run: go vet ./...
+        run: go vet $(go list ./... | grep -v internal/vt/libghostty/wasmvt)
 
       - name: unit tests
         run: go test ./...

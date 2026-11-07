@@ -991,8 +991,9 @@ workspace container.
   `hsh run` (`internal/relay`): `hsh run` runs the podman client with the
   pty slave as its terminal and relays between it and the user's raw
   terminal. Output is passed through unchanged and also fed to a terminal
-  emulator (`internal/vt`, libghostty-vt compiled to wasm and converted to
-  Go, built with `GOEXPERIMENT=simd`). The emulator tells the relay when the
+  emulator (`internal/vt`, the official libghostty-vt release's wasm
+  module converted to generated Go, built with `GOEXPERIMENT=simd`; see
+  `internal-docs/libghostty.md`). The emulator tells the relay when the
   stream is between escape sequences (so the status line and dialog are
   never injected mid-sequence) and lets it repaint the session screen after the
   review screen closes. The pty is one row shorter than the terminal and the

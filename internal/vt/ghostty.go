@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"code.selman.me/hauntty/libghostty"
+	"hsh/internal/vt/libghostty"
 )
 
 const Backend = "libghostty-vt"

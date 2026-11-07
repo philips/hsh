@@ -1,0 +1,5 @@
+libghostty-vt 1.0.0
+
+source https://release.files.ghostty.org/libghostty-vt/1.0.0/ghostty-vt-1.0.0-small.wasm
+sha256 dad8e14ce8da57db3864f66ae36caf66a17c4e2691ad0a0110e05c746de047a4
+sha256sums dad8e14ce8da57db3864f66ae36caf66a17c4e2691ad0a0110e05c746de047a4  ghostty-vt-1.0.0-small.wasm

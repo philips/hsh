@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: vet
-        run: go vet ./...
+        run: go vet $(go list ./... | grep -v internal/vt/libghostty/wasmvt)
 
       - name: unit tests
         run: go test ./...
@@ -63,7 +63,7 @@ jobs:
         run: ./build.sh -o hsh-release
 
       - name: vet with embedded gVisor
-        run: go vet -tags gvisor_embed ./...
+        run: go vet -tags gvisor_embed $(go list ./... | grep -v internal/vt/libghostty/wasmvt)
 
   # The functional tests run real sandboxes with rootless podman and
   # exercise the fixture image (built from test/fixtures/) plus live

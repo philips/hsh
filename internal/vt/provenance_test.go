@@ -1,33 +1,61 @@
 package vt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"testing"
 )
 
-const (
-	pinnedGhosttyRevision = "7f62fe70a288c5d35ebd3097e75c46017950bcc7"
-	pinnedWasmSHA256      = "98ed3473d125460daea8602cebe2cd0e5a63209c908b72f054be712c2ccdcf6c"
-)
+func readProvenance(t *testing.T) (version, sha, sumsLine string) {
+	t.Helper()
 
-func TestPinnedWasmBlob(t *testing.T) {
-	out, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "code.selman.me/hauntty").Output()
-	if err != nil {
-		t.Skipf("module not resolvable: %v", err)
-	}
-	dir := filepath.Join(strings.TrimSpace(string(out)), "libghostty", "internal", "wasmvt")
-	data, err := os.ReadFile(filepath.Join(dir, "ghostty-vt-small.wasm.sha256"))
+	data, err := os.ReadFile(filepath.Join("libghostty", "wasmvt", "PROVENANCE"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	if !strings.Contains(text, pinnedGhosttyRevision) {
-		t.Errorf("the vendored wasm is built from a different Ghostty revision than the pinned %s:\n%s", pinnedGhosttyRevision, text)
+
+	shaRe := regexp.MustCompile(`(?m)^sha256 ([0-9a-f]{64})$`)
+	sumsRe := regexp.MustCompile(`(?m)^sha256sums ([0-9a-f]{64})  (.+)$`)
+	versionRe := regexp.MustCompile(`(?m)^libghostty-vt ([0-9]+\.[0-9]+\.[0-9]+)$`)
+
+	if m := versionRe.FindStringSubmatch(string(data)); m != nil {
+		version = m[1]
+	} else {
+		t.Fatal("PROVENANCE has no version line")
 	}
-	if !strings.Contains(text, pinnedWasmSHA256) {
-		t.Errorf("the vendored wasm hash changed from the pinned %s:\n%s", pinnedWasmSHA256, text)
+
+	if m := shaRe.FindStringSubmatch(string(data)); m != nil {
+		sha = m[1]
+	} else {
+		t.Fatal("PROVENANCE has no sha256 line")
+	}
+
+	if m := sumsRe.FindStringSubmatch(string(data)); m != nil {
+		sumsLine = m[2]
+	} else {
+		t.Fatal("PROVENANCE has no sha256sums line")
+	}
+
+	return version, sha, sumsLine
+}
+
+func TestPinnedWasmBlob(t *testing.T) {
+	version, sha, sumsLine := readProvenance(t)
+
+	if sumsLine != "ghostty-vt-"+version+"-small.wasm" {
+		t.Fatalf("sha256sums line names %q for version %s", sumsLine, version)
+	}
+
+	data, err := os.ReadFile(filepath.Join("libghostty", "wasmvt", "ghostty-vt-small.wasm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sum := sha256.Sum256(data)
+	if hex.EncodeToString(sum[:]) != sha {
+		t.Errorf("the committed wasm hash %s differs from the pinned %s", hex.EncodeToString(sum[:]), sha)
 	}
 }

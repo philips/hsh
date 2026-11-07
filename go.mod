@@ -3,7 +3,6 @@ module hsh
 go 1.27.3
 
 require (
-	code.selman.me/hauntty v0.0.0-20260820211454-ddcef3d71401
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
