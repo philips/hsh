@@ -1,3 +1,19 @@
+## collect traces
+
+create a sqlite data base for sessions that collects all of the traces coming
+in and out of the agent either by MITM of the API or by writing a patch of the
+harness.
+
+maybe borrow file format and hooking from https://blog.atuin.sh/threads-agent-sessions/
+
+## approval API via decision LLM
+
+static network policy is can be annoying for open ended tasks. create examples of using decision APIs 
+
+- https://docs.typesafe.ai/primitives/noul
+- respan/span-02
+- https://aistudio.google.com/docs/decisions-api
+
 ## sign container with cosign
 
 https://raw.githubusercontent.com/sigstore/cosign/refs/heads/main/README.md
