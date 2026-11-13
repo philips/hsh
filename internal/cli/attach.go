@@ -96,22 +96,9 @@ func (p podInfo) workspaceContainerStatus() (string, bool) {
 }
 
 func sessionStatus(p podInfo) string {
-	ws, ok := p.workspaceContainerStatus()
-	if !ok {
+	st, ok := p.workspaceState()
+	if !ok || st == SessionStopped {
 		return p.Status
 	}
-	switch ws {
-	case "paused":
-		return "Suspended"
-	case "running":
-		if clientAttached(sessionDirFor(p.Name)) {
-			return "Attached"
-		}
-		return "Detached"
-	case "exited", "stopped":
-		if strings.EqualFold(p.Status, "running") || strings.EqualFold(p.Status, "degraded") {
-			return "Shell exited"
-		}
-	}
-	return p.Status
+	return st.String()
 }

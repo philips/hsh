@@ -105,6 +105,11 @@ func forwardCommand() *ff.Command {
 			}
 			ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			ctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			go watchSessionReachable(ctx, cancel, sessionID, func(st SessionState) {
+				fmt.Fprintf(os.Stderr, "hsh: session %s is %s; stopped forwarding\n", sessionLabel(sessionID), strings.ToLower(st.String()))
+			})
 			auto := len(specs) == 0
 			if auto {
 				fmt.Printf("forwarding every port session %s listens on, as it starts (Ctrl-C to stop)\n", sessionID)
@@ -127,6 +132,7 @@ func startRunForwards(wsName string, specs []forward.Spec) func() {
 		fmt.Fprintf(os.Stderr, "hsh: forwarding 127.0.0.1:%d -> the session's port %d while this terminal is attached (use hsh forward once detached)\n", spec.Local, spec.Remote)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	sessionID := strings.TrimSuffix(strings.TrimPrefix(wsName, "hsh-"), "-ws")
 	go func() {
 		for i := 0; i < 200 && !containerRunning(wsName); i++ {
 			select {
@@ -135,7 +141,8 @@ func startRunForwards(wsName string, specs []forward.Spec) func() {
 			case <-time.After(300 * time.Millisecond):
 			}
 		}
-		client, err := connectSession(strings.TrimSuffix(strings.TrimPrefix(wsName, "hsh-"), "-ws"))
+		go watchSessionReachable(ctx, cancel, sessionID, nil)
+		client, err := connectSession(sessionID)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hsh: forwarding: %v\n", err)
 			return

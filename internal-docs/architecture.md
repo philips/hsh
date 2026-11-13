@@ -1023,10 +1023,25 @@ workspace container.
   monitor's "detach session" command does the same from inside the
   process; its "exit session" command stops the pod, so the attach returns
   with the container stopped and `hsh run` runs its normal idle cleanup.
+- **Session state machine.** `internal/cli/sessionstate.go` is the single
+  source of truth for what a session is doing: `Absent`, `Starting`,
+  `Attached`, `Detached`, `Suspended`, `ShellExited`, or `Stopped`.
+  `sessionStateFromPod` derives it from a `podman pod ls` entry plus
+  `client.pid` (used by `hsh ls` and the monitor); `resolveSessionState`
+  derives it for a single session from a `podman inspect`. `Running()` is
+  `Attached || Detached`, and `Reachable()` (= `Running()`) is the only
+  condition under which a server inside the session can be dialed, so it
+  gates the `hsh forward` lifecycle.
 - `hsh ls` shows `Attached` (a live `hsh run` or `hsh resume` recorded in the session
   directory's `client.pid`), `Detached` (workspace container running, no
-  client), or `Shell exited` (shell gone while the proxy still runs, which
-  `hsh rm --exited` cleans up).
+  client), `Suspended` (pod paused), or `Shell exited` (shell gone while the
+  proxy still runs, which `hsh rm --exited` cleans up).
+- **Forwards follow the session.** Every `hsh forward` (foreground, a
+  monitor-managed `--managed` child, and `hsh run --forward`) watches the
+  session state and stops listening the moment it leaves `Reachable()` —
+  suspend freezes the SSH connection rather than closing it, so without this
+  the host port would keep listening and hang. A managed forward removes its
+  registry entry on that exit; resume does not restart it.
 - `hsh run --rm` is the temporary variant: pod and state are removed at
   exit.
 - `hsh resume [NAME | SESSION | WORKSPACE-DIR]` re-enters an existing
