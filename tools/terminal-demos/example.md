@@ -5,7 +5,7 @@ The prose you are reading is the narration/voiceover. The `<!-- tape:... -->`
 HTML comments are invisible when rendered on GitHub or a blog, but
 `md2tape.py` turns them into a [VHS](https://github.com/charmbracelet/vhs) tape.
 
-<!-- tape:output demo/out/sessions.mp4 -->
+<!-- tape:output tools/terminal-demos/out/sessions.mp4 -->
 <!-- tape:set Shell "bash" -->
 <!-- tape:set FontSize 22 -->
 <!-- tape:set Width 1280 -->

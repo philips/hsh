@@ -8,7 +8,7 @@ WRAPDIR="$HERE/bin"
 
 usage() {
   cat <<'EOF'
-Usage: demo/render.sh <mode> <file.md> [outdir]
+Usage: tools/terminal-demos/render.sh <mode> <file.md> [outdir]
 
 Modes:
   preview   GIF output, 24fps, real sleeps -- quick visual check
@@ -19,8 +19,8 @@ Modes:
             a runnable live-repro script you can step through by hand
 
 Args:
-  file.md   annotated markdown (e.g. Documentation/sessions.md, demo/tape-example.md)
-  outdir    where tape/output land (default: demo/out)
+  file.md   annotated markdown (e.g. Documentation/sessions.md, tools/terminal-demos/tape-example.md)
+  outdir    where tape/output land (default: tools/terminal-demos/out)
 
 Env:
   FRAMERATE   override framerate for fast/frames/final (default: tape's own)
@@ -29,10 +29,10 @@ Env:
   FORCE       set to 1 to run even if the target file/directory already exists
 
 Examples:
-  demo/render.sh preview demo/tape-example.md
-  demo/render.sh fast    demo/tape-example.md
-  demo/render.sh frames  demo/tape-example.md
-  demo/render.sh final   Documentation/sessions.md
+  tools/terminal-demos/render.sh preview tools/terminal-demos/tape-example.md
+  tools/terminal-demos/render.sh fast    tools/terminal-demos/tape-example.md
+  tools/terminal-demos/render.sh frames  tools/terminal-demos/tape-example.md
+  tools/terminal-demos/render.sh final   Documentation/sessions.md
 EOF
 }
 

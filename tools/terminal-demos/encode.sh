@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: demo/encode.sh <source> <output>
+Usage: tools/terminal-demos/encode.sh <source> <output>
 
 Encode an already-captured take into another format WITHOUT re-running VHS.
 
@@ -23,10 +23,10 @@ Env:
              preview files small and encoding fast
 
 Examples:
-  demo/render.sh frames demo/tape-example.md
-  demo/encode.sh demo/out/tape-example-frames demo/out/final.webm
-  SCALE=640 demo/encode.sh demo/out/tape-example-frames demo/out/preview.gif
-  demo/encode.sh demo/out/webserver.gif demo/out/webserver.webm
+  tools/terminal-demos/render.sh frames tools/terminal-demos/tape-example.md
+  tools/terminal-demos/encode.sh tools/terminal-demos/out/tape-example-frames tools/terminal-demos/out/final.webm
+  SCALE=640 tools/terminal-demos/encode.sh tools/terminal-demos/out/tape-example-frames tools/terminal-demos/out/preview.gif
+  tools/terminal-demos/encode.sh tools/terminal-demos/out/webserver.gif tools/terminal-demos/out/webserver.webm
 EOF
 }
 

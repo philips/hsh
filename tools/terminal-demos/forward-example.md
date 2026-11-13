@@ -4,7 +4,7 @@ This walkthrough launches Claude Code in an `hsh` sandbox, has it install Go and
 write a web server, approves the egress to `go.dev` through the monitor, then
 forwards the port to try the server from the host.
 
-<!-- tape:output demo/out/forward-example.webm -->
+<!-- tape:output tools/terminal-demos/out/forward-example.webm -->
 <!-- tape:require hsh -->
 <!-- tape:set Shell "bash" -->
 <!-- tape:set WaitTimeout 3m -->

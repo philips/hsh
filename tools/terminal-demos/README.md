@@ -1,4 +1,4 @@
-# demo — markdown-driven screen recordings
+# terminal-demos — markdown-driven screen recordings
 
 `md2tape.py` converts an annotated markdown file into a
 [VHS](https://github.com/charmbracelet/vhs) `.tape` file. The same markdown is
@@ -11,26 +11,26 @@ The quickest path is `render.sh`, which wraps tape generation + vhs + the
 encode options below:
 
 ```sh
-demo/render.sh preview demo/tape-example.md   # fast GIF, half size, sleeps/3
-demo/render.sh fast    demo/tape-example.md   # full quality, fast VP9 encode
-demo/render.sh frames  demo/tape-example.md   # skip ffmpeg, export PNG frames
-demo/render.sh final   Documentation/sessions.md  # full quality, no shortcuts
-demo/render.sh debug   demo/tape-example.md       # inspect a broken run
+tools/terminal-demos/render.sh preview tools/terminal-demos/tape-example.md   # fast GIF, half size, sleeps/3
+tools/terminal-demos/render.sh fast    tools/terminal-demos/tape-example.md   # full quality, fast VP9 encode
+tools/terminal-demos/render.sh frames  tools/terminal-demos/tape-example.md   # skip ffmpeg, export PNG frames
+tools/terminal-demos/render.sh final   Documentation/sessions.md  # full quality, no shortcuts
+tools/terminal-demos/render.sh debug   tools/terminal-demos/tape-example.md       # inspect a broken run
 ```
 
-Set `FRAMERATE=24 demo/render.sh ...` to cut frames for any encoded mode.
+Set `FRAMERATE=24 tools/terminal-demos/render.sh ...` to cut frames for any encoded mode.
 
 To drive the steps by hand instead:
 
 ```sh
-python3 demo/md2tape.py Documentation/sessions.md -o demo/out/sessions.tape
-vhs demo/out/sessions.tape        # produces the .mp4/.gif set by tape:output
+python3 tools/terminal-demos/md2tape.py Documentation/sessions.md -o tools/terminal-demos/out/sessions.tape
+vhs tools/terminal-demos/out/sessions.tape        # produces the .mp4/.gif set by tape:output
 ```
 
 Pipe to stdout to preview without writing a file:
 
 ```sh
-python3 demo/md2tape.py demo/example.md
+python3 tools/terminal-demos/md2tape.py tools/terminal-demos/example.md
 ```
 
 ## Fast iteration
@@ -40,8 +40,8 @@ Use these flags to tighten the edit loop, then drop them for the final render:
 
 ```sh
 # dev preview: half size, 24fps, sleeps /3, GIF output (skips VP9)
-python3 demo/md2tape.py demo/tape-example.md --fast -o demo/out/preview.tape
-vhs demo/out/preview.tape
+python3 tools/terminal-demos/md2tape.py tools/terminal-demos/tape-example.md --fast -o tools/terminal-demos/out/preview.tape
+vhs tools/terminal-demos/out/preview.tape
 ```
 
 | Flag | Effect |
@@ -52,7 +52,7 @@ vhs demo/out/preview.tape
 | `--format gif\|webm\|mp4` | override the `tape:output` extension |
 
 Other speedups: `vhs validate file.tape` checks syntax with no render, and a
-`Screenshot demo/out/frame.png` line captures a single frame to inspect layout
+`Screenshot tools/terminal-demos/out/frame.png` line captures a single frame to inspect layout
 without producing a video.
 
 ## Faster WebM encode (when sleeps are fixed)
@@ -62,15 +62,15 @@ If your `Sleep`s are real API waits you can't shorten, cut the *encode* instead:
 1. **Lower the framerate** (VHS defaults to 50fps). Fewer frames to encode,
    zero effect on sleeps. Works standalone:
    ```sh
-   python3 demo/md2tape.py demo/tape-example.md --framerate 24 -o demo/out/webserver.tape
+   python3 tools/terminal-demos/md2tape.py tools/terminal-demos/tape-example.md --framerate 24 -o tools/terminal-demos/out/webserver.tape
    ```
 
-2. **Speed up libvpx-vp9.** VHS calls `ffmpeg` from `PATH`; `demo/bin/ffmpeg`
+2. **Speed up libvpx-vp9.** VHS calls `ffmpeg` from `PATH`; `tools/terminal-demos/bin/ffmpeg`
    is a wrapper that injects `-deadline realtime -cpu-used 8 -row-mt 1` for VP9
    (often 5-10x faster, fine quality for a screencast). Put it first on PATH
    only for the render:
    ```sh
-   PATH="$PWD/demo/bin:$PATH" vhs demo/out/webserver.tape
+   PATH="$PWD/tools/terminal-demos/bin:$PATH" vhs tools/terminal-demos/out/webserver.tape
    ```
    The wrapper passes everything else through to the real ffmpeg untouched.
 
@@ -79,18 +79,18 @@ Combine both for the biggest win without changing a single `Sleep`.
 ## Re-encode a take without re-recording
 
 The slow/variable part is the *take* (VHS replays the whole timed session). Once
-captured, switching formats is just an ffmpeg transcode. `demo/encode.sh` turns
+captured, switching formats is just an ffmpeg transcode. `tools/terminal-demos/encode.sh` turns
 an existing frames directory (best) or GIF into any format:
 
 ```sh
 # capture once, lossless (no video file is produced):
-demo/render.sh frames demo/tape-example.md
+tools/terminal-demos/render.sh frames tools/terminal-demos/tape-example.md
 # then produce outputs from the SAME take, no re-record:
-demo/encode.sh demo/out/tape-example-frames demo/out/final.webm
-demo/encode.sh demo/out/tape-example-frames demo/out/preview.gif
+tools/terminal-demos/encode.sh tools/terminal-demos/out/tape-example-frames tools/terminal-demos/out/final.webm
+tools/terminal-demos/encode.sh tools/terminal-demos/out/tape-example-frames tools/terminal-demos/out/preview.gif
 
 # or salvage an old preview GIF into a webm:
-demo/encode.sh demo/out/webserver.gif demo/out/webserver.webm
+tools/terminal-demos/encode.sh tools/terminal-demos/out/webserver.gif tools/terminal-demos/out/webserver.webm
 ```
 
 In `frames` mode the tape's `tape:output` is retargeted to a temporary stub
@@ -110,14 +110,14 @@ killer will take down the entire session, tmux included.
 ## Skip ffmpeg entirely — export raw frames
 
 VHS renders a lossless PNG frame sequence first, then only uses ffmpeg to pack
-it into a video. Set `DEMO_FRAMES` and the `demo/bin/ffmpeg` wrapper copies the
+it into a video. Set `DEMO_FRAMES` and the `tools/terminal-demos/bin/ffmpeg` wrapper copies the
 frames out and skips the encode completely:
 
 ```sh
-DEMO_FRAMES="$PWD/demo/out/frames" PATH="$PWD/demo/bin:$PATH" vhs demo/out/webserver.tape
+DEMO_FRAMES="$PWD/tools/terminal-demos/out/frames" PATH="$PWD/tools/terminal-demos/bin:$PATH" vhs tools/terminal-demos/out/webserver.tape
 ```
 
-Result: `demo/out/frames/*.png` (visually lossless, instant). Import the
+Result: `tools/terminal-demos/out/frames/*.png` (visually lossless, instant). Import the
 sequence into your editor (DaVinci Resolve auto-detects image sequences;
 Kdenlive: "Add Image Sequence") and set the clip fps to match `Set Framerate`.
 Encode to H.264/VP9 just once, on final export.
@@ -128,12 +128,12 @@ The real timings/quality still live in the markdown, so the final build is just
 ## Seeing what went wrong
 
 VHS runs headless (a hidden ttyd terminal inside headless Chromium), so there
-is no live window. To inspect a failing run, `demo/render.sh debug <file.md>`
+is no live window. To inspect a failing run, `tools/terminal-demos/render.sh debug <file.md>`
 gives you three views at once:
 
 - **`<base>.live.sh`** — the typed commands as a runnable bash script. Run it
   in a real terminal to watch the failure happen live. Generate it directly
-  with `python3 demo/md2tape.py <file.md> --script`.
+  with `python3 tools/terminal-demos/md2tape.py <file.md> --script`.
 - **`<base>-final.txt`** — VHS writes the final terminal screen as plain text
   (readable, greppable error messages). Add more `Output *.txt` or
   `Screenshot *.png` lines via `<!-- tape:output ... -->` / `<!-- tape:raw
@@ -227,7 +227,7 @@ Regular prose is ignored by the recorder and serves as blog text / voiceover.
 
 | Directive | VHS output | Notes |
 |-----------|------------|-------|
-| `<!-- tape:output demo/out/x.mp4 -->` | `Output demo/out/x.mp4` | always applied, even outside a region |
+| `<!-- tape:output tools/terminal-demos/out/x.mp4 -->` | `Output tools/terminal-demos/out/x.mp4` | always applied, even outside a region |
 | `<!-- tape:set FontSize 22 -->` | `Set FontSize 22` | any VHS `Set` key |
 | `<!-- tape:require hsh -->` | `Require hsh` | fail early if binary missing |
 | `<!-- tape:run -->` + code block | types each line + `Enter` | records the next fenced block |
@@ -251,9 +251,9 @@ backspaced and corrected. It is seeded from the command text, so the output is
 deterministic and diff-friendly in git.
 
 ```sh
-python3 demo/md2tape.py demo/tape-example.md --human -o demo/out/webserver.tape
+python3 tools/terminal-demos/md2tape.py tools/terminal-demos/tape-example.md --human -o tools/terminal-demos/out/webserver.tape
 # or via render.sh:
-HUMAN=1 demo/render.sh final demo/tape-example.md
+HUMAN=1 tools/terminal-demos/render.sh final tools/terminal-demos/tape-example.md
 ```
 
 Per-block overrides: `<!-- tape:run human -->` forces it on for one block,
@@ -271,7 +271,7 @@ To use your own prompt, export `PS1` before vhs runs (VHS only injects its
 default when none is set). `render.sh` exposes this as `PROMPT`:
 
 ```sh
-PROMPT='philips $ ' demo/render.sh frames demo/tape-example.md
+PROMPT='philips $ ' tools/terminal-demos/render.sh frames tools/terminal-demos/tape-example.md
 ```
 
 ## Light terminal (white background)
