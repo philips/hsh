@@ -104,15 +104,6 @@ func main() {
 		}
 		cfg.ControlListener = ep.Listener
 	}
-	if *cpuProfile != "" {
-		f, err := os.Create(*cpuProfile)
-		if err != nil {
-			fail("cpuprofile", err)
-		}
-		if err := pprof.StartCPUProfile(f); err != nil {
-			fail("cpuprofile", err)
-		}
-	}
 	start := time.Now()
 	var sb *gvx.Sandbox
 	var err error
@@ -120,9 +111,6 @@ func main() {
 		sb, err = gvx.Restore(ctx, cfg, gvx.RestoreOptions{Dir: *restoreDir})
 	} else {
 		sb, err = gvx.New(ctx, cfg)
-	}
-	if *cpuProfile != "" {
-		pprof.StopCPUProfile()
 	}
 	if err != nil {
 		fail("new", err)
@@ -132,11 +120,23 @@ func main() {
 	report("platform=%s lockdown=%+v", sb.PlatformName(), sb.LockdownStatus())
 	report("new took %s", booted.Round(time.Millisecond))
 
+	if *cpuProfile != "" {
+		f, perr := os.Create(*cpuProfile)
+		if perr != nil {
+			fail("cpuprofile", perr)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			fail("cpuprofile", err)
+		}
+	}
 	if *controlPath != "" {
 		go func() { _ = sb.ServeControl(ctx) }()
 	}
 	runStart := time.Now()
 	code, err := sb.Run(ctx)
+	if *cpuProfile != "" {
+		pprof.StopCPUProfile()
+	}
 	report("run took %s, exit=%d err=%v", time.Since(runStart).Round(time.Millisecond), code, err)
 	if err != nil {
 		os.Exit(125)
