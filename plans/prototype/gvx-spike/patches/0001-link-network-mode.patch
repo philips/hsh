@@ -1,0 +1,494 @@
+diff --git a/pkg/gvx/checkpoint.go b/pkg/gvx/checkpoint.go
+index 82a0b276aac5..71a58ba4714c 100644
+--- a/pkg/gvx/checkpoint.go
++++ b/pkg/gvx/checkpoint.go
+@@ -544,6 +544,9 @@ func (s *Sandbox) saveQuiescersLocked() []saveQuiescer {
+ 	if s.wgEndpoint != nil {
+ 		out = append(out, s.wgEndpoint)
+ 	}
++	if s.packetLink != nil {
++		out = append(out, s.packetLink)
++	}
+ 	if s.natForwarder != nil {
+ 		out = append(out, s.natForwarder)
+ 	}
+diff --git a/pkg/gvx/config.go b/pkg/gvx/config.go
+index e97b60d53e9a..24271a6b74d4 100644
+--- a/pkg/gvx/config.go
++++ b/pkg/gvx/config.go
+@@ -68,6 +68,9 @@ const (
+ 	NetModeWireGuard NetworkMode = "wg"
+ 	// NetModeNone disables external network egress (loopback only).
+ 	NetModeNone NetworkMode = "none"
++	// NetModeLink attaches eth0 to an external peer that receives every
++	// packet of the guest as a framed IP packet over Config.LinkConn.
++	NetModeLink NetworkMode = "link"
+ 
+ 	// NetworkNAT is an alias for NetModeNAT.
+ 	NetworkNAT = NetModeNAT
+@@ -312,6 +315,16 @@ type Config struct {
+ 	// (--unix-forward GUEST_PATH=HOST_SOCKET[,uid=...,gid=...,mode=...]).
+ 	UnixForwards []UnixForward
+ 
++	// LinkConn is the connected byte stream to the peer of eth0 when
++	// NetworkMode is NetModeLink, such as an AF_UNIX SOCK_STREAM socket. Each
++	// frame is a 4-byte big-endian length followed by one IP packet, in both
++	// directions. The sandbox owns the connection and closes it. Restore needs
++	// a new connection: the connection of the saved sandbox ends with it.
++	LinkConn net.Conn
++
++	// LinkMTU is the MTU of eth0 in NetModeLink. Zero selects 1500.
++	LinkMTU uint32
++
+ 	// WireGuardConfigPath is the path to a WireGuard INI configuration file
+ 	// when NetworkMode is NetModeWireGuard.
+ 	WireGuardConfigPath string
+@@ -631,7 +644,7 @@ func (c *Config) normalizeWithMode(hasManifestLayers bool) error {
+ 		c.NetworkMode = NetModeNAT
+ 	}
+ 	switch c.NetworkMode {
+-	case NetModeNAT, NetModeWireGuard, NetModeNone:
++	case NetModeNAT, NetModeWireGuard, NetModeNone, NetModeLink:
+ 	default:
+ 		return fmt.Errorf("%w: unsupported network mode %q", ErrInvalidConfig, c.NetworkMode)
+ 	}
+@@ -686,6 +699,12 @@ func (c *Config) normalizeWithMode(hasManifestLayers bool) error {
+ 			}
+ 		}
+ 	}
++	if c.NetworkMode == NetModeLink && c.LinkConn == nil {
++		return fmt.Errorf("%w: network mode %q needs LinkConn", ErrInvalidConfig, NetModeLink)
++	}
++	if c.NetworkMode != NetModeLink && (c.LinkConn != nil || c.LinkMTU != 0) {
++		return fmt.Errorf("%w: LinkConn and LinkMTU need network mode %q", ErrInvalidConfig, NetModeLink)
++	}
+ 	if c.NetworkMode == NetModeWireGuard && c.WireGuardConfig == nil && c.WireGuardConfigPath == "" {
+ 		return fmt.Errorf("%w: network mode %q needs WireGuardConfig or WireGuardConfigPath", ErrInvalidConfig, NetModeWireGuard)
+ 	}
+diff --git a/pkg/gvx/netstack.go b/pkg/gvx/netstack.go
+index 8adf36aa740e..185bae7d8e5d 100644
+--- a/pkg/gvx/netstack.go
++++ b/pkg/gvx/netstack.go
+@@ -54,6 +54,9 @@ func (s *Sandbox) initNetstack() error {
+ 	case NetModeWireGuard:
+ 		return s.initWireGuardStack()
+ 
++	case NetModeLink:
++		return s.initPacketLinkStack()
++
+ 	default:
+ 		return fmt.Errorf("gvx: unsupported network mode %q", s.cfg.NetworkMode)
+ 	}
+@@ -75,3 +78,30 @@ func wireGuardPeerPort(endpoint string) (uint16, error) {
+ 	}
+ 	return uint16(port), nil
+ }
++
++// initPacketLinkStack builds the guest stack of NetModeLink. A restore attaches
++// eth0 later, to the restored stack, so the connection carries no packet of
++// the throwaway stack.
++func (s *Sandbox) initPacketLinkStack() error {
++	link, err := netbackend.NewPacketLink(netbackend.PacketLinkConfig{
++		Conn:  s.cfg.LinkConn,
++		MTU:   s.cfg.LinkMTU,
++		Stack: s.stackOptions(),
++	})
++	if err != nil {
++		return fmt.Errorf("%w: %w", ErrInvalidConfig, err)
++	}
++	st, err := netbackend.NewLoopbackStack(s.stackOptions())
++	if err != nil {
++		return err
++	}
++	if !s.restoring {
++		if err := link.Attach(st); err != nil {
++			st.Close()
++			return err
++		}
++	}
++	s.netStack = st
++	s.packetLink = link
++	return nil
++}
+diff --git a/pkg/gvx/restore.go b/pkg/gvx/restore.go
+index 26d4d2d5d51c..24df3864bc68 100644
+--- a/pkg/gvx/restore.go
++++ b/pkg/gvx/restore.go
+@@ -102,6 +102,16 @@ func (r restoreNetworkArgs) ConfigureNetwork(st inet.Stack) error {
+ 		if err := r.sb.wgEndpoint.AttachRestoredStack(restored); err != nil {
+ 			return fmt.Errorf("gvx: attach restored WireGuard stack: %w", err)
+ 		}
++	case NetModeLink:
++		if r.sb.packetLink == nil {
++			return errors.New("gvx: packet link is nil during restore")
++		}
++		if r.sb.netStack != nil && r.sb.netStack != restored {
++			r.sb.netStack.Close()
++		}
++		if err := r.sb.packetLink.AttachRestoredStack(restored); err != nil {
++			return fmt.Errorf("gvx: attach restored packet link: %w", err)
++		}
+ 	case NetModeNone:
+ 		if r.sb.netStack != nil && r.sb.netStack != restored {
+ 			r.sb.netStack.Close()
+@@ -680,6 +690,7 @@ func Restore(ctx context.Context, cfg Config, opts RestoreOptions) (_ *Sandbox,
+ 		return cleanup(err)
+ 	}
+ 
++	sb.restoring = true
+ 	if err := sb.initNetstack(); err != nil {
+ 		return cleanup(err)
+ 	}
+diff --git a/pkg/gvx/sandbox.go b/pkg/gvx/sandbox.go
+index 94f8bc1b7cd1..f79a330d3390 100644
+--- a/pkg/gvx/sandbox.go
++++ b/pkg/gvx/sandbox.go
+@@ -85,6 +85,8 @@ type Sandbox struct {
+ 	natTunnelGroup     *natTunnelGroup // protected by mu
+ 	shapedNATTunnels   int             // protected by mu
+ 	wgEndpoint         *netbackend.WireGuardEndpoint
++	packetLink         *netbackend.PacketLink
++	restoring          bool
+ 	wgPeerPort         uint16
+ 	// guestResolvConf holds the guest /etc/resolv.conf text captured from the
+ 	// host resolver before hostlockdown.Apply runs.
+@@ -796,6 +798,12 @@ func (s *Sandbox) Close() error {
+ 		s.natForwarder = nil
+ 	}
+ 
++	if s.packetLink != nil {
++		if err := s.packetLink.Close(); err != nil {
++			errs = append(errs, err)
++		}
++		s.packetLink = nil
++	}
+ 	if s.wgEndpoint != nil {
+ 		if err := s.wgEndpoint.Close(); err != nil {
+ 			errs = append(errs, err)
+diff --git a/pkg/netbackend/packet_link.go b/pkg/netbackend/packet_link.go
+new file mode 100644
+index 000000000000..e0f8782c9212
+--- /dev/null
++++ b/pkg/netbackend/packet_link.go
+@@ -0,0 +1,321 @@
++// Copyright 2026 The gVisor Authors.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package netbackend
++
++import (
++	"bufio"
++	"context"
++	"encoding/binary"
++	"errors"
++	"fmt"
++	"io"
++	"log/slog"
++	"net"
++	"sync"
++	"sync/atomic"
++
++	"z.gfire.dev/gvx/pkg/buffer"
++	"z.gfire.dev/gvx/pkg/tcpip"
++	"z.gfire.dev/gvx/pkg/tcpip/header"
++	"z.gfire.dev/gvx/pkg/tcpip/link/channel"
++	"z.gfire.dev/gvx/pkg/tcpip/network/ipv4"
++	"z.gfire.dev/gvx/pkg/tcpip/network/ipv6"
++	"z.gfire.dev/gvx/pkg/tcpip/stack"
++)
++
++// PacketLinkHeaderLen is the size of the frame header on a packet link: the
++// length of the IP packet that follows, as a big-endian uint32.
++const PacketLinkHeaderLen = 4
++
++// DefaultPacketLinkMTU is the MTU of eth0 on a packet link when
++// PacketLinkConfig.MTU is zero.
++const DefaultPacketLinkMTU = 1500
++
++const packetLinkQueueLen = 1024
++
++// PacketLinkConfig configures a guest eth0 that exchanges IP packets with an
++// external peer over a byte stream.
++//
++// Each frame on Conn, in both directions, is a PacketLinkHeaderLen-byte
++// big-endian length followed by one IPv4 or IPv6 packet with no link-layer
++// header. The peer receives every packet that the guest sends to an address
++// outside lo, from 10.0.2.15 to any destination, so it must accept packets
++// for every address. The guest does not verify the transport checksums of
++// packets from the peer; it computes the checksums of the packets it sends.
++type PacketLinkConfig struct {
++	// Conn is the connected stream to the peer, such as an AF_UNIX
++	// SOCK_STREAM socket. The link owns it and closes it on Close.
++	Conn net.Conn
++
++	// MTU is the MTU of eth0. Zero selects DefaultPacketLinkMTU.
++	MTU uint32
++
++	// Stack selects the optional features of the guest network stack.
++	Stack StackOptions
++
++	// Logger receives link diagnostics. When nil, they are discarded.
++	Logger *slog.Logger
++}
++
++// PacketLink attaches the guest eth0 to an external peer over a byte stream.
++type PacketLink struct {
++	cfg    PacketLinkConfig
++	log    *slog.Logger
++	paused atomic.Bool
++
++	mu      sync.Mutex
++	conn    net.Conn
++	ep      *channel.Endpoint
++	cancel  context.CancelFunc
++	wg      sync.WaitGroup
++	closed  bool
++	lastErr error
++}
++
++// NewPacketLink validates cfg and returns a link that is not attached to a
++// stack yet. Attach or AttachRestoredStack starts it.
++func NewPacketLink(cfg PacketLinkConfig) (*PacketLink, error) {
++	if cfg.Conn == nil {
++		return nil, errors.New("netbackend: packet link needs a connection")
++	}
++	if cfg.MTU == 0 {
++		cfg.MTU = DefaultPacketLinkMTU
++	}
++	if cfg.MTU < header.IPv4MinimumMTU || cfg.MTU > MaxLinkMTU {
++		return nil, fmt.Errorf("netbackend: packet link MTU %d is outside %d..%d", cfg.MTU, header.IPv4MinimumMTU, MaxLinkMTU)
++	}
++	log := cfg.Logger
++	if log == nil {
++		log = discardLogger
++	}
++	return &PacketLink{cfg: cfg, log: log}, nil
++}
++
++// NewPacketLinkStack creates a guest Netstack with lo (127.0.0.1/8) and eth0
++// (10.0.2.15/24, default route through 10.0.2.2) attached to cfg.Conn.
++func NewPacketLinkStack(cfg PacketLinkConfig) (*stack.Stack, *PacketLink, error) {
++	l, err := NewPacketLink(cfg)
++	if err != nil {
++		return nil, nil, err
++	}
++	s, err := NewLoopbackStack(cfg.Stack)
++	if err != nil {
++		return nil, nil, err
++	}
++	if err := l.Attach(s); err != nil {
++		s.Close()
++		return nil, nil, err
++	}
++	return s, l, nil
++}
++
++// Attach adds eth0 to s, a stack that already has lo, and starts moving
++// packets between eth0 and the connection.
++func (l *PacketLink) Attach(s *stack.Stack) error {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	if l.closed {
++		return errors.New("netbackend: packet link is closed")
++	}
++	if l.ep != nil {
++		return errors.New("netbackend: packet link is already attached")
++	}
++	return l.attachLocked(s)
++}
++
++func (l *PacketLink) attachLocked(s *stack.Stack) error {
++	conn := l.cfg.Conn
++	ep := channel.New(packetLinkQueueLen, l.cfg.MTU, "")
++	ep.LinkEPCapabilities = stack.CapabilityRXChecksumOffload
++	if err := createNamedNICWithMTURange(s, Eth0NICID, Eth0NICName, ep, header.IPv4MinimumMTU, MaxLinkMTU); err != nil {
++		ep.Close()
++		return err
++	}
++	ethAddr := tcpip.ProtocolAddress{
++		Protocol: ipv4.ProtocolNumber,
++		AddressWithPrefix: tcpip.AddressWithPrefix{
++			Address:   tcpip.AddrFrom4([4]byte{10, 0, 2, 15}),
++			PrefixLen: 24,
++		},
++	}
++	if err := s.AddProtocolAddress(Eth0NICID, ethAddr, stack.AddressProperties{}); err != nil {
++		ep.Close()
++		return fmt.Errorf("netbackend: add 10.0.2.15/24 to eth0: %s", err)
++	}
++	s.SetRouteTable([]tcpip.Route{
++		{Destination: header.IPv4LoopbackSubnet, NIC: LoopbackNICID},
++		{Destination: header.IPv4EmptySubnet, Gateway: hostGatewayAddr, NIC: Eth0NICID},
++	})
++	ctx, cancel := context.WithCancel(context.Background())
++	l.conn, l.ep, l.cancel, l.lastErr = conn, ep, cancel, nil
++	l.wg.Add(2)
++	go l.readLoop(ctx, conn, ep)
++	go l.writeLoop(ctx, conn, ep)
++	return nil
++}
++
++func (l *PacketLink) readLoop(ctx context.Context, conn net.Conn, ep *channel.Endpoint) {
++	defer l.wg.Done()
++	r := bufio.NewReaderSize(conn, 256<<10)
++	var hdr [PacketLinkHeaderLen]byte
++	for {
++		if _, err := io.ReadFull(r, hdr[:]); err != nil {
++			l.fail(ctx, conn, fmt.Errorf("read frame header: %w", err))
++			return
++		}
++		n := binary.BigEndian.Uint32(hdr[:])
++		if n == 0 || n > MaxLinkMTU {
++			l.fail(ctx, conn, fmt.Errorf("frame length %d is outside 1..%d", n, MaxLinkMTU))
++			return
++		}
++		buf := buffer.NewViewSize(int(n))
++		if _, err := io.ReadFull(r, buf.AsSlice()); err != nil {
++			buf.Release()
++			l.fail(ctx, conn, fmt.Errorf("read frame: %w", err))
++			return
++		}
++		if l.paused.Load() {
++			buf.Release()
++			continue
++		}
++		var proto tcpip.NetworkProtocolNumber
++		switch header.IPVersion(buf.AsSlice()) {
++		case header.IPv4Version:
++			proto = ipv4.ProtocolNumber
++		case header.IPv6Version:
++			proto = ipv6.ProtocolNumber
++		default:
++			buf.Release()
++			continue
++		}
++		pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithView(buf)})
++		ep.InjectInbound(proto, pkt)
++		pkt.DecRef()
++	}
++}
++
++func (l *PacketLink) writeLoop(ctx context.Context, conn net.Conn, ep *channel.Endpoint) {
++	defer l.wg.Done()
++	var hdr [PacketLinkHeaderLen]byte
++	for {
++		pkt := ep.ReadContext(ctx)
++		if pkt == nil {
++			return
++		}
++		if l.paused.Load() {
++			pkt.DecRef()
++			continue
++		}
++		v := pkt.ToView()
++		pkt.DecRef()
++		binary.BigEndian.PutUint32(hdr[:], uint32(v.Size()))
++		bufs := net.Buffers{hdr[:], v.AsSlice()}
++		_, err := bufs.WriteTo(conn)
++		v.Release()
++		if err != nil {
++			l.fail(ctx, conn, fmt.Errorf("write frame: %w", err))
++			return
++		}
++	}
++}
++
++func (l *PacketLink) fail(ctx context.Context, conn net.Conn, err error) {
++	if ctx.Err() != nil {
++		return
++	}
++	l.mu.Lock()
++	if l.lastErr == nil {
++		l.lastErr = err
++	}
++	l.mu.Unlock()
++	l.log.Warn("netbackend: packet link down", "error", err)
++	_ = conn.Close()
++}
++
++// Err returns the error that took the link down, or nil while it is up.
++func (l *PacketLink) Err() error {
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	return l.lastErr
++}
++
++// QuiesceForSave drops the packets of the link while the kernel saves its
++// state.
++func (l *PacketLink) QuiesceForSave() {
++	l.paused.Store(true)
++}
++
++// ResumeAfterSave passes packets again after a checkpoint save.
++func (l *PacketLink) ResumeAfterSave() error {
++	l.paused.Store(false)
++	return nil
++}
++
++// AttachRestoredStack rebuilds lo and eth0 on a restored guest Netstack and
++// starts the link on it. The link must not be attached yet: the connection of
++// the saved sandbox does not survive a checkpoint, so a restore starts with a
++// new connection in PacketLinkConfig.Conn.
++func (l *PacketLink) AttachRestoredStack(restored *stack.Stack) error {
++	if restored == nil {
++		return errors.New("netbackend: restored stack is nil")
++	}
++	l.mu.Lock()
++	defer l.mu.Unlock()
++	if l.closed {
++		return errors.New("netbackend: packet link is closed")
++	}
++	if l.ep != nil {
++		return errors.New("netbackend: packet link is already attached")
++	}
++	restored.ResetConfig()
++	if err := configureLoopbackNIC(restored, LoopbackNICID); err != nil {
++		return err
++	}
++	if err := l.attachLocked(restored); err != nil {
++		return err
++	}
++	restored.Restore()
++	l.paused.Store(false)
++	return nil
++}
++
++func (l *PacketLink) stop() {
++	l.mu.Lock()
++	cancel, conn, ep := l.cancel, l.conn, l.ep
++	if conn == nil {
++		conn = l.cfg.Conn
++	}
++	l.cancel, l.conn, l.ep = nil, nil, nil
++	l.mu.Unlock()
++	if cancel != nil {
++		cancel()
++	}
++	if conn != nil {
++		_ = conn.Close()
++	}
++	if ep != nil {
++		ep.Close()
++	}
++	l.wg.Wait()
++}
++
++// Close stops the link and closes its connection.
++func (l *PacketLink) Close() error {
++	l.mu.Lock()
++	l.closed = true
++	l.mu.Unlock()
++	l.stop()
++	return nil
++}

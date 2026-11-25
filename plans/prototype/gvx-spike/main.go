@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"runtime/pprof"
 	"strings"
@@ -27,12 +28,16 @@ func main() {
 			os.Exit(clientDial(os.Args[2:]))
 		case "call":
 			os.Exit(clientCall(os.Args[2:]))
+		case "peer":
+			os.Exit(runPeer(os.Args[2:]))
 		}
 	}
 	image := flag.String("image", "alpine:3.20", "OCI image reference or archive path")
 	rootVolume := flag.String("root-volume", "", "ext4lite image path for the persistent root filesystem upper layer")
 	workspace := flag.String("workspace", "", "host directory mounted at /workspace")
-	network := flag.String("net", "none", "network mode: none or nat")
+	network := flag.String("net", "none", "network mode: none, nat, or link")
+	linkPath := flag.String("link", "", "Unix stream socket of the packet link peer (implies -net link)")
+	linkMTU := flag.Uint("link-mtu", 0, "eth0 MTU in link mode")
 	tty := flag.Bool("tty", false, "allocate a guest terminal on this process's stdio")
 	workdir := flag.String("workdir", "", "guest working directory")
 	user := flag.String("user", "", "guest user")
@@ -78,6 +83,19 @@ func main() {
 		cfg.Resources.MemoryBytes = m
 	}
 
+	if *linkPath != "" {
+		conn, err := net.Dial("unix", *linkPath)
+		if err != nil {
+			fail("link dial", err)
+		}
+		if uc, ok := conn.(*net.UnixConn); ok {
+			_ = uc.SetReadBuffer(4 << 20)
+			_ = uc.SetWriteBuffer(4 << 20)
+		}
+		cfg.NetworkMode = gvx.NetModeLink
+		cfg.LinkConn = conn
+		cfg.LinkMTU = uint32(*linkMTU)
+	}
 	ctx := context.Background()
 	if *controlPath != "" {
 		ep, err := control.Listen(*controlPath, control.ListenOptions{})
