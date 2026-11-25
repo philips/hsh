@@ -1,3 +1,11 @@
+# human only
+
+## Review internal-docs/Documentation-staging
+
+Need to take these docs and the plan and start reviewing and moving into Documentation see plans/0054-documentation-testing.md
+
+# agent/human
+
 ## collect traces
 
 create a sqlite data base for sessions that collects all of the traces coming
